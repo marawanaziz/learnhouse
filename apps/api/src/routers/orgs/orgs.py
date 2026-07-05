@@ -13,6 +13,7 @@ from src.services.orgs.users import (
     get_list_of_invited_users,
     get_organization_users,
     invite_batch_users,
+    leave_org,
     remove_all_users_from_org,
     remove_batch_users_from_org,
     remove_invited_user,
@@ -400,6 +401,30 @@ async def api_remove_user_from_org(
     return await remove_user_from_org(
         request, org_id, user_id, db_session, current_user
     )
+
+
+@router.delete(
+    "/{org_id}/leave",
+    summary="Leave an organization",
+    description=(
+        "Remove the CURRENT (authenticated) user's own membership in the org — "
+        "self-service, no admin rights required. The last remaining admin cannot "
+        "leave (they must transfer ownership or delete the org)."
+    ),
+    responses={
+        200: {"description": "Left the organization."},
+        400: {"description": "You are the last admin"},
+        401: {"description": "Not authenticated"},
+        404: {"description": "Organization not found or you are not a member"},
+    },
+)
+async def api_leave_org(
+    request: Request,
+    org_id: int,
+    current_user: PublicUser = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    return await leave_org(request, org_id, db_session, current_user)
 
 
 # Config related routes

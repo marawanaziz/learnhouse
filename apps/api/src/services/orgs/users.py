@@ -481,6 +481,60 @@ async def remove_user_from_org(
     return {"detail": "User removed from org"}
 
 
+async def leave_org(
+    request: Request,
+    org_id: int,
+    db_session: AsyncSession,
+    current_user: PublicUser,
+):
+    """Let the CURRENT user leave an org they belong to (self-service, no admin
+    rights needed). They can only remove their OWN membership — the acting user
+    id comes from the authenticated session, never a request field."""
+    user_id = current_user.id
+
+    org = (await db_session.execute(
+        select(Organization).where(Organization.id == org_id)
+    )).scalars().first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    user_org = (await db_session.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == user_id, UserOrganization.org_id == org.id
+        )
+    )).scalars().first()
+    if not user_org:
+        raise HTTPException(status_code=404, detail="You are not a member of this organization")
+
+    # The last admin can't just walk away — they'd orphan the org.
+    admins = (await db_session.execute(
+        select(UserOrganization).where(
+            UserOrganization.org_id == org.id, UserOrganization.role_id == ADMIN_ROLE_ID
+        )
+    )).scalars().all()
+    if len(admins) == 1 and admins[0].user_id == user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="You are the last admin of this organization. Transfer ownership or delete the organization instead.",
+        )
+
+    await db_session.delete(user_org)
+    await db_session.commit()
+
+    from src.routers.users import _invalidate_session_cache
+    _invalidate_session_cache(user_id)
+
+    await decrease_feature_usage("members", org_id, db_session)
+
+    await dispatch_webhooks(
+        event_name="user_removed_from_org",
+        org_id=org_id,
+        data={"user_id": user_id, "org_id": org_id, "left": True},
+    )
+
+    return {"detail": "Left organization", "org_id": org_id}
+
+
 async def remove_batch_users_from_org(
     request: Request,
     org_id: int,
