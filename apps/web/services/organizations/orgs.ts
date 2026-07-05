@@ -147,6 +147,16 @@ export async function removeUserFromOrg(
   return res
 }
 
+// Self-service: the current user leaves an org they belong to (no admin rights).
+export async function leaveOrg(org_id: any, access_token: any) {
+  const result = await fetch(
+    `${getAPIUrl()}orgs/${org_id}/leave`,
+    RequestBodyWithAuthHeader('DELETE', null, null, access_token)
+  )
+  const res = await getResponseMetadata(result)
+  return res
+}
+
 export async function removeUsersFromOrg(
   org_id: any,
   user_ids: number[],
