@@ -160,6 +160,8 @@ v1_router.include_router(courses.router, prefix="/courses", tags=["courses"])
 # BBU native-Stripe payments (clean-room addition; not EE)
 from src.bbu_payments import router as bbu_payments_router  # noqa: E402
 v1_router.include_router(bbu_payments_router.router, prefix="/bbu", tags=["bbu-payments"])
+from src.bbu_payments import affiliate_router as bbu_affiliate_router  # noqa: E402
+v1_router.include_router(bbu_affiliate_router.router, prefix="/bbu/affiliate", tags=["bbu-affiliate"])
 v1_router.include_router(
     migration_router_module.router,
     prefix="/courses",

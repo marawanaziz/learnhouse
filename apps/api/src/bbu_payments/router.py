@@ -14,6 +14,7 @@ automatic_payment_methods.
 """
 import os
 import json
+import hashlib
 from datetime import datetime, timezone
 
 import stripe
@@ -26,6 +27,9 @@ from src.core.events.database import get_db_session
 from src.db.courses.courses import Course
 from src.bbu_payments.models import BBUProduct, BBUOrder
 from src.bbu_payments.branding import store_page, checkout_page, success_page
+from src.bbu_payments import affiliates as aff
+
+REF_COOKIE = "bbu_ref"
 
 router = APIRouter()
 
@@ -62,10 +66,37 @@ async def products(db_session: AsyncSession = Depends(get_db_session)):
     ]
 
 
+def _ip_hash(request: Request) -> str:
+    ip = (request.client.host if request.client else "") or ""
+    return hashlib.sha256(ip.encode()).hexdigest()[:32]
+
+
+async def _apply_ref(request: Request, response, db_session: AsyncSession):
+    """If a ?ref=CODE is present and valid, set the attribution cookie and log
+    the click. Returns the ref code that is in effect (query or existing cookie)."""
+    ref = (request.query_params.get("ref") or "").strip()
+    if ref:
+        affiliate = await aff.get_affiliate_by_ref(db_session, ref)
+        if affiliate:
+            settings = await aff.get_settings(db_session)
+            response.set_cookie(
+                REF_COOKIE, ref, max_age=settings.attribution_window_days * 86400,
+                httponly=True, samesite="lax", secure=True,
+            )
+            try:
+                await aff.log_click(db_session, affiliate, str(request.url.path), _ip_hash(request))
+            except Exception:
+                pass
+            return ref
+    return request.cookies.get(REF_COOKIE, "")
+
+
 @router.get("/store", response_class=HTMLResponse)
 async def store(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     rows = await _list_products(db_session)
-    return HTMLResponse(store_page(rows, _base_url(request)))
+    resp = HTMLResponse(store_page(rows, _base_url(request)))
+    await _apply_ref(request, resp, db_session)
+    return resp
 
 
 @router.get("/buy/{product_id}", response_class=HTMLResponse)
@@ -73,7 +104,9 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
     p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == product_id))).scalars().first()
     if not p:
         raise HTTPException(404, "Product not found")
-    return HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request)))
+    resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request)))
+    await _apply_ref(request, resp, db_session)
+    return resp
 
 
 @router.get("/success", response_class=HTMLResponse)
@@ -106,6 +139,9 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
     if not stripe.api_key:
         raise HTTPException(500, "Stripe not configured")
 
+    # Affiliate attribution: ref from body (JS reads the cookie) or the cookie.
+    ref = (body.get("ref") or request.cookies.get(REF_COOKIE) or "").strip()
+
     base = _base_url(request)
     session = stripe.checkout.Session.create(
         mode="payment",
@@ -123,13 +159,14 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
         # payment_method_types is omitted — no per-session flag needed.
         success_url=f"{base}/api/v1/bbu/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base}/api/v1/bbu/buy/{p.id}",
-        metadata={"bbu_product_id": str(p.id), "course_uuids": p.course_uuids},
+        metadata={"bbu_product_id": str(p.id), "course_uuids": p.course_uuids,
+                  "affiliate_ref": ref},
     )
 
     order = BBUOrder(
         org_id=p.org_id, product_id=p.id, stripe_session_id=session.id,
         email=email, amount_cents=p.price_cents, currency=p.currency,
-        status="pending", course_uuids=p.course_uuids,
+        status="pending", course_uuids=p.course_uuids, affiliate_ref=ref,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     db_session.add(order)
@@ -147,13 +184,24 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     )).scalars().first()
     if not order:
         return
+    already_paid = order.status == "paid"
     order.status = "paid"
     order.stripe_payment_intent = session_obj.get("payment_intent") or ""
     order.paid_at = datetime.now(timezone.utc).isoformat()
     if session_obj.get("customer_details", {}).get("email") and not order.email:
         order.email = session_obj["customer_details"]["email"]
+    # capture ref from session metadata if the cookie didn't reach checkout
+    if not order.affiliate_ref:
+        order.affiliate_ref = (session_obj.get("metadata") or {}).get("affiliate_ref", "") or ""
     db_session.add(order)
     await db_session.commit()
+    await db_session.refresh(order)
+    # Book the affiliate commission (idempotent; no-op if not referred/excluded).
+    if not already_paid:
+        try:
+            await aff.book_commission_for_order(db_session, order, event="first_sale")
+        except Exception:
+            pass
 
 
 @router.post("/webhook")
@@ -182,4 +230,9 @@ async def webhook(request: Request, db_session: AsyncSession = Depends(get_db_se
                 order.status = "refunded"
                 db_session.add(order)
                 await db_session.commit()
+                # reverse any not-yet-paid commissions for this order
+                try:
+                    await aff.reverse_commissions_for_order(db_session, order.id)
+                except Exception:
+                    pass
     return JSONResponse({"received": True})
