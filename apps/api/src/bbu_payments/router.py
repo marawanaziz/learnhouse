@@ -119,7 +119,7 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
             try:
                 sess = stripe.checkout.Session.retrieve(session_id)
                 if sess.get("payment_status") == "paid":
-                    await _fulfill(db_session, dict(sess))
+                    await _fulfill(db_session, sess)
             except Exception:
                 pass
         order = (await db_session.execute(
@@ -188,8 +188,9 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     order.status = "paid"
     order.stripe_payment_intent = session_obj.get("payment_intent") or ""
     order.paid_at = datetime.now(timezone.utc).isoformat()
-    if session_obj.get("customer_details", {}).get("email") and not order.email:
-        order.email = session_obj["customer_details"]["email"]
+    cust_email = (session_obj.get("customer_details") or {}).get("email")
+    if cust_email and not order.email:
+        order.email = cust_email
     # capture ref from session metadata if the cookie didn't reach checkout
     if not order.affiliate_ref:
         order.affiliate_ref = (session_obj.get("metadata") or {}).get("affiliate_ref", "") or ""
@@ -219,7 +220,9 @@ async def webhook(request: Request, db_session: AsyncSession = Depends(get_db_se
     etype = event["type"] if isinstance(event, dict) else event.type
     data = (event["data"]["object"] if isinstance(event, dict) else event.data.object)
     if etype == "checkout.session.completed":
-        await _fulfill(db_session, dict(data))
+        # Pass the object as-is: Stripe StripeObject supports .get()/[] and is
+        # NOT safely convertible via dict() in stripe-python v15 (KeyError: 0).
+        await _fulfill(db_session, data)
     elif etype == "charge.refunded":
         pi = data.get("payment_intent")
         if pi:
