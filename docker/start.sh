@@ -21,6 +21,9 @@ fi
 # Ensure BBU payments tables exist (idempotent; no-op once created).
 (cd /app/api && uv run python ensure_bbu_tables.py) || echo "WARNING: BBU table ensure failed; continuing startup"
 
+# Seed BBU storefront products from migrated courses (idempotent).
+(cd /app/api && uv run python bbu_seed_products.py) || echo "WARNING: BBU product seed failed; continuing startup"
+
 # Start the services
 # Use server-wrapper.js for runtime environment variable injection
 pm2 start server-wrapper.js --cwd /app/web --name learnhouse-web > /dev/null 2>&1
