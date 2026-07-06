@@ -184,7 +184,6 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     )).scalars().first()
     if not order:
         return
-    already_paid = order.status == "paid"
     order.status = "paid"
     order.stripe_payment_intent = session_obj.get("payment_intent") or ""
     order.paid_at = datetime.now(timezone.utc).isoformat()
@@ -197,12 +196,13 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     db_session.add(order)
     await db_session.commit()
     await db_session.refresh(order)
-    # Book the affiliate commission (idempotent; no-op if not referred/excluded).
-    if not already_paid:
-        try:
-            await aff.book_commission_for_order(db_session, order, event="first_sale")
-        except Exception:
-            pass
+    # Book the affiliate commission. Always attempted — it's idempotent (one
+    # commission per order+event), so re-delivered webhooks / success re-hits
+    # don't double-book, and a prior partial fulfill can still be completed.
+    try:
+        await aff.book_commission_for_order(db_session, order, event="first_sale")
+    except Exception:
+        pass
 
 
 @router.post("/webhook")
