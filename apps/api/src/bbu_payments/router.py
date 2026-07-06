@@ -80,6 +80,15 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
 async def success(request: Request, session_id: str = "", db_session: AsyncSession = Depends(get_db_session)):
     order = None
     if session_id:
+        # Belt-and-suspenders fulfillment: don't rely solely on the async
+        # webhook. Retrieve the session server-side and fulfill if it's paid.
+        if stripe.api_key:
+            try:
+                sess = stripe.checkout.Session.retrieve(session_id)
+                if sess.get("payment_status") == "paid":
+                    await _fulfill(db_session, dict(sess))
+            except Exception:
+                pass
         order = (await db_session.execute(
             select(BBUOrder).where(BBUOrder.stripe_session_id == session_id)
         )).scalars().first()
