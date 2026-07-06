@@ -118,8 +118,9 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
             },
             "quantity": 1,
         }],
-        # HSA/FSA cards + Klarna surface automatically where eligible.
-        automatic_payment_methods={"enabled": True},
+        # Checkout Sessions auto-enable every eligible payment method configured
+        # on the Stripe account (cards incl. HSA/FSA, Klarna, wallets) when
+        # payment_method_types is omitted — no per-session flag needed.
         success_url=f"{base}/api/v1/bbu/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base}/api/v1/bbu/buy/{p.id}",
         metadata={"bbu_product_id": str(p.id), "course_uuids": p.course_uuids},
