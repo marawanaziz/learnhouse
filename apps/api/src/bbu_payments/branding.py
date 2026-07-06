@@ -140,7 +140,7 @@ def success_page(order, base):
         f"<p style='color:#4a5b68'>{status_line}</p>"
         + (f"<p style='margin-top:10px;color:#6b6f79;font-size:.9rem'>Receipt sent to {order.email}</p>" if order and order.email else "")
         + f"<div style='height:24px'></div>"
-        f"<a class='btn' href='{base}/bbu'>Go to my courses →</a>"
+        f"<a class='btn' href='{base}/courses'>Go to my courses →</a>"
         f"</div>"
     )
     return _shell("Enrollment confirmed", inner)
