@@ -14,6 +14,10 @@ if [ -n "$LEARNHOUSE_SQL_CONNECTION_STRING" ]; then
     fi
 fi
 
+# First-boot install: provisions schema + org + admin from LEARNHOUSE_INITIAL_*
+# env vars when the database is empty; no-op on an installed instance.
+(cd /app/api && uv run python install_if_needed.py) || echo "WARNING: first-boot install failed; continuing startup"
+
 # Start the services
 # Use server-wrapper.js for runtime environment variable injection
 pm2 start server-wrapper.js --cwd /app/web --name learnhouse-web > /dev/null 2>&1
