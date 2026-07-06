@@ -11,6 +11,8 @@ from sqlalchemy import create_engine, inspect, text
 
 from cli import _install_async, _to_sync_url
 from config.config import get_learnhouse_config
+# Import BBU payment models so their tables are in SQLModel.metadata for create_all.
+from src.bbu_payments import models as _bbu_models  # noqa: F401
 
 
 def already_installed() -> bool:

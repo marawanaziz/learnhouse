@@ -18,6 +18,9 @@ fi
 # env vars when the database is empty; no-op on an installed instance.
 (cd /app/api && uv run python install_if_needed.py) || echo "WARNING: first-boot install failed; continuing startup"
 
+# Ensure BBU payments tables exist (idempotent; no-op once created).
+(cd /app/api && uv run python ensure_bbu_tables.py) || echo "WARNING: BBU table ensure failed; continuing startup"
+
 # Start the services
 # Use server-wrapper.js for runtime environment variable injection
 pm2 start server-wrapper.js --cwd /app/web --name learnhouse-web > /dev/null 2>&1
