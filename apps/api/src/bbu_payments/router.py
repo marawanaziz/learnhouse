@@ -38,6 +38,22 @@ WEBHOOK_SECRET = os.environ.get("BBU_STRIPE_WEBHOOK_SECRET", "")
 PUB_KEY = os.environ.get("BBU_STRIPE_PUBLISHABLE_KEY", "")
 
 
+def _as_dict(obj):
+    """Convert a Stripe object to a plain nested dict. stripe-python v15 objects
+    don't reliably support .get()/dict(), so normalize before use. Plain dicts
+    (unsigned webhook path) pass through unchanged."""
+    if isinstance(obj, dict):
+        return obj
+    for m in ("to_dict_recursive", "to_dict"):
+        fn = getattr(obj, m, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+    return obj
+
+
 def _base_url(request: Request) -> str:
     # Prefer the configured domain so redirects are correct behind the proxy.
     domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
@@ -54,7 +70,7 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
 
 @router.get("/_ver")
 async def _ver():
-    return {"build": "aff-trace-2"}
+    return {"build": "aff-fix-3"}
 
 
 @router.get("/products")
@@ -122,8 +138,7 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
         # webhook. Retrieve the session server-side and fulfill if it's paid.
         if stripe.api_key:
             try:
-                sess = stripe.checkout.Session.retrieve(session_id)
-                print(f"[BBU] success retrieve sid={session_id[:20]} pay_status={sess.get('payment_status')}", flush=True)
+                sess = _as_dict(stripe.checkout.Session.retrieve(session_id))
                 if sess.get("payment_status") == "paid":
                     await _fulfill(db_session, sess)
             except Exception as e:
@@ -230,10 +245,8 @@ async def webhook(request: Request, db_session: AsyncSession = Depends(get_db_se
         raise HTTPException(400, f"Invalid webhook: {e}")
 
     etype = event["type"] if isinstance(event, dict) else event.type
-    data = (event["data"]["object"] if isinstance(event, dict) else event.data.object)
+    data = _as_dict(event["data"]["object"] if isinstance(event, dict) else event.data.object)
     if etype == "checkout.session.completed":
-        # Pass the object as-is: Stripe StripeObject supports .get()/[] and is
-        # NOT safely convertible via dict() in stripe-python v15 (KeyError: 0).
         await _fulfill(db_session, data)
     elif etype == "charge.refunded":
         pi = data.get("payment_intent")
