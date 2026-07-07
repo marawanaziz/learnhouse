@@ -70,7 +70,7 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
 
 @router.get("/_ver")
 async def _ver():
-    return {"build": "aff-fix-3"}
+    return {"build": "aff-clean-4"}
 
 
 @router.get("/products")
@@ -201,12 +201,10 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     tier, so a paid buyer can open the course immediately; the paid order is the
     system of record and the hook point for usergroup-gated access later.)"""
     sid = session_obj.get("id")
-    print(f"[BBU] _fulfill called sid={sid}", flush=True)
     order = (await db_session.execute(
         select(BBUOrder).where(BBUOrder.stripe_session_id == sid)
     )).scalars().first()
     if not order:
-        print(f"[BBU] _fulfill: no order for sid={sid}", flush=True)
         return
     order.status = "paid"
     order.stripe_payment_intent = session_obj.get("payment_intent") or ""
@@ -224,12 +222,10 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     # commission per order+event), so re-delivered webhooks / success re-hits
     # don't double-book, and a prior partial fulfill can still be completed.
     try:
-        c = await aff.book_commission_for_order(db_session, order, event="first_sale")
-        print(f"[BBU] fulfill order={order.id} ref='{order.affiliate_ref}' amount={order.amount_cents} "
-              f"commission={'$%.2f' % (c.amount_cents/100) if c else 'None'}", flush=True)
-    except Exception as e:
+        await aff.book_commission_for_order(db_session, order, event="first_sale")
+    except Exception:
         import traceback
-        print(f"[BBU] commission booking FAILED for order {order.id}: {e}\n{traceback.format_exc()}", flush=True)
+        print(f"[BBU] commission booking failed for order {order.id}:\n{traceback.format_exc()}", flush=True)
 
 
 @router.post("/webhook")
