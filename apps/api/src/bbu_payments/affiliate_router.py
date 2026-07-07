@@ -254,6 +254,41 @@ async def run_payouts(db_session: AsyncSession, org_id: int = 1, dry_run: bool =
 # --------------------------------------------------------------------------- #
 #  Admin
 # --------------------------------------------------------------------------- #
+@router.get("/admin/diag")
+async def diag(request: Request, session_id: str = "", db_session: AsyncSession = Depends(get_db_session)):
+    """Diagnose why an order did/didn't book a commission. Admin-key gated."""
+    _check_admin(request)
+    from src.bbu_payments.models import BBUOrder
+    out = {}
+    order = (await db_session.execute(
+        select(BBUOrder).where(BBUOrder.stripe_session_id == session_id)
+    )).scalars().first()
+    if not order:
+        # show recent orders instead
+        recent = (await db_session.execute(select(BBUOrder).order_by(BBUOrder.id.desc()).limit(5))).scalars().all()
+        out["order_found"] = False
+        out["recent_orders"] = [
+            {"id": o.id, "sess": o.stripe_session_id[:22], "status": o.status,
+             "ref": o.affiliate_ref, "amount": o.amount_cents} for o in recent
+        ]
+        return out
+    out["order"] = {"id": order.id, "status": order.status, "ref": order.affiliate_ref,
+                    "amount_cents": order.amount_cents, "email": order.email}
+    affrow = await aff.get_affiliate_by_ref(db_session, order.affiliate_ref)
+    out["affiliate_found"] = bool(affrow)
+    if affrow:
+        out["affiliate"] = {"ref": affrow.ref_code, "status": affrow.status, "email": affrow.email}
+    # attempt booking now and report
+    try:
+        c = await aff.book_commission_for_order(db_session, order, event="first_sale")
+        out["booked"] = {"amount_cents": c.amount_cents, "status": c.status} if c else None
+    except Exception as e:
+        import traceback
+        out["book_error"] = str(e)
+        out["trace"] = traceback.format_exc()[-800:]
+    return out
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     _check_admin(request)
