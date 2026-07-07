@@ -88,20 +88,25 @@ async def book_commission_for_order(db: AsyncSession, order: BBUOrder, event: st
     referred, the event is commissionable, and it isn't excluded. All rules from
     settings — safe to call on every paid order (no-ops when not applicable)."""
     if not order.affiliate_ref:
+        print(f"[BBU] no-book: order {order.id} has no affiliate_ref", flush=True)
         return None
     s = await get_settings(db, order.org_id)
-    aff = await get_affiliate_by_ref(db, order.affiliate_ref, order.org_id)
-    if not aff or aff.status == "suspended":
+    affrow = await get_affiliate_by_ref(db, order.affiliate_ref, order.org_id)
+    if not affrow or affrow.status == "suspended":
+        print(f"[BBU] no-book: affiliate '{order.affiliate_ref}' not found/suspended", flush=True)
         return None
     # zero-revenue exclusion (grant / 100%-off)
     if s.exclude_zero_revenue and (order.amount_cents or 0) <= 0:
+        print(f"[BBU] no-book: zero revenue order {order.id}", flush=True)
         return None
     # event must be commissionable
-    if event not in _events_for(aff, s):
+    if event not in _events_for(affrow, s):
+        print(f"[BBU] no-book: event '{event}' not in {_events_for(affrow, s)}", flush=True)
         return None
     # self-referral guard
-    if not s.self_referral_allowed and order.email and aff.email and \
-            order.email.strip().lower() == aff.email.strip().lower():
+    if not s.self_referral_allowed and order.email and affrow.email and \
+            order.email.strip().lower() == affrow.email.strip().lower():
+        print(f"[BBU] no-book: self-referral order {order.id}", flush=True)
         return None
     # idempotency: one commission per (order, event)
     existing = (await db.execute(
@@ -111,6 +116,7 @@ async def book_commission_for_order(db: AsyncSession, order: BBUOrder, event: st
     )).scalars().first()
     if existing:
         return existing
+    aff = affrow
 
     rate = _rate_for(aff, s)
     basis = _commissionable_amount(order, s)

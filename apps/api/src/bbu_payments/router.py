@@ -200,9 +200,12 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     # commission per order+event), so re-delivered webhooks / success re-hits
     # don't double-book, and a prior partial fulfill can still be completed.
     try:
-        await aff.book_commission_for_order(db_session, order, event="first_sale")
-    except Exception:
-        pass
+        c = await aff.book_commission_for_order(db_session, order, event="first_sale")
+        print(f"[BBU] fulfill order={order.id} ref='{order.affiliate_ref}' amount={order.amount_cents} "
+              f"commission={'$%.2f' % (c.amount_cents/100) if c else 'None'}", flush=True)
+    except Exception as e:
+        import traceback
+        print(f"[BBU] commission booking FAILED for order {order.id}: {e}\n{traceback.format_exc()}", flush=True)
 
 
 @router.post("/webhook")
