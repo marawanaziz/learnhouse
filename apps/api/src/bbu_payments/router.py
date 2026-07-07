@@ -52,6 +52,11 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
     return rows
 
 
+@router.get("/_ver")
+async def _ver():
+    return {"build": "aff-trace-2"}
+
+
 @router.get("/products")
 async def products(db_session: AsyncSession = Depends(get_db_session)):
     rows = await _list_products(db_session)
@@ -118,10 +123,12 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
         if stripe.api_key:
             try:
                 sess = stripe.checkout.Session.retrieve(session_id)
+                print(f"[BBU] success retrieve sid={session_id[:20]} pay_status={sess.get('payment_status')}", flush=True)
                 if sess.get("payment_status") == "paid":
                     await _fulfill(db_session, sess)
-            except Exception:
-                pass
+            except Exception as e:
+                import traceback
+                print(f"[BBU] success fulfill error: {e}\n{traceback.format_exc()[-600:]}", flush=True)
         order = (await db_session.execute(
             select(BBUOrder).where(BBUOrder.stripe_session_id == session_id)
         )).scalars().first()
