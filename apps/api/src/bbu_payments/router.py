@@ -179,10 +179,12 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     tier, so a paid buyer can open the course immediately; the paid order is the
     system of record and the hook point for usergroup-gated access later.)"""
     sid = session_obj.get("id")
+    print(f"[BBU] _fulfill called sid={sid}", flush=True)
     order = (await db_session.execute(
         select(BBUOrder).where(BBUOrder.stripe_session_id == sid)
     )).scalars().first()
     if not order:
+        print(f"[BBU] _fulfill: no order for sid={sid}", flush=True)
         return
     order.status = "paid"
     order.stripe_payment_intent = session_obj.get("payment_intent") or ""
