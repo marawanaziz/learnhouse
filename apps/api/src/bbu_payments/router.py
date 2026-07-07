@@ -68,10 +68,6 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
     return rows
 
 
-@router.get("/_ver")
-async def _ver():
-    return {"build": "aff-clean-4"}
-
 
 @router.get("/products")
 async def products(db_session: AsyncSession = Depends(get_db_session)):
