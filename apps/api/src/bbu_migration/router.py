@@ -29,6 +29,9 @@ from src.db.courses.activities import Activity
 from src.db.trails import Trail
 from src.db.trail_runs import TrailRun
 from src.db.trail_steps import TrailStep
+from src.db.communities.communities import Community
+from src.db.communities.discussions import Discussion
+from src.db.communities.discussion_comments import DiscussionComment
 
 router = APIRouter()
 
@@ -122,6 +125,94 @@ async def _ensure_run(db: AsyncSession, trail: Trail, course: Course, user_id: i
     await db.commit()
     await db.refresh(run)
     return run
+
+
+async def _ensure_community(db: AsyncSession, org_id: int, name: str, desc: str) -> Community:
+    c = (await db.execute(
+        select(Community).where(Community.org_id == org_id, Community.name == name)
+    )).scalars().first()
+    if c:
+        return c
+    c = Community(org_id=org_id, name=name[:200], description=desc or "", public=True,
+                  community_uuid=f"community_{uuid4()}", creation_date=_now(), update_date=_now())
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.post("/communities")
+async def migrate_communities(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Bulk-import Circle community/event spaces -> LearnHouse Communities, their
+    posts -> Discussions, and comments -> DiscussionComments. Authors mapped by
+    email (created if missing); timestamps preserved. Idempotent by (community,
+    title) for discussions."""
+    body = await request.json()
+    _check(request, body)
+    org = (await db_session.execute(select(Organization).where(Organization.slug == body.get("org_slug", "bbu")))).scalars().first()
+    if not org:
+        raise HTTPException(404, "org not found")
+    org_id = org.id
+    role_id = await _learner_role_id(db_session)
+    admin_email = (os.environ.get("LEARNHOUSE_INITIAL_ADMIN_EMAIL") or "m@sixtysixten.com").lower()
+
+    async def author_id(email, name):
+        email = (email or "").strip().lower()
+        if not email:
+            email = admin_email
+        try:
+            u = await _get_or_create_user(db_session, org_id, role_id, email, name or "Member")
+            return u.id
+        except Exception:
+            u = (await db_session.execute(select(User).where(User.email == admin_email))).scalars().first()
+            return u.id if u else None
+
+    made = {"communities": 0, "discussions": 0, "comments": 0, "skipped": 0}
+    errors = []
+    for comm in body.get("communities", []):
+        c = await _ensure_community(db_session, org_id, comm["name"], comm.get("description", ""))
+        made["communities"] += 1
+        for post in comm.get("discussions", []):
+            title = (post.get("title") or "Untitled")[:300]
+            existing = (await db_session.execute(select(Discussion).where(
+                Discussion.community_id == c.id, Discussion.title == title))).scalars().first()
+            if existing:
+                made["skipped"] += 1
+                disc = existing
+            else:
+                aid = await author_id(post.get("author_email"), post.get("author_name"))
+                if not aid:
+                    errors.append(f"no author for post '{title[:40]}'")
+                    continue
+                disc = Discussion(
+                    title=title, content=post.get("content") or "", label="general",
+                    community_id=c.id, org_id=org_id, author_id=aid,
+                    discussion_uuid=f"discussion_{uuid4()}",
+                    creation_date=post.get("created_at") or _now(),
+                    update_date=post.get("created_at") or _now())
+                db_session.add(disc)
+                await db_session.commit()
+                await db_session.refresh(disc)
+                made["discussions"] += 1
+            for cm in post.get("comments", []):
+                caid = await author_id(cm.get("author_email"), cm.get("author_name"))
+                if not caid:
+                    continue
+                # idempotency: skip if same author+content already on this discussion
+                dup = (await db_session.execute(select(DiscussionComment).where(
+                    DiscussionComment.discussion_id == disc.id,
+                    DiscussionComment.author_id == caid,
+                    DiscussionComment.content == (cm.get("content") or "")))).scalars().first()
+                if dup:
+                    continue
+                db_session.add(DiscussionComment(
+                    content=cm.get("content") or "", discussion_id=disc.id, author_id=caid,
+                    comment_uuid=f"comment_{uuid4()}",
+                    creation_date=cm.get("created_at") or _now(),
+                    update_date=cm.get("created_at") or _now()))
+                made["comments"] += 1
+            await db_session.commit()
+    return {**made, "errors": errors[:20], "error_count": len(errors)}
 
 
 @router.get("/verify")
