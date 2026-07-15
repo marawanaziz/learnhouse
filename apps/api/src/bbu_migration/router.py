@@ -124,6 +124,37 @@ async def _ensure_run(db: AsyncSession, trail: Trail, course: Course, user_id: i
     return run
 
 
+@router.get("/verify")
+async def verify(request: Request, email: str = "", db_session: AsyncSession = Depends(get_db_session)):
+    """Admin-key gated counts to confirm the student migration end-state."""
+    _check(request)
+    from sqlalchemy import func
+    org = (await db_session.execute(select(Organization).where(Organization.slug == "bbu"))).scalars().first()
+    org_id = org.id
+    users = (await db_session.execute(
+        select(func.count()).select_from(UserOrganization).where(UserOrganization.org_id == org_id)
+    )).scalar()
+    runs = (await db_session.execute(select(func.count()).select_from(TrailRun))).scalar()
+    steps = (await db_session.execute(
+        select(func.count()).select_from(TrailStep).where(TrailStep.complete == True)  # noqa: E712
+    )).scalar()
+    out = {"org": "bbu", "users": users, "enrollments_trailruns": runs, "completed_steps": steps}
+    if email:
+        u = (await db_session.execute(select(User).where(User.email == email.lower()))).scalars().first()
+        if u:
+            urun = (await db_session.execute(
+                select(func.count()).select_from(TrailRun).where(TrailRun.user_id == u.id)
+            )).scalar()
+            ustep = (await db_session.execute(
+                select(func.count()).select_from(TrailStep).where(
+                    TrailStep.user_id == u.id, TrailStep.complete == True)  # noqa: E712
+            )).scalar()
+            out["sample"] = {"email": email, "user_id": u.id, "enrollments": urun, "completed_lessons": ustep}
+        else:
+            out["sample"] = {"email": email, "found": False}
+    return out
+
+
 @router.post("/students")
 async def migrate_students(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     body = await request.json()
