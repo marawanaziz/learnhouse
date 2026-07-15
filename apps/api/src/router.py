@@ -162,6 +162,8 @@ from src.bbu_payments import router as bbu_payments_router  # noqa: E402
 v1_router.include_router(bbu_payments_router.router, prefix="/bbu", tags=["bbu-payments"])
 from src.bbu_payments import affiliate_router as bbu_affiliate_router  # noqa: E402
 v1_router.include_router(bbu_affiliate_router.router, prefix="/bbu/affiliate", tags=["bbu-affiliate"])
+from src.bbu_payments import ebooks as bbu_ebooks_router  # noqa: E402
+v1_router.include_router(bbu_ebooks_router.router, prefix="/bbu/ebook", tags=["bbu-ebooks"])
 from src.bbu_migration import router as bbu_migration_router  # noqa: E402
 v1_router.include_router(bbu_migration_router.router, prefix="/bbu/migrate", tags=["bbu-migration"])
 v1_router.include_router(

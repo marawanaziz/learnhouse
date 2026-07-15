@@ -17,7 +17,7 @@ class BBUProduct(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
     name: str = Field(sa_column=Column(String(300)))
-    kind: str = Field(default="course", sa_column=Column(String(20)))  # course | bundle
+    kind: str = Field(default="course", sa_column=Column(String(20)))  # course | bundle | ebook
     # comma-separated course_uuids this product grants access to
     course_uuids: str = Field(default="", sa_column=Column(String))
     price_cents: int = Field(default=0)
@@ -25,6 +25,9 @@ class BBUProduct(SQLModel, table=True):
     public: bool = Field(default=True)
     description: str = Field(default="", sa_column=Column(String))
     image_url: str = Field(default="", sa_column=Column(String))
+    # for kind="ebook": stored file under the content volume + display filename
+    asset_path: str = Field(default="", sa_column=Column(String))
+    asset_filename: str = Field(default="", sa_column=Column(String(300)))
 
 
 class BBUOrder(SQLModel, table=True):
@@ -47,6 +50,8 @@ class BBUOrder(SQLModel, table=True):
     paid_at: str = Field(default="", sa_column=Column(String(40)))
     # affiliate attribution captured at checkout (ref code from cookie)
     affiliate_ref: str = Field(default="", sa_column=Column(String(64), index=True))
+    # secure e-book delivery token (set on fulfillment for kind="ebook" orders)
+    download_token: str = Field(default="", sa_column=Column(String(64), index=True))
     extra: Optional[dict] = Field(default=None, sa_column=Column(JSON))
 
 

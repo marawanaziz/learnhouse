@@ -17,6 +17,10 @@ from src.bbu_payments.models import (  # noqa: F401
 # never ALTERs, so additive columns are applied here explicitly.
 ALTERS = [
     "ALTER TABLE bbu_order ADD COLUMN IF NOT EXISTS affiliate_ref VARCHAR(64) DEFAULT ''",
+    "ALTER TABLE bbu_order ADD COLUMN IF NOT EXISTS download_token VARCHAR(64) DEFAULT ''",
+    "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS asset_path VARCHAR DEFAULT ''",
+    "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS asset_filename VARCHAR(300) DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS ix_bbu_order_download_token ON bbu_order (download_token)",
 ]
 
 

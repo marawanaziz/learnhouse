@@ -211,6 +211,16 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     # capture ref from session metadata if the cookie didn't reach checkout
     if not order.affiliate_ref:
         order.affiliate_ref = (session_obj.get("metadata") or {}).get("affiliate_ref", "") or ""
+    # E-book delivery: issue a secure download token for paid ebook orders.
+    try:
+        prod = (await db_session.execute(
+            select(BBUProduct).where(BBUProduct.id == order.product_id)
+        )).scalars().first()
+        if prod and prod.kind == "ebook":
+            from src.bbu_payments.ebooks import ensure_download_token
+            ensure_download_token(order)
+    except Exception:
+        pass
     db_session.add(order)
     await db_session.commit()
     await db_session.refresh(order)

@@ -79,13 +79,17 @@ def store_page(products, base):
         cards = ("<p style='margin:40px 0;color:#6b6f79'>No products published yet. "
                  "Add products in the admin, then they appear here.</p>")
     for p in products:
+        label = {"bundle": "Bundle", "ebook": "E-book"}.get(p.kind, "Training")
+        cta = "Buy &amp; download" if p.kind == "ebook" else "Enroll now"
         cards += (
-            f"<div class='card'><div class='thumb'></div><div class='body'>"
-            f"<span class='pill'>{'Bundle' if p.kind=='bundle' else 'Training'}</span>"
+            f"<div class='card'><div class='thumb'"
+            + (f" style=\"background:#fff url('{p.image_url}') center/cover\"" if p.image_url else "")
+            + f"></div><div class='body'>"
+            f"<span class='pill'>{label}</span>"
             f"<h3>{p.name}</h3>"
             f"<p style='color:#4a5b68;font-size:.92rem'>{(p.description or '')[:130]}</p>"
             f"<div class='price'>{_price(p.price_cents, p.currency)}</div>"
-            f"<a class='btn' href='{base}/api/v1/bbu/buy/{p.id}'>Enroll now</a>"
+            f"<a class='btn' href='{base}/api/v1/bbu/buy/{p.id}'>{cta}</a>"
             f"</div></div>"
         )
     inner = (
@@ -101,13 +105,17 @@ def store_page(products, base):
 
 
 def checkout_page(p, pub_key, base):
+    is_ebook = getattr(p, "kind", "") == "ebook"
+    eyebrow = "Buy the e-book" if is_ebook else "Enroll"
+    email_label = ("Email for your download link &amp; receipt" if is_ebook
+                   else "Email for your access &amp; receipt")
     inner = (
         f"<div class='checkout'>"
-        f"<span class='eyebrow'>Enroll</span>"
+        f"<span class='eyebrow'>{eyebrow}</span>"
         f"<h1 style='font-size:2rem;margin:12px 0 6px'>{p.name}</h1>"
         f"<p style='color:#4a5b68;margin-bottom:8px'>{(p.description or '')[:200]}</p>"
         f"<div class='price' style='margin:18px 0'>{_price(p.price_cents, p.currency)}</div>"
-        f"<label for='email'>Email for your access &amp; receipt</label>"
+        f"<label for='email'>{email_label}</label>"
         f"<input id='email' type='email' placeholder='you@example.com' required>"
         f"<div style='height:22px'></div>"
         f"<button class='btn' style='width:100%' id='pay'>Proceed to secure checkout →</button>"
@@ -132,16 +140,28 @@ def checkout_page(p, pub_key, base):
 
 def success_page(order, base):
     paid = order and order.status == "paid"
-    status_line = ("Your enrollment is confirmed." if paid
-                   else "Payment received — finalizing your enrollment.")
+    is_ebook = bool(order and getattr(order, "download_token", ""))
+    if is_ebook:
+        headline = "Your download is ready!"
+        status_line = "Thanks for your purchase — grab your e-book below." if paid \
+            else "Payment received — preparing your download."
+        cta = (f"<a class='btn' href='{base}/api/v1/bbu/ebook/download/{order.download_token}'>"
+               f"⬇ Download your e-book</a>"
+               f"<p style='margin-top:14px;color:#6b6f79;font-size:.85rem'>"
+               f"We've also emailed this link to you.</p>")
+    else:
+        headline = "You're in!"
+        status_line = "Your enrollment is confirmed." if paid \
+            else "Payment received — finalizing your enrollment."
+        cta = f"<a class='btn' href='{base}/courses'>Go to my courses →</a>"
     inner = (
         f"<div class='checkout' style='text-align:center'>"
-        f"<div style='font-size:3rem'>🎉</div>"
-        f"<h1 style='font-size:2rem;margin:12px 0'>You're in!</h1>"
+        f"<div style='font-size:3rem'>{'📘' if is_ebook else '🎉'}</div>"
+        f"<h1 style='font-size:2rem;margin:12px 0'>{headline}</h1>"
         f"<p style='color:#4a5b68'>{status_line}</p>"
         + (f"<p style='margin-top:10px;color:#6b6f79;font-size:.9rem'>Receipt sent to {order.email}</p>" if order and order.email else "")
         + f"<div style='height:24px'></div>"
-        f"<a class='btn' href='{base}/courses'>Go to my courses →</a>"
+        f"{cta}"
         f"</div>"
     )
-    return _shell("Enrollment confirmed", inner)
+    return _shell(headline, inner)
