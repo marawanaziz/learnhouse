@@ -156,6 +156,19 @@ async def migrate_communities(request: Request, db_session: AsyncSession = Depen
     role_id = await _learner_role_id(db_session)
     admin_email = (os.environ.get("LEARNHOUSE_INITIAL_ADMIN_EMAIL") or "m@sixtysixten.com").lower()
 
+    # Optional clean slate: wipe this org's migrated discussions + comments so a
+    # re-run produces an exact, non-duplicated result.
+    if body.get("reset"):
+        from sqlalchemy import delete
+        comm_ids = [r for (r,) in (await db_session.execute(
+            select(Community.id).where(Community.org_id == org_id))).all()]
+        disc_ids = [r for (r,) in (await db_session.execute(
+            select(Discussion.id).where(Discussion.community_id.in_(comm_ids)))).all()] if comm_ids else []
+        if disc_ids:
+            await db_session.execute(delete(DiscussionComment).where(DiscussionComment.discussion_id.in_(disc_ids)))
+            await db_session.execute(delete(Discussion).where(Discussion.id.in_(disc_ids)))
+            await db_session.commit()
+
     async def author_id(email, name):
         email = (email or "").strip().lower()
         if not email:
