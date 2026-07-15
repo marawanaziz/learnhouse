@@ -18,9 +18,12 @@ from src.core.ee_hooks import is_ee_available, get_ee_hooks
 
 DeploymentMode = Literal['saas', 'oss', 'ee']
 
-# Features blocked in OSS mode but available in EE and plan-gated in SaaS
+# Features blocked in OSS mode but available in EE and plan-gated in SaaS.
+# NOTE: 'payments' is intentionally NOT in this set. BBU ships its own
+# clean-room payments backend (src/bbu_payments/*, no EE code), so the native
+# Store UI is served by our own offers API — the feature is enabled in OSS.
 EE_ONLY_FEATURES: frozenset[str] = frozenset({
-    'sso', 'audit_logs', 'payments', 'analytics_advanced', 'scorm'
+    'sso', 'audit_logs', 'analytics_advanced', 'scorm'
 })
 
 

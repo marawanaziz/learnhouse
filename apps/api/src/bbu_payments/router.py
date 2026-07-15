@@ -192,6 +192,39 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
     return {"url": session.url, "session_id": session.id}
 
 
+async def _grant_course_access(db_session: AsyncSession, order, product):
+    """Enroll the order's buyer into each course granted by the product. Reuses
+    the migration's idempotent trail/run helpers so a re-delivered webhook or a
+    success re-hit doesn't create duplicate enrollments."""
+    from src.db.courses.courses import Course
+    from src.db.users import User
+    from src.bbu_migration.router import _ensure_trail, _ensure_run
+
+    uuids = [u for u in (product.course_uuids or "").split(",") if u]
+    if not uuids:
+        return
+    # Resolve the buyer: prefer the user_id captured at checkout, else by email.
+    user = None
+    if order.user_id:
+        user = (await db_session.execute(
+            select(User).where(User.id == order.user_id)
+        )).scalars().first()
+    if not user and order.email:
+        user = (await db_session.execute(
+            select(User).where(User.email == order.email)
+        )).scalars().first()
+    if not user:
+        return  # no account yet (guest email) — order stays the record of purchase
+    trail = await _ensure_trail(db_session, order.org_id, user.id)
+    for cu in uuids:
+        course = (await db_session.execute(
+            select(Course).where(Course.course_uuid == cu)
+        )).scalars().first()
+        if course:
+            await _ensure_run(db_session, trail, course, user.id)
+    await db_session.commit()
+
+
 async def _fulfill(db_session: AsyncSession, session_obj: dict):
     """Mark the order paid. (Enrollment: OSS build grants access on the free
     tier, so a paid buyer can open the course immediately; the paid order is the
@@ -212,10 +245,10 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     if not order.affiliate_ref:
         order.affiliate_ref = (session_obj.get("metadata") or {}).get("affiliate_ref", "") or ""
     # E-book delivery: issue a secure download token for paid ebook orders.
+    prod = (await db_session.execute(
+        select(BBUProduct).where(BBUProduct.id == order.product_id)
+    )).scalars().first()
     try:
-        prod = (await db_session.execute(
-            select(BBUProduct).where(BBUProduct.id == order.product_id)
-        )).scalars().first()
         if prod and prod.kind == "ebook":
             from src.bbu_payments.ebooks import ensure_download_token
             ensure_download_token(order)
@@ -224,6 +257,15 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     db_session.add(order)
     await db_session.commit()
     await db_session.refresh(order)
+    # Course access: enroll the buyer into every course the product grants, so
+    # the purchase shows in their trail / "my courses" and progress tracks.
+    # Best-effort — never let an enrollment hiccup block marking the order paid.
+    try:
+        if prod and prod.kind in ("course", "bundle"):
+            await _grant_course_access(db_session, order, prod)
+    except Exception:
+        import traceback
+        print(f"[BBU] course grant failed for order {order.id}:\n{traceback.format_exc()[-600:]}", flush=True)
     # Book the affiliate commission. Always attempted — it's idempotent (one
     # commission per order+event), so re-delivered webhooks / success re-hits
     # don't double-book, and a prior partial fulfill can still be completed.

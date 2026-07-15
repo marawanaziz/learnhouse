@@ -3,7 +3,7 @@ import { getOrganizationContextInfo } from '@services/organizations/orgs'
 import { getCanonicalUrl, getOrgSeoConfig, buildPageTitle, buildBreadcrumbJsonLd } from '@/lib/seo/utils'
 import { getServerCanonicalUrl } from '@/lib/seo/utils.server'
 import { JsonLd } from '@components/SEO/JsonLd'
-import { getPublicOffer } from '@services/payments/offers'
+import { getPublicOffer, getPublicOffers } from '@services/payments/offers'
 import { getServerSession } from '@/lib/auth/server'
 import OfferDetailClient from './offer-detail'
 
@@ -38,6 +38,14 @@ export default async function OfferPage({ params }: { params: PageParams }) {
     offer = result?.data ?? result
   } catch {}
 
+  // Upsells: other offers from the same org (excluding this one), max 3.
+  let upsells: any[] = []
+  try {
+    const all = await getPublicOffers(org.id)
+    const list = all?.success && Array.isArray(all.data) ? all.data : []
+    upsells = list.filter((o: any) => o.offer_uuid !== offerid).slice(0, 3)
+  } catch {}
+
   const breadcrumbJsonLd = buildBreadcrumbJsonLd([
     { name: 'Home', url: await getServerCanonicalUrl(orgslug, '/') },
     { name: 'Store', url: await getServerCanonicalUrl(orgslug, '/store') },
@@ -53,6 +61,7 @@ export default async function OfferPage({ params }: { params: PageParams }) {
         offer={offer}
         offerUuid={offerid}
         access_token={access_token}
+        upsells={upsells}
       />
     </>
   )

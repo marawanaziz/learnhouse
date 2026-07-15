@@ -7,7 +7,7 @@ import { getUriWithOrg } from '@services/config/config'
 import { getUserEnrollments, getBillingPortalSession } from '@services/payments/offers'
 import {
   ShoppingBag, RefreshCcw, SquareCheck, ArrowRight,
-  ExternalLink, Loader2, CalendarDays, BadgeCheck
+  ExternalLink, Loader2, CalendarDays, BadgeCheck, Download
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
@@ -81,12 +81,21 @@ function EnrollmentCard({ enrollment, orgslug, onManageBilling, billingLoading }
 
         {/* Actions */}
         <div className="flex items-center gap-2 pt-1">
-          <Link
-            href={getUriWithOrg(orgslug, `/store/offers/${enrollment.offer_id}`)}
-            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors px-3 py-2 rounded-lg"
-          >
-            View offer <ArrowRight size={11} />
-          </Link>
+          {enrollment.download_url ? (
+            <a
+              href={enrollment.download_url}
+              className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-gray-900 hover:bg-gray-800 transition-colors px-3 py-2 rounded-lg"
+            >
+              <Download size={12} /> Download e-book
+            </a>
+          ) : (
+            <Link
+              href={getUriWithOrg(orgslug, `/store/offers/${enrollment.offer_id}`)}
+              className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors px-3 py-2 rounded-lg"
+            >
+              View offer <ArrowRight size={11} />
+            </Link>
+          )}
           {isSubscription && (
             <button
               onClick={onManageBilling}

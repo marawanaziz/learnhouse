@@ -29,6 +29,7 @@ interface OfferDetailClientProps {
   offerUuid: string
   offer: any
   access_token: string | null
+  upsells?: any[]
 }
 
 function resourceIcon(type: string, size = 14) {
@@ -95,7 +96,7 @@ function ResourceCard({ resource, orgslug }: { resource: Resource; orgslug: stri
   return url ? <Link href={url}>{card}</Link> : card
 }
 
-export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, access_token }: OfferDetailClientProps) {
+export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, access_token, upsells = [] }: OfferDetailClientProps) {
   const session = useLHSession() as any
   const token = session?.data?.tokens?.access_token ?? access_token
   const router = useRouter()
@@ -305,6 +306,33 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
             </div>
           </div>
         </div>
+
+        {/* Upsells — "You might also like" */}
+        {upsells.length > 0 && (
+          <div className="mt-14">
+            <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4">You might also like</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {upsells.map((u) => (
+                <Link
+                  key={u.offer_uuid}
+                  href={getUriWithOrg(orgslug, `/store/offers/${u.offer_uuid}`)}
+                  className="group bg-white rounded-xl nice-shadow overflow-hidden flex flex-col cursor-pointer transition-all duration-200 hover:scale-[1.01]"
+                >
+                  <div className="aspect-video bg-gray-50 flex items-center justify-center">
+                    <ShoppingBag size={24} className="text-gray-200" strokeWidth={1.5} />
+                  </div>
+                  <div className="p-4 flex flex-col flex-1 gap-1.5">
+                    <h3 className="font-bold text-sm text-gray-900 leading-snug group-hover:text-indigo-700 transition-colors line-clamp-2">{u.name}</h3>
+                    <p className="text-xs text-gray-500 line-clamp-2">{u.description}</p>
+                    <div className="mt-auto pt-2 text-lg font-black text-gray-900">
+                      {new Intl.NumberFormat('en-US', { style: 'currency', currency: u.currency || 'USD' }).format(u.amount)}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </GeneralWrapperStyled>
     </div>
   )

@@ -28,6 +28,8 @@ class BBUProduct(SQLModel, table=True):
     # for kind="ebook": stored file under the content volume + display filename
     asset_path: str = Field(default="", sa_column=Column(String))
     asset_filename: str = Field(default="", sa_column=Column(String(300)))
+    # comma-separated selling points shown on the native offer page
+    benefits: str = Field(default="", sa_column=Column(String))
 
 
 class BBUOrder(SQLModel, table=True):
