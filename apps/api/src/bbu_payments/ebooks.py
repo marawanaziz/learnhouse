@@ -88,6 +88,66 @@ async def download_ebook(token: str, db_session: AsyncSession = Depends(get_db_s
                         filename=product.asset_filename or "ebook.pdf")
 
 
+@router.post("/product/{product_id}")
+async def update_ebook(
+    product_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Admin: edit an ebook product (price, name, description, visibility).
+    Body is JSON; any of price_cents / name / description / public may be set."""
+    _check_admin(request, request.query_params.get("key", ""))
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    p = (await db_session.execute(
+        select(BBUProduct).where(BBUProduct.id == product_id)
+    )).scalars().first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+    if "price_cents" in body:
+        p.price_cents = int(body["price_cents"])
+    if "name" in body:
+        p.name = str(body["name"])
+    if "description" in body:
+        p.description = str(body["description"])
+    if "image_url" in body:
+        p.image_url = str(body["image_url"])
+    if "public" in body:
+        p.public = bool(body["public"])
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    return {"product_id": p.id, "name": p.name, "price_cents": p.price_cents,
+            "public": p.public}
+
+
+@router.delete("/product/{product_id}")
+async def delete_ebook(
+    product_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Admin: delete an ebook product and remove its stored file."""
+    _check_admin(request, request.query_params.get("key", ""))
+    p = (await db_session.execute(
+        select(BBUProduct).where(BBUProduct.id == product_id)
+    )).scalars().first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+    path = p.asset_path
+    await db_session.delete(p)
+    await db_session.commit()
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+    return {"deleted": product_id}
+
+
 def ensure_download_token(order: BBUOrder) -> str:
     """Assign a delivery token to a paid ebook order (idempotent)."""
     if not order.download_token:
