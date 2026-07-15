@@ -74,19 +74,16 @@ async def _get_or_create_user(db: AsyncSession, org_id: int, role_id: int,
     if user:
         return user
     username = await _unique_username(db, email)
+    parts = (name or "").strip().split(" ", 1)
+    first_name = (parts[0] if parts and parts[0] else "Member")[:100]
+    last_name = (parts[1] if len(parts) > 1 else "")[:100]
     user = User(
-        username=username, email=email,
+        username=username, email=email, first_name=first_name, last_name=last_name,
         password=security_hash_password(secrets.token_urlsafe(24)),
         user_uuid=f"user_{uuid4()}", email_verified=False,
         signup_method="circle_migration",
         creation_date=_now(), update_date=_now(),
     )
-    # optional display name field on UserBase if present
-    if hasattr(user, "first_name") and name:
-        try:
-            user.first_name = name[:100]
-        except Exception:
-            pass
     db.add(user)
     await db.commit()
     await db.refresh(user)
