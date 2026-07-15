@@ -174,8 +174,12 @@ async def migrate_communities(request: Request, db_session: AsyncSession = Depen
         made["communities"] += 1
         for post in comm.get("discussions", []):
             title = (post.get("title") or "Untitled")[:300]
+            # Dedup on (community, title, created_at): distinct posts that share a
+            # title (e.g. two "Introduction" posts) are kept; true re-runs no-op.
+            _created = post.get("created_at") or ""
             existing = (await db_session.execute(select(Discussion).where(
-                Discussion.community_id == c.id, Discussion.title == title))).scalars().first()
+                Discussion.community_id == c.id, Discussion.title == title,
+                Discussion.creation_date == _created))).scalars().first()
             if existing:
                 made["skipped"] += 1
                 disc = existing
