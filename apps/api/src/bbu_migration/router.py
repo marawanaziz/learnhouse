@@ -334,3 +334,74 @@ async def migrate_students(request: Request, db_session: AsyncSession = Depends(
             errors.append(f"{email}: {e}")
     return {"users_created": users_made, "enrollments": enrolls, "steps": steps,
             "errors": errors[:20], "error_count": len(errors)}
+
+
+@router.post("/thumbnails")
+async def import_thumbnails(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Set course thumbnails from remote image URLs (e.g. the original Circle
+    cover images). Body: {items:[{course_uuid, image_url}], overwrite?:bool}.
+    Fetches each image server-side and stores it through the normal thumbnail
+    pipeline so it lands in the content volume at the path the UI expects."""
+    import io
+    import httpx
+    from starlette.datastructures import UploadFile as StarletteUploadFile, Headers
+    from src.db.courses.courses import ThumbnailType
+    from src.services.courses.thumbnails import upload_thumbnail
+
+    body = await request.json()
+    _check(request, body)
+    items = body.get("items") or []
+    overwrite = bool(body.get("overwrite", False))
+
+    # org_id -> org_uuid cache
+    org_cache: dict[int, str] = {}
+    async def _org_uuid(org_id: int) -> str:
+        if org_id not in org_cache:
+            o = (await db_session.execute(
+                select(Organization).where(Organization.id == org_id)
+            )).scalars().first()
+            org_cache[org_id] = o.org_uuid if o else ""
+        return org_cache[org_id]
+
+    set_count, skipped, errors = 0, 0, []
+    async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
+        for it in items:
+            cu = (it or {}).get("course_uuid", "")
+            url = (it or {}).get("image_url", "")
+            try:
+                course = (await db_session.execute(
+                    select(Course).where(Course.course_uuid == cu)
+                )).scalars().first()
+                if not course:
+                    errors.append(f"{cu}: course not found")
+                    continue
+                if course.thumbnail_image and not overwrite:
+                    skipped += 1
+                    continue
+                if not url:
+                    errors.append(f"{cu}: no image_url")
+                    continue
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code != 200 or not r.content:
+                    errors.append(f"{cu}: fetch {r.status_code}")
+                    continue
+                ctype = r.headers.get("content-type", "image/jpeg").split(";")[0]
+                ext = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
+                       "image/webp": "webp", "image/gif": "gif"}.get(ctype, "jpg")
+                uf = StarletteUploadFile(
+                    filename=f"circle_cover.{ext}",
+                    file=io.BytesIO(r.content),
+                    headers=Headers({"content-type": ctype}),
+                )
+                org_uuid = await _org_uuid(course.org_id)
+                name_in_disk = await upload_thumbnail(uf, org_uuid, course.course_uuid)
+                course.thumbnail_image = name_in_disk
+                course.thumbnail_type = ThumbnailType.IMAGE
+                db_session.add(course)
+                await db_session.commit()
+                set_count += 1
+            except Exception as e:
+                await db_session.rollback()
+                errors.append(f"{cu}: {e}")
+    return {"set": set_count, "skipped": skipped,
+            "errors": errors[:30], "error_count": len(errors)}
