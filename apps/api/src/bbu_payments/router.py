@@ -274,6 +274,15 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     except Exception:
         import traceback
         print(f"[BBU] commission booking failed for order {order.id}:\n{traceback.format_exc()}", flush=True)
+    # Mirror the purchase into GoHighLevel as a course_enrollment module record
+    # + contact rollup fields. Fail-soft: a CRM hiccup must never break a sale.
+    try:
+        if prod:
+            from src.bbu_ghl import sync as ghl_sync
+            await ghl_sync.sync_order(db_session, order, prod)
+    except Exception:
+        import traceback
+        print(f"[BBU] GHL sync failed for order {order.id}:\n{traceback.format_exc()[-600:]}", flush=True)
 
 
 @router.post("/webhook")

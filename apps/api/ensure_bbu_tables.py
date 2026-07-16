@@ -12,6 +12,7 @@ from src.bbu_payments.models import (  # noqa: F401
     BBUProduct, BBUOrder,
     BBUAffiliate, BBUAffiliateSettings, BBUReferralClick, BBUCommission, BBUPayout,
 )
+from src.bbu_ghl.models import BBUGHLSync  # noqa: F401
 
 # Columns added to pre-existing tables after their first creation. create_all
 # never ALTERs, so additive columns are applied here explicitly.
@@ -33,6 +34,7 @@ def main():
         BBUProduct.__table__, BBUOrder.__table__,
         BBUAffiliateSettings.__table__, BBUAffiliate.__table__,
         BBUReferralClick.__table__, BBUCommission.__table__, BBUPayout.__table__,
+        BBUGHLSync.__table__,
     ]
     try:
         SQLModel.metadata.create_all(engine, tables=tables)

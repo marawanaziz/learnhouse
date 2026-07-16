@@ -116,6 +116,14 @@ async def join_post(request: Request, db_session: AsyncSession = Depends(get_db_
     url = await _create_onboarding_link(request, affiliate)
     db_session.add(affiliate)
     await db_session.commit()
+    # Mirror affiliate state onto the GHL contact as fields (code + status), so
+    # the welcome / promo-kit workflows can trigger. Fail-soft.
+    try:
+        from src.bbu_ghl import sync as ghl_sync
+        await ghl_sync.sync_affiliate(db_session, affiliate)
+    except Exception:
+        import traceback
+        print(f"[BBU] GHL affiliate sync failed for {email}:\n{traceback.format_exc()[-400:]}", flush=True)
     return {"onboarding_url": url}
 
 
