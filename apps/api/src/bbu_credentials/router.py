@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -198,6 +199,99 @@ async def refresh_statuses(request: Request, org_id: int = 1,
     if changed:
         await db_session.commit()
     return {"checked": len(rows), "changed": changed}
+
+
+# --------------------------------------------------------------------------- #
+# Public certificate directory (2.4). No admin key — only opt-in credentials that
+# are currently valid (provisional or full) are exposed; name + credential only.
+# --------------------------------------------------------------------------- #
+@router.get("/directory")
+async def directory(q: str = "", org_id: int = 1,
+                    db_session: AsyncSession = Depends(get_db_session)):
+    rows = (await db_session.execute(select(BBUCredential).where(
+        BBUCredential.org_id == org_id,
+        BBUCredential.directory_opt_in == True,  # noqa: E712
+    ))).scalars().all()
+    uids = [c.user_id for c in rows]
+    users = {}
+    if uids:
+        urows = (await db_session.execute(select(User).where(User.id.in_(uids)))).scalars().all()
+        users = {u.id: u for u in urows}
+    ql = (q or "").strip().lower()
+    out = []
+    for c in rows:
+        eff = svc.compute_effective_status(c)
+        if eff not in ("provisional", "full"):
+            continue
+        u = users.get(c.user_id)
+        name = f"{getattr(u, 'first_name', '')} {getattr(u, 'last_name', '')}".strip() if u else ""
+        if ql and ql not in name.lower() and ql not in c.credential_type.lower():
+            continue
+        label = {"birth": "Certified Birth Doula", "postpartum": "Certified Postpartum Doula"}.get(
+            c.credential_type, c.credential_type.title())
+        out.append({
+            "name": name or "BBU Professional",
+            "credential": label,
+            "status": eff,
+            "awarded": (c.full_effective_at or c.issued_at or "")[:10],
+            "valid_through": (c.full_expires_at or c.provisional_expires_at or "")[:10],
+        })
+    out.sort(key=lambda x: x["name"].lower())
+    return {"count": len(out), "results": out}
+
+
+@router.get("/directory/page", response_class=HTMLResponse)
+async def directory_page(org_id: int = 1, db_session: AsyncSession = Depends(get_db_session)):
+    data = await directory(q="", org_id=org_id, db_session=db_session)
+    rows_html = "".join(
+        f"<tr><td>{r['name']}</td><td>{r['credential']}</td>"
+        f"<td><span class='badge {r['status']}'>{r['status'].title()}</span></td>"
+        f"<td>{r['awarded']}</td><td>{r['valid_through']}</td></tr>"
+        for r in data["results"]
+    ) or "<tr><td colspan='5' style='text-align:center;color:#8aa'>No public credentials yet.</td></tr>"
+    return HTMLResponse(f"""<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Certified Directory · Birth &amp; Baby University</title>
+<style>
+:root{{--navy:#113d5d;--sky:#7fb2d6;--ink:#1b2733}}
+*{{box-sizing:border-box}}body{{margin:0;font-family:'Open Sans',system-ui,sans-serif;color:var(--ink);background:#f5f8fb}}
+header{{background:var(--navy);color:#fff;padding:2.4rem 1.2rem;text-align:center}}
+header h1{{margin:0 0 .3rem;font-family:'Playfair Display',Georgia,serif;font-weight:700;font-size:1.9rem}}
+header p{{margin:0;opacity:.85}}
+.wrap{{max-width:900px;margin:1.6rem auto;padding:0 1rem}}
+input{{width:100%;padding:.8rem 1rem;border:1px solid #cdd9e5;border-radius:10px;font-size:1rem;margin-bottom:1rem}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(17,61,93,.08)}}
+th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #eef3f8;font-size:.93rem}}
+th{{background:#eaf2f9;color:var(--navy);font-weight:600}}
+.badge{{padding:.2rem .6rem;border-radius:20px;font-size:.78rem;font-weight:600}}
+.badge.full{{background:#dff5e6;color:#1c7a41}}.badge.provisional{{background:#fff2d6;color:#8a6300}}
+footer{{text-align:center;color:#8aa;font-size:.8rem;padding:2rem}}
+</style></head><body>
+<header><h1>Certified Professional Directory</h1><p>Verified Birth &amp; Baby University credential holders</p></header>
+<div class=wrap>
+<input id=q placeholder="Search by name or credential…" oninput="f()">
+<table><thead><tr><th>Name</th><th>Credential</th><th>Status</th><th>Awarded</th><th>Valid through</th></tr></thead>
+<tbody id=tb>{rows_html}</tbody></table>
+</div>
+<footer>Credentials shown are self-verified and current. Birth &amp; Baby University.</footer>
+<script>
+function f(){{var v=document.getElementById('q').value.toLowerCase();
+document.querySelectorAll('#tb tr').forEach(function(r){{
+r.style.display = r.innerText.toLowerCase().indexOf(v)>-1 ? '' : 'none';}});}}
+</script></body></html>""")
+
+
+@router.delete("/{credential_id}")
+async def delete_credential(credential_id: int, request: Request,
+                            db_session: AsyncSession = Depends(get_db_session)):
+    _check(request)
+    c = (await db_session.execute(select(BBUCredential).where(
+        BBUCredential.id == credential_id))).scalars().first()
+    if not c:
+        raise HTTPException(404, "Credential not found")
+    await db_session.delete(c)
+    await db_session.commit()
+    return {"deleted": credential_id}
 
 
 @router.get("/reminders/due")

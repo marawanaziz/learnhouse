@@ -168,6 +168,22 @@ async def remove_member(cohort_id: int, request: Request, db_session: AsyncSessi
     return await svc.remove(db_session, c, u.id)
 
 
+@router.delete("/{cohort_id}")
+async def delete_cohort(cohort_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    _check(request)
+    c = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == cohort_id))).scalars().first()
+    if not c:
+        raise HTTPException(404, "Cohort not found")
+    # revoke access + drop member rows, then the cohort itself
+    await svc.close(db_session, c, revoke_access=True)
+    members = await svc.roster(db_session, cohort_id)
+    for m in members:
+        await db_session.delete(m)
+    await db_session.delete(c)
+    await db_session.commit()
+    return {"deleted": cohort_id, "members_removed": len(members)}
+
+
 @router.post("/{cohort_id}/close")
 async def close_cohort(cohort_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
     _check(request)
