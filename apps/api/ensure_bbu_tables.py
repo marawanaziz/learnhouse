@@ -9,7 +9,7 @@ from sqlmodel import SQLModel
 from cli import _to_sync_url
 from config.config import get_learnhouse_config
 from src.bbu_payments.models import (  # noqa: F401
-    BBUProduct, BBUOrder,
+    BBUProduct, BBUOrder, BBUCoupon,
     BBUAffiliate, BBUAffiliateSettings, BBUReferralClick, BBUCommission, BBUPayout,
 )
 from src.bbu_ghl.models import BBUGHLSync  # noqa: F401
@@ -31,7 +31,7 @@ def main():
     sql_url = _to_sync_url(config.database_config.sql_connection_string)  # type: ignore
     engine = create_engine(sql_url, echo=False, pool_pre_ping=True)
     tables = [
-        BBUProduct.__table__, BBUOrder.__table__,
+        BBUProduct.__table__, BBUOrder.__table__, BBUCoupon.__table__,
         BBUAffiliateSettings.__table__, BBUAffiliate.__table__,
         BBUReferralClick.__table__, BBUCommission.__table__, BBUPayout.__table__,
         BBUGHLSync.__table__,

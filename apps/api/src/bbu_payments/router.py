@@ -284,6 +284,17 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     # capture ref from session metadata if the cookie didn't reach checkout
     if not order.affiliate_ref:
         order.affiliate_ref = (session_obj.get("metadata") or {}).get("affiliate_ref", "") or ""
+    # Record any promo code the buyer applied on Stripe's page: bump the coupon's
+    # redemption count and stamp code + discount on the order for reporting.
+    try:
+        from src.bbu_payments import coupons as _coupon_svc
+        code, disc_cents = await _coupon_svc.record_redemption_from_session(
+            db_session, order.org_id, session_obj)
+        if code or disc_cents:
+            order.extra = {**(order.extra or {}), "coupon_code": code,
+                           "discount_cents": disc_cents}
+    except Exception:
+        pass
     # E-book delivery: issue a secure download token for paid ebook orders.
     prod = (await db_session.execute(
         select(BBUProduct).where(BBUProduct.id == order.product_id)

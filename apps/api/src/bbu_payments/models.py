@@ -57,6 +57,34 @@ class BBUOrder(SQLModel, table=True):
     extra: Optional[dict] = Field(default=None, sa_column=Column(JSON))
 
 
+class BBUCoupon(SQLModel, table=True):
+    """A discount / promo code. Mirrored to a Stripe Coupon + Promotion Code so
+    buyers enter it natively on Stripe Checkout (allow_promotion_codes) — Stripe
+    enforces expiry, redemption caps and minimum spend. This row is the admin
+    system-of-record and drives reporting."""
+    __tablename__ = "bbu_coupon"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    code: str = Field(default="", sa_column=Column(String(64), index=True))
+    kind: str = Field(default="percent", sa_column=Column(String(12)))   # percent | amount
+    percent_off: int = Field(default=0)                                  # 1..100
+    amount_off_cents: int = Field(default=0)
+    currency: str = Field(default="usd", sa_column=Column(String(8)))
+    # "all" or a comma-separated list of product ids the code is valid on
+    # (BBU-side reporting / validate preview; Stripe applies it to the whole cart).
+    applies_to: str = Field(default="all", sa_column=Column(String))
+    min_amount_cents: int = Field(default=0)
+    max_redemptions: int = Field(default=0)                              # 0 = unlimited
+    times_redeemed: int = Field(default=0)
+    expires_at: str = Field(default="", sa_column=Column(String(40)))    # ISO; "" = no expiry
+    active: bool = Field(default=True)
+    stripe_coupon_id: str = Field(default="", sa_column=Column(String(64)))
+    stripe_promo_id: str = Field(default="", sa_column=Column(String(64)))
+    created_at: str = Field(default="", sa_column=Column(String(40)))
+
+
 # ===========================================================================
 # Affiliate program
 # ---------------------------------------------------------------------------

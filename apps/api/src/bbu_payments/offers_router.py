@@ -35,8 +35,9 @@ from src.core.events.database import get_db_session
 from src.security.auth import get_current_user
 from src.db.courses.courses import Course
 from src.db.organizations import Organization
-from src.bbu_payments.models import BBUProduct, BBUOrder
+from src.bbu_payments.models import BBUProduct, BBUOrder, BBUCoupon
 from src.bbu_payments.router import _fulfill, _as_dict
+from src.bbu_payments import coupons as coupon_svc
 
 router = APIRouter()
 
@@ -190,6 +191,7 @@ async def checkout(
         }],
         success_url=success_url,
         cancel_url=redirect_uri or f"{origin}{org_root}/store",
+        allow_promotion_codes=True,  # buyers enter BBU promo codes on Stripe's page
         metadata={"bbu_product_id": str(p.id), "course_uuids": p.course_uuids,
                   "affiliate_ref": "", "buyer_user_id": str(uid)},
     )
@@ -369,6 +371,130 @@ async def admin_archive_offer(org_id: int, offer_uuid: str, request: Request, db
     db_session.add(p)
     await db_session.commit()
     return {"archived": _offer_uuid(p.id)}
+
+
+# --------------------------------------------------------------------------- #
+# Coupons / promo codes. Admin-key gated CRUD; public validate for store preview.
+# Codes are entered natively on Stripe Checkout (allow_promotion_codes) — these
+# rows are the admin system-of-record and mirror to Stripe on save.
+# --------------------------------------------------------------------------- #
+def _coupon_dict(c: BBUCoupon) -> dict:
+    return {
+        "id": c.id,
+        "code": c.code,
+        "kind": c.kind,
+        "percent_off": c.percent_off,
+        "amount_off": round((c.amount_off_cents or 0) / 100, 2),
+        "currency": (c.currency or "usd").upper(),
+        "applies_to": c.applies_to or "all",
+        "min_amount": round((c.min_amount_cents or 0) / 100, 2),
+        "max_redemptions": c.max_redemptions,
+        "times_redeemed": c.times_redeemed,
+        "expires_at": c.expires_at or "",
+        "active": bool(c.active),
+        "stripe_linked": bool(c.stripe_promo_id),
+    }
+
+
+@router.get("/{org_id}/coupons")
+async def admin_list_coupons(org_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    _require_admin(request)
+    rows = (await db_session.execute(
+        select(BBUCoupon).where(BBUCoupon.org_id == org_id)
+    )).scalars().all()
+    return [_coupon_dict(c) for c in rows]
+
+
+@router.post("/{org_id}/coupons")
+async def admin_create_coupon(org_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    _require_admin(request)
+    body = await request.json()
+    code = (body.get("code") or "").strip()
+    if not code:
+        raise HTTPException(400, "code required")
+    existing = await coupon_svc.find_by_code(db_session, org_id, code)
+    if existing:
+        raise HTTPException(409, "A coupon with that code already exists")
+    kind = body.get("kind", "percent")
+    c = BBUCoupon(
+        org_id=org_id, code=code, kind=kind,
+        percent_off=int(body.get("percent_off", 0) or 0),
+        amount_off_cents=round(float(body.get("amount_off", 0) or 0) * 100),
+        currency=(body.get("currency", "usd") or "usd").lower(),
+        applies_to=(body.get("applies_to") or "all"),
+        min_amount_cents=round(float(body.get("min_amount", 0) or 0) * 100),
+        max_redemptions=int(body.get("max_redemptions", 0) or 0),
+        expires_at=(body.get("expires_at") or ""),
+        active=bool(body.get("active", True)),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    try:
+        coupon_svc.ensure_stripe_objects(c)
+    except Exception as e:
+        raise HTTPException(502, f"Stripe coupon create failed: {e}")
+    db_session.add(c)
+    await db_session.commit()
+    await db_session.refresh(c)
+    return _coupon_dict(c)
+
+
+@router.put("/{org_id}/coupons/{coupon_id}")
+async def admin_update_coupon(org_id: int, coupon_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    _require_admin(request)
+    c = (await db_session.execute(
+        select(BBUCoupon).where(BBUCoupon.id == coupon_id, BBUCoupon.org_id == org_id)
+    )).scalars().first()
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    body = await request.json()
+    # Only mutable, non-Stripe-locked fields (discount value/duration are fixed
+    # in Stripe once created; changing them means archive + recreate).
+    if "applies_to" in body:
+        c.applies_to = body["applies_to"] or "all"
+    if "active" in body:
+        c.active = bool(body["active"])
+        (coupon_svc.reactivate_stripe if c.active else coupon_svc.deactivate_stripe)(c)
+    db_session.add(c)
+    await db_session.commit()
+    await db_session.refresh(c)
+    return _coupon_dict(c)
+
+
+@router.delete("/{org_id}/coupons/{coupon_id}")
+async def admin_delete_coupon(org_id: int, coupon_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    _require_admin(request)
+    c = (await db_session.execute(
+        select(BBUCoupon).where(BBUCoupon.id == coupon_id, BBUCoupon.org_id == org_id)
+    )).scalars().first()
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    c.active = False
+    coupon_svc.deactivate_stripe(c)
+    db_session.add(c)
+    await db_session.commit()
+    return {"deactivated": c.id}
+
+
+@router.post("/{org_id}/offers/{offer_uuid}/validate-coupon")
+async def validate_coupon(org_id: int, offer_uuid: str, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Pre-checkout preview: given a code + offer, return the discounted price."""
+    body = await request.json()
+    code = (body.get("code") or "").strip()
+    p = await _get_product(db_session, org_id, offer_uuid)
+    c = await coupon_svc.find_by_code(db_session, org_id, code)
+    if not c:
+        return {"valid": False, "reason": "That code isn't recognized."}
+    ok, reason = coupon_svc.validate_for(c, p.id, p.price_cents)
+    if not ok:
+        return {"valid": False, "reason": reason}
+    disc = coupon_svc.compute_discount_cents(c, p.price_cents)
+    return {
+        "valid": True,
+        "code": c.code,
+        "discount": round(disc / 100, 2),
+        "original": round(p.price_cents / 100, 2),
+        "final": round(max(0, p.price_cents - disc) / 100, 2),
+    }
 
 
 def _base_from_request(request: Request) -> str:
