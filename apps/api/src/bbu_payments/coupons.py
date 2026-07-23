@@ -14,6 +14,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.bbu_payments.models import BBUCoupon
 
+# The Stripe account's default API version (2026-06-24.dahlia) restructured the
+# promotion_codes create shape and rejects the classic top-level `coupon` param.
+# Pin ONLY the promotion-code calls to a stable version where `coupon` works;
+# everything else (Coupon.create, Checkout) stays on the account default.
+PROMO_API_VERSION = "2023-10-16"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -50,7 +56,7 @@ def ensure_stripe_objects(coupon: BBUCoupon) -> None:
                 "minimum_amount": int(coupon.min_amount_cents),
                 "minimum_amount_currency": coupon.currency or "usd",
             }
-        p = stripe.PromotionCode.create(**promo)
+        p = stripe.PromotionCode.create(stripe_version=PROMO_API_VERSION, **promo)
         coupon.stripe_promo_id = p["id"]
 
 
@@ -60,7 +66,8 @@ def deactivate_stripe(coupon: BBUCoupon) -> None:
     if not stripe.api_key or not coupon.stripe_promo_id:
         return
     try:
-        stripe.PromotionCode.modify(coupon.stripe_promo_id, active=False)
+        stripe.PromotionCode.modify(coupon.stripe_promo_id, active=False,
+                                    stripe_version=PROMO_API_VERSION)
     except Exception:
         pass
 
@@ -69,7 +76,8 @@ def reactivate_stripe(coupon: BBUCoupon) -> None:
     if not stripe.api_key or not coupon.stripe_promo_id:
         return
     try:
-        stripe.PromotionCode.modify(coupon.stripe_promo_id, active=True)
+        stripe.PromotionCode.modify(coupon.stripe_promo_id, active=True,
+                                    stripe_version=PROMO_API_VERSION)
     except Exception:
         pass
 
