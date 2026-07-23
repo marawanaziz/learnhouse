@@ -19,9 +19,16 @@ from datetime import datetime, timezone
 
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+# BBU certificate template images (the client's exact Canva artwork). Served
+# from the API because the Next standalone build doesn't reliably pick up new
+# public/ subfolders; the API file-serving path is proven (e-book downloads).
+CERT_TEMPLATE_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "cert_templates")
+)
 
 from src.core.events.database import get_db_session
 from src.db.courses.courses import Course
@@ -67,6 +74,20 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
     )).scalars().all()
     return rows
 
+
+
+@router.get("/cert-template/{name}")
+async def cert_template(name: str):
+    """Serve a BBU certificate template PNG (same-origin so html2canvas can
+    read it for the PDF export)."""
+    safe = os.path.basename(name)
+    if not (safe.startswith("bbu_cert-") and safe.endswith(".png")):
+        raise HTTPException(404, "Not found")
+    path = os.path.join(CERT_TEMPLATE_DIR, safe)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Not found")
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/products")
