@@ -715,3 +715,140 @@ async def import_thumbnails(request: Request, db_session: AsyncSession = Depends
                 errors.append(f"{cu}: {e}")
     return {"set": set_count, "skipped": skipped,
             "errors": errors[:30], "error_count": len(errors)}
+
+
+# =========================================================================== #
+# Credential course tagging (build-spec 1.6 / 2.1). Merges credential flags into
+# each cert-bearing course's Certifications.config so completion auto-issues the
+# right credential/CEUs. Idempotent (merge, not replace).
+# =========================================================================== #
+# name -> flags. Kept explicit (not inferred) so the mapping is auditable.
+CREDENTIAL_TAGS = {
+    "Certified Birth Doula Training":                  {"bbu_credential_type": "birth"},
+    "Certified Postpartum Doula Training":             {"bbu_credential_type": "postpartum"},
+    "Cross Certification Birth Doula Training":         {"bbu_credential_type": "birth", "bbu_is_cross_cert": True},
+    "Cross Certification Postpartum Doula Training":    {"bbu_credential_type": "postpartum", "bbu_is_cross_cert": True},
+    "Breastfeeding for Perinatal Professionals":       {"bbu_ceu_value": 3},
+    "Comfort Measures for Perinatal Professionals":    {"bbu_ceu_value": 3},
+    "Newborn Care for Perinatal Professionals":        {"bbu_ceu_value": 3},
+}
+
+
+@router.post("/tag-credential-courses")
+async def tag_credential_courses(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Merge credential flags (bbu_credential_type / bbu_is_cross_cert /
+    bbu_ceu_value) into each course's Certifications.config. Body: {dry_run?,
+    overrides?:{course_name:{...flags}}}. Requires the course to already have a
+    Certifications record (run /certifications first)."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from src.db.courses.certifications import Certifications
+    body = await request.json()
+    _check(request, body)
+    org_id = 1
+    dry = bool(body.get("dry_run"))
+    tags = dict(CREDENTIAL_TAGS)
+    for nm, fl in (body.get("overrides") or {}).items():
+        tags[nm] = fl
+    courses = (await db_session.execute(select(Course).where(Course.org_id == org_id))).scalars().all()
+    by_name = {c.name.strip(): c for c in courses}
+    applied, missing_course, missing_cert = [], [], []
+    for name, flags in tags.items():
+        course = by_name.get(name.strip())
+        if not course:
+            missing_course.append(name); continue
+        cert = (await db_session.execute(select(Certifications).where(
+            Certifications.course_id == course.id))).scalars().first()
+        if not cert:
+            missing_cert.append(name); continue
+        cfg = dict(cert.config or {})
+        before = {k: cfg.get(k) for k in flags}
+        if before != flags and not dry:
+            cfg.update(flags)
+            cert.config = cfg
+            flag_modified(cert, "config")
+            cert.update_date = _now()
+            db_session.add(cert)
+        applied.append({"course": name, "flags": flags, "was": before})
+    if not dry:
+        await db_session.commit()
+    return {"dry_run": dry, "applied": applied,
+            "missing_course": missing_course, "missing_cert": missing_cert}
+
+
+# =========================================================================== #
+# Certificate reissue (build-spec 1.6). Migration imported completions as
+# TrailSteps but never issued course certificates. This issues a CertificateUser
+# to every student who completed ALL activities of a cert-bearing course, so
+# existing holders can re-download at cutover. Direct row creation — does NOT run
+# the credential engine (historical dates unknown; that backfill waits on the
+# Accredible export). Idempotent; dry_run reports counts first.
+# =========================================================================== #
+@router.post("/reissue-certificates")
+async def reissue_certificates(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Body: {course_uuids?:[...], dry_run?:bool, issue_date?:ISO}. Default
+    dry_run=True. issue_date defaults to now (original Circle dates aren't in the
+    migration snapshot — accurate dates require the Accredible export)."""
+    import secrets as _secrets
+    from sqlalchemy import func as _func
+    from uuid import uuid4 as _uuid4
+    from src.db.courses.certifications import Certifications, CertificateUser
+    from src.db.trail_steps import TrailStep
+
+    body = await request.json()
+    _check(request, body)
+    org_id = 1
+    dry = body.get("dry_run", True)
+    issue_dt = (body.get("issue_date") or _now())
+    only = set(body.get("course_uuids") or [])
+
+    # cert-bearing courses = those with a Certifications record
+    certs = (await db_session.execute(select(Certifications))).scalars().all()
+    cert_by_course = {c.course_id: c for c in certs}
+    courses = (await db_session.execute(select(Course).where(
+        Course.org_id == org_id, Course.id.in_(list(cert_by_course.keys()))))).scalars().all()
+
+    _alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    report, total_issued, total_completers = [], 0, 0
+    for course in courses:
+        if only and course.course_uuid not in only:
+            continue
+        cert = cert_by_course.get(course.id)
+        # total activities for this course
+        act_ids = [a for (a,) in (await db_session.execute(
+            select(Activity.id).where(Activity.course_id == course.id))).all()]
+        n_act = len(act_ids)
+        if n_act == 0:
+            report.append({"course": course.name, "completers": 0, "issued": 0, "note": "no activities"})
+            continue
+        # users with completed steps covering ALL activities
+        rows = (await db_session.execute(
+            select(TrailStep.user_id, _func.count(_func.distinct(TrailStep.activity_id)))
+            .where(TrailStep.course_id == course.id, TrailStep.complete == True)  # noqa: E712
+            .group_by(TrailStep.user_id))).all()
+        completers = [uid for (uid, cnt) in rows if cnt and cnt >= n_act]
+        total_completers += len(completers)
+        # existing cert holders (skip)
+        have = set((await db_session.execute(
+            select(CertificateUser.user_id).where(
+                CertificateUser.certification_id == cert.id))).scalars().all())
+        to_issue = [u for u in completers if u not in have]
+        issued = 0
+        if not dry:
+            for uid in to_issue:
+                u = (await db_session.execute(select(User).where(User.id == uid))).scalars().first()
+                short = (u.user_uuid[-4:] if u and u.user_uuid else "USER")
+                ucid = (f"{_secrets.choice(_alpha)}{_secrets.choice(_alpha)}-"
+                        f"{issue_dt[:10].replace('-','')}-{short}-{_secrets.token_hex(4)}")
+                db_session.add(CertificateUser(
+                    user_id=uid, certification_id=cert.id or 0,
+                    user_certification_uuid=ucid, created_at=issue_dt, updated_at=issue_dt))
+                issued += 1
+            await db_session.commit()
+        report.append({"course": course.name, "activities": n_act,
+                       "completers": len(completers), "already_have": len(have),
+                       "issued": (issued if not dry else len(to_issue))})
+        total_issued += (issued if not dry else len(to_issue))
+    report.sort(key=lambda r: -r.get("issued", 0))
+    return {"dry_run": dry, "issue_date": issue_dt,
+            "total_completers": total_completers, "total_to_issue": total_issued,
+            "by_course": report}
