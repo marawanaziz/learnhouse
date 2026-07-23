@@ -38,6 +38,20 @@ function QuizBlockComponent(props: any) {
   const [showAIGenerator, setShowAIGenerator] = React.useState(false)
   const activityUuid = props.extension?.options?.activity?.activity_uuid
 
+  // Signal the activity page that a gated quiz is present, and when it's passed.
+  // No-skip (cert/CEU) courses use these to require a passing quiz before the
+  // lesson can be marked complete. Harmless on normal courses (the page ignores
+  // them unless the course is no-skip). Reader only — never while editing.
+  React.useEffect(() => {
+    if (isEditable) return
+    try { window.dispatchEvent(new CustomEvent('bbu:quiz-present')) } catch { /* noop */ }
+  }, [isEditable])
+  React.useEffect(() => {
+    if (!isEditable && submissionMessage === 'correct') {
+      try { window.dispatchEvent(new CustomEvent('bbu:quiz-passed')) } catch { /* noop */ }
+    }
+  }, [submissionMessage, isEditable])
+
   const applyGeneratedQuiz = (quiz: { quizId: string; questions: Question[] }) => {
     // Append the generated questions to whatever is already in the block.
     const merged = [...questions, ...quiz.questions]

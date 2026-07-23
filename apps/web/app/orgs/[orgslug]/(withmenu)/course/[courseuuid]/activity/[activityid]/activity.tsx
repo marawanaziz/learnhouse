@@ -330,20 +330,34 @@ function ActivityClient(props: ActivityClientProps) {
   // player dispatches bbu:video-present on mount and bbu:video-watched at the end.
   const [hasGatedVideo, setHasGatedVideo] = React.useState(false);
   const [videoWatched, setVideoWatched] = React.useState(false);
+  const [hasGatedQuiz, setHasGatedQuiz] = React.useState(false);
+  const [quizPassed, setQuizPassed] = React.useState(false);
   React.useEffect(() => {
     // reset per activity
     setHasGatedVideo(false);
     setVideoWatched(false);
-    const onPresent = () => setHasGatedVideo(true);
-    const onWatched = () => setVideoWatched(true);
-    window.addEventListener('bbu:video-present', onPresent);
-    window.addEventListener('bbu:video-watched', onWatched);
+    setHasGatedQuiz(false);
+    setQuizPassed(false);
+    const onVideoPresent = () => setHasGatedVideo(true);
+    const onVideoWatched = () => setVideoWatched(true);
+    const onQuizPresent = () => setHasGatedQuiz(true);
+    const onQuizPassed = () => setQuizPassed(true);
+    window.addEventListener('bbu:video-present', onVideoPresent);
+    window.addEventListener('bbu:video-watched', onVideoWatched);
+    window.addEventListener('bbu:quiz-present', onQuizPresent);
+    window.addEventListener('bbu:quiz-passed', onQuizPassed);
     return () => {
-      window.removeEventListener('bbu:video-present', onPresent);
-      window.removeEventListener('bbu:video-watched', onWatched);
+      window.removeEventListener('bbu:video-present', onVideoPresent);
+      window.removeEventListener('bbu:video-watched', onVideoWatched);
+      window.removeEventListener('bbu:quiz-present', onQuizPresent);
+      window.removeEventListener('bbu:quiz-passed', onQuizPassed);
     };
   }, [activityid]);
-  const completeBlocked = noSkipCourse && contributorStatus !== 'ACTIVE' && hasGatedVideo && !videoWatched;
+  // On no-skip courses, block "mark complete" until any gated video is watched
+  // through AND any gated quiz is passed.
+  const completeBlocked =
+    noSkipCourse && contributorStatus !== 'ACTIVE' &&
+    ((hasGatedVideo && !videoWatched) || (hasGatedQuiz && !quizPassed));
 
   // Memoize activity content
   const activityContent = useMemo(() => {
@@ -1362,7 +1376,7 @@ export function MarkStatus(props: {
             <div
               className={`${isLoading ? 'opacity-90' : ''} ${props.completeBlocked ? 'bg-gray-400 opacity-60 cursor-not-allowed' : 'bg-gray-800 hover:bg-gray-700 hover:cursor-pointer'} rounded-md px-4 nice-shadow flex flex-col p-2.5 text-white transition-all duration-200 ${isLoading ? 'cursor-not-allowed' : ''}`}
               onClick={(!isLoading && !props.completeBlocked) ? markActivityAsCompleteFront : undefined}
-              title={props.completeBlocked ? t('activities.finish_video_first', 'Finish watching the video to mark this complete') : undefined}
+              title={props.completeBlocked ? t('activities.finish_lesson_first', 'Finish watching the video and passing the quiz before marking this complete') : undefined}
             >
               <span className="text-[10px] font-bold mb-1 uppercase">{t('common.status')}</span>
               <div className="flex items-center space-x-2">
