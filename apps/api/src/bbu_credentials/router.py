@@ -307,68 +307,7 @@ async def run_reminders(request: Request, org_id: int = 1,
         body = await request.json()
     except Exception:
         body = {}
-    dry = bool(body.get("dry_run"))
-    now = svc._now_dt()
-    rows = (await db_session.execute(select(BBUCredential).where(
-        BBUCredential.org_id == org_id))).scalars().all()
-
-    # 1) detect who's entering a new reminder window
-    pending = []
-    for c in rows:
-        eff = svc.compute_effective_status(c)
-        if eff not in ("provisional", "full"):
-            continue
-        exp = svc._parse(c.full_expires_at if eff == "full" else c.provisional_expires_at)
-        if not exp:
-            continue
-        days = (exp - now).days
-        if days < 0 or days > max(REMINDER_DAYS):
-            continue
-        window = min(m for m in REMINDER_DAYS if days <= m)
-        if window == (c.last_reminder_days or 0):
-            continue  # already reminded for this window
-        pending.append((c, eff, exp, days, window))
-
-    if dry:
-        return {"dry_run": True, "would_fire": len(pending),
-                "due": [{"credential_id": c.id, "user_id": c.user_id,
-                         "credential_type": c.credential_type, "days_to_expiry": days,
-                         "window": window} for (c, eff, exp, days, window) in pending]}
-
-    # 2) push to GHL + record the window
-    from src.bbu_ghl.client import GHLClient, is_configured
-    ghl_ok = is_configured()
-    fired = []
-    ghl = GHLClient() if ghl_ok else None
-    if ghl:
-        await ghl.__aenter__()
-    try:
-        for (c, eff, exp, days, window) in pending:
-            entry = {"credential_id": c.id, "credential_type": c.credential_type,
-                     "days_to_expiry": days, "window": window, "pushed": False}
-            if ghl:
-                u = (await db_session.execute(select(User).where(
-                    User.id == c.user_id))).scalars().first()
-                if u and u.email:
-                    label = f"{eff.title()} · renew within {window} days"
-                    try:
-                        await ghl.upsert_contact(u.email, fields={
-                            "bbu__certification_status": label,
-                            "bbu__certification_expires": exp.date().isoformat(),
-                        })
-                        entry["pushed"] = True
-                    except Exception as e:
-                        entry["push_error"] = str(e)[:100]
-            c.last_reminder_days = window
-            c.updated_at = svc._now()
-            db_session.add(c)
-            fired.append(entry)
-        await db_session.commit()
-    finally:
-        if ghl:
-            await ghl.__aexit__(None, None, None)
-    return {"dry_run": False, "fired": len(fired),
-            "ghl_configured": ghl_ok, "results": fired}
+    return await svc.run_reminders(db_session, org_id, dry=bool(body.get("dry_run")))
 
 
 @router.get("/reminders/due")

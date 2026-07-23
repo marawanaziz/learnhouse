@@ -15,6 +15,7 @@ PROVISIONAL_YEARS = 1
 FULL_YEARS = 3
 CROSS_CERT_YEARS = 3
 CEU_THRESHOLD = 15
+REMINDER_DAYS = [180, 90, 60, 45, 30]  # pre-expiry reminder windows
 
 
 def _now_dt() -> datetime:
@@ -263,6 +264,73 @@ def to_dict(cred: BBUCredential, ceu_total: int = None) -> dict:
 #   bbu_is_cross_cert:   bool                       (issue full directly)
 #   bbu_ceu_value:       int                        (CEUs awarded on completion)
 # --------------------------------------------------------------------------- #
+async def run_reminders(db: AsyncSession, org_id: int = 1, dry: bool = False) -> dict:
+    """Flag credentials entering a pre-expiry reminder window they haven't been
+    reminded for, and push status+expiry onto the GHL contact so a workflow can
+    send the reminder. Idempotent per window (last_reminder_days). Fail-soft on
+    GHL. Callable from the API endpoint AND the in-process daily scheduler."""
+    from src.db.users import User
+    now = _now_dt()
+    rows = (await db.execute(select(BBUCredential).where(
+        BBUCredential.org_id == org_id))).scalars().all()
+    pending = []
+    for c in rows:
+        eff = compute_effective_status(c)
+        if eff not in ("provisional", "full"):
+            continue
+        exp = _parse(c.full_expires_at if eff == "full" else c.provisional_expires_at)
+        if not exp:
+            continue
+        days = (exp - now).days
+        if days < 0 or days > max(REMINDER_DAYS):
+            continue
+        window = min(m for m in REMINDER_DAYS if days <= m)
+        if window == (c.last_reminder_days or 0):
+            continue
+        pending.append((c, eff, exp, days, window))
+
+    if dry:
+        return {"dry_run": True, "would_fire": len(pending),
+                "due": [{"credential_id": c.id, "user_id": c.user_id,
+                         "credential_type": c.credential_type,
+                         "days_to_expiry": days, "window": window}
+                        for (c, eff, exp, days, window) in pending]}
+
+    from src.bbu_ghl.client import GHLClient, is_configured
+    ghl_ok = is_configured()
+    ghl = GHLClient() if ghl_ok else None
+    if ghl:
+        await ghl.__aenter__()
+    fired = []
+    try:
+        for (c, eff, exp, days, window) in pending:
+            entry = {"credential_id": c.id, "credential_type": c.credential_type,
+                     "window": window, "pushed": False}
+            if ghl:
+                u = (await db.execute(select(User).where(
+                    User.id == c.user_id))).scalars().first()
+                if u and u.email:
+                    label = f"{eff.title()} · renew within {window} days"
+                    try:
+                        await ghl.upsert_contact(u.email, fields={
+                            "bbu__certification_status": label,
+                            "bbu__certification_expires": exp.date().isoformat(),
+                        })
+                        entry["pushed"] = True
+                    except Exception as e:
+                        entry["push_error"] = str(e)[:100]
+            c.last_reminder_days = window
+            c.updated_at = _now()
+            db.add(c)
+            fired.append(entry)
+        await db.commit()
+    finally:
+        if ghl:
+            await ghl.__aexit__(None, None, None)
+    return {"dry_run": False, "fired": len(fired), "ghl_configured": ghl_ok,
+            "results": fired}
+
+
 async def on_course_complete(db: AsyncSession, org_id: int, user_id: int,
                              course_uuid: str, cert_config: dict) -> dict:
     cfg = cert_config or {}

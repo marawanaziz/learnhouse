@@ -62,6 +62,10 @@ register_ee_middlewares(app)
 app.add_event_handler("startup", startup_app(app))
 app.add_event_handler("shutdown", shutdown_app(app))
 
+# BBU: in-process daily credential renewal-reminder scheduler (clean-room; fail-soft).
+from src.bbu_credentials.scheduler import start_reminder_scheduler  # noqa: E402
+app.add_event_handler("startup", start_reminder_scheduler)
+
 # Content delivery — S3-aware router when S3 is enabled, local otherwise.
 # Both paths enforce access control; neither serves raw StaticFiles.
 if learnhouse_config.hosting_config.content_delivery.type == "s3api":
