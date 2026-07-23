@@ -723,15 +723,32 @@ async def import_thumbnails(request: Request, db_session: AsyncSession = Depends
 # right credential/CEUs. Idempotent (merge, not replace).
 # =========================================================================== #
 # name -> flags. Kept explicit (not inferred) so the mapping is auditable.
+# bbu_no_skip: integrity-critical courses (professional cert + CEU) where video
+# fast-forward past the max-watched point is disabled so completion is genuine.
 CREDENTIAL_TAGS = {
-    "Certified Birth Doula Training":                  {"bbu_credential_type": "birth"},
-    "Certified Postpartum Doula Training":             {"bbu_credential_type": "postpartum"},
-    "Cross Certification Birth Doula Training":         {"bbu_credential_type": "birth", "bbu_is_cross_cert": True},
-    "Cross Certification Postpartum Doula Training":    {"bbu_credential_type": "postpartum", "bbu_is_cross_cert": True},
-    "Breastfeeding for Perinatal Professionals":       {"bbu_ceu_value": 3},
-    "Comfort Measures for Perinatal Professionals":    {"bbu_ceu_value": 3},
-    "Newborn Care for Perinatal Professionals":        {"bbu_ceu_value": 3},
+    "Certified Birth Doula Training":                  {"bbu_credential_type": "birth", "bbu_no_skip": True},
+    "Certified Postpartum Doula Training":             {"bbu_credential_type": "postpartum", "bbu_no_skip": True},
+    "Cross Certification Birth Doula Training":         {"bbu_credential_type": "birth", "bbu_is_cross_cert": True, "bbu_no_skip": True},
+    "Cross Certification Postpartum Doula Training":    {"bbu_credential_type": "postpartum", "bbu_is_cross_cert": True, "bbu_no_skip": True},
+    "Breastfeeding for Perinatal Professionals":       {"bbu_ceu_value": 3, "bbu_no_skip": True},
+    "Comfort Measures for Perinatal Professionals":    {"bbu_ceu_value": 3, "bbu_no_skip": True},
+    "Newborn Care for Perinatal Professionals":        {"bbu_ceu_value": 3, "bbu_no_skip": True},
 }
+
+
+@router.get("/no-skip-courses")
+async def no_skip_courses(db_session: AsyncSession = Depends(get_db_session)):
+    """Public: course_uuids whose video activities disable forward-seek (cert/CEU
+    integrity). Read from each course's Certifications.config bbu_no_skip flag."""
+    from src.db.courses.certifications import Certifications
+    org_id = 1
+    certs = (await db_session.execute(select(Certifications))).scalars().all()
+    course_ids = [c.course_id for c in certs if (c.config or {}).get("bbu_no_skip")]
+    if not course_ids:
+        return {"course_uuids": []}
+    courses = (await db_session.execute(select(Course).where(
+        Course.org_id == org_id, Course.id.in_(course_ids)))).scalars().all()
+    return {"course_uuids": [c.course_uuid for c in courses]}
 
 
 @router.post("/tag-credential-courses")

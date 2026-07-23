@@ -62,6 +62,9 @@ interface LearnHousePlayerProps {
   thumbnails?: ThumbnailsConfig | null
   /** Ready WebVTT caption tracks to attach (subtitles/CC menu). */
   captions?: CaptionTrack[]
+  /** Integrity mode (cert/CEU courses): disable forward-seek past the furthest
+   * point actually watched. Rewind + playback speed stay allowed. */
+  noSkip?: boolean
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -83,6 +86,7 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
   poster,
   thumbnails,
   captions,
+  noSkip = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -212,15 +216,39 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       player.on('dispose', clearWatchdog)
       armWatchdog()
 
-      // Insert the ±15s seek buttons right after the play button.
+      // Insert the ±15s seek buttons right after the play button. In no-skip
+      // (integrity) mode the FORWARD button is omitted — you can rewind, not skip.
       try {
         const bar = player.getChild('ControlBar')
         if (bar && !bar.getChild('LhSeekBack')) {
           bar.addChild('LhSeekBack', {}, 1)
-          bar.addChild('LhSeekForward', {}, 2)
+          if (!noSkip) bar.addChild('LhSeekForward', {}, 2)
         }
       } catch {
         /* seek buttons are best-effort */
+      }
+
+      // Anti-skip enforcement (cert/CEU courses): track the furthest point the
+      // learner has actually reached via normal playback, and snap any forward
+      // seek beyond it back. Rewinding and changing speed remain allowed, so this
+      // guarantees a certificate reflects a genuinely watched video without
+      // punishing review. (Not tamper-proof against devtools — a reasonable
+      // deterrent, matching the segment-encryption posture elsewhere.)
+      if (noSkip) {
+        const SKIP_TOLERANCE = 1.0
+        let maxWatched = 0
+        player.on('timeupdate', () => {
+          const t = player.currentTime() ?? 0
+          // advance the watermark only when playback crept forward normally
+          // (small delta), never when a seek jumped ahead.
+          if (t > maxWatched && t - maxWatched < 1.5) maxWatched = t
+        })
+        const clampForward = () => {
+          const t = player.currentTime() ?? 0
+          if (t > maxWatched + SKIP_TOLERANCE) player.currentTime(maxWatched)
+        }
+        player.on('seeking', clampForward)
+        player.on('seeked', clampForward)
       }
 
       // Casual-download deterrents (cosmetic — not real protection; the segments
@@ -314,7 +342,7 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       captionBlobUrls.current = []
     }
     // Rebuild when the source changes, or when the user hits Retry (reloadNonce).
-  }, [src, isHls, fallbackSrc, reloadNonce])
+  }, [src, isHls, fallbackSrc, reloadNonce, noSkip])
 
   return (
     // h-full chain is required for the player's `fill` mode to size to the

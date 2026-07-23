@@ -1,7 +1,22 @@
 import React from 'react'
 import YouTube from 'react-youtube'
 import { useOrg } from '@components/Contexts/OrgContext'
+import { getAPIUrl } from '@services/config/config'
 import LearnHousePlayer from './LearnHousePlayer'
+
+// Fetch the integrity (no-skip) course_uuid set once per page load, cached at
+// module scope so every video activity reuses the same request. Fail-open: any
+// error yields an empty set (normal seeking), never a broken player.
+let _noSkipPromise: Promise<Set<string>> | null = null
+function getNoSkipCourses(): Promise<Set<string>> {
+  if (!_noSkipPromise) {
+    _noSkipPromise = fetch(`${getAPIUrl()}bbu/migrate/no-skip-courses`)
+      .then((r) => (r.ok ? r.json() : { course_uuids: [] }))
+      .then((d) => new Set<string>(d?.course_uuids || []))
+      .catch(() => new Set<string>())
+  }
+  return _noSkipPromise
+}
 import {
   isActivityHlsReady,
   resolveActivityVideoSource,
@@ -53,6 +68,19 @@ function VideoActivity({ activity, course, orgUuid }: VideoActivityProps) {
   const org = useOrg() as any
   const resolvedOrgUuid = orgUuid || org?.org_uuid
   const [videoId, setVideoId] = React.useState('')
+  const [noSkip, setNoSkip] = React.useState(false)
+
+  React.useEffect(() => {
+    let alive = true
+    if (course?.course_uuid) {
+      getNoSkipCourses().then((set) => {
+        if (alive) setNoSkip(set.has(course.course_uuid))
+      })
+    }
+    return () => {
+      alive = false
+    }
+  }, [course?.course_uuid])
 
   React.useEffect(() => {
     if (activity?.content?.uri) {
@@ -116,6 +144,7 @@ function VideoActivity({ activity, course, orgUuid }: VideoActivityProps) {
                       details={activity.details}
                       thumbnails={thumbnails}
                       captions={captions}
+                      noSkip={noSkip}
                     />
                   ) : null
                 })()}
