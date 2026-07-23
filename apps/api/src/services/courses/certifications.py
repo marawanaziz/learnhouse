@@ -347,6 +347,22 @@ async def create_certificate_user(
     except Exception as e:
         logger.warning("Certificate tracking failed (non-critical): %s", e)
 
+    # BBU credentials engine (clean-room): a course completion may issue/upgrade a
+    # professional credential and/or award CEUs, driven by flags on the cert config
+    # (bbu_credential_type / bbu_is_cross_cert / bbu_ceu_value). Fail-soft — a
+    # credential hiccup must never block issuing the course certificate itself.
+    try:
+        _course = (await db_session.execute(
+            select(Course).where(Course.id == certification.course_id)
+        )).scalars().first()
+        if _course:
+            from src.bbu_credentials import service as _cred_svc
+            await _cred_svc.on_course_complete(
+                db_session, _course.org_id, user_id, _course.course_uuid,
+                certification.config or {})
+    except Exception as e:
+        logger.warning("BBU credential hook failed (non-critical): %s", e)
+
     return CertificateUserRead(**certificate_user.model_dump())
 
 
