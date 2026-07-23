@@ -16,6 +16,7 @@ import { constructAcceptValue } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import Modal from '@components/Objects/StyledElements/Modal/Modal'
 import LearnHousePlayer from '@components/Objects/Activities/Video/LearnHousePlayer'
+import { getNoSkipCourses } from '@services/media/noSkipCourses'
 import { useTranslation } from 'react-i18next'
 
 const SUPPORTED_FILES = constructAcceptValue(['webm', 'mp4'])
@@ -144,6 +145,8 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
   const [hlsMeta, setHlsMeta] = React.useState<any>(
     (initialBlockObject as any)?.content?.hls ?? null
   )
+  // Whether this block's course disables forward-seek (cert/CEU integrity).
+  const [noSkipCourse, setNoSkipCourse] = React.useState(false)
 
   // Update block object when size changes
   React.useEffect(() => {
@@ -278,12 +281,25 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
     ? getVideoBlockHlsMasterUrl(orgUuid, courseUuid, activityUuid, blockObject.block_uuid)
     : null
 
+  // Resolve whether this course enforces no-skip (only matters in the reader).
+  React.useEffect(() => {
+    let alive = true
+    if (courseUuid && !isEditable) {
+      getNoSkipCourses().then((set) => {
+        if (alive) setNoSkipCourse(set.has(courseUuid))
+      })
+    }
+    return () => { alive = false }
+  }, [courseUuid, isEditable])
+
   // Adaptive HLS when ready (with the MP4 as fallback), else the progressive MP4.
   const videoUrl = hlsMasterUrl || mp4Url
   const playerProps = {
     src: videoUrl || '',
     isHls: !!hlsMasterUrl,
     fallbackSrc: hlsMasterUrl && mp4Url ? mp4Url : undefined,
+    // Enforce forward-seek lock in the reader for integrity-flagged courses.
+    noSkip: !isEditable && noSkipCourse,
     thumbnails:
       hlsReady && hlsMeta?.thumbnails?.url && blockObject && orgUuid && courseUuid && activityUuid
         ? {
