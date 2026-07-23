@@ -282,6 +282,41 @@ async def courses_list(request: Request, db_session: AsyncSession = Depends(get_
 
 
 # ===========================================================================
+# Store merchandising — edit each offer's category + order-bump add-ons.
+# ===========================================================================
+@router.get("/offers")
+async def offers_list(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    await _auth(request, db_session)
+    rows = (await db_session.execute(select(BBUProduct).where(
+        BBUProduct.org_id == ORG).order_by(BBUProduct.name))).scalars().all()
+    return [{
+        "id": p.id, "name": p.name, "kind": p.kind,
+        "price": round((p.price_cents or 0) / 100, 2),
+        "category": p.category or "",
+        "public": bool(p.public),
+        "bump_ids": [int(x) for x in (p.bump_offer_ids or "").split(",") if x.strip().isdigit()],
+    } for p in rows]
+
+
+@router.post("/offers/{pid}/merchandising")
+async def offers_merch(pid: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    b = await request.json()
+    await _auth(request, db_session, b)
+    p = (await db_session.execute(select(BBUProduct).where(
+        BBUProduct.id == pid, BBUProduct.org_id == ORG))).scalars().first()
+    if not p:
+        raise HTTPException(404, "Offer not found")
+    if "category" in b:
+        p.category = (b.get("category") or "")
+    if "bump_ids" in b:
+        p.bump_offer_ids = ",".join(str(int(x)) for x in (b.get("bump_ids") or [])
+                                    if str(x).isdigit() and int(x) != pid)
+    db_session.add(p)
+    await db_session.commit()
+    return {"ok": True}
+
+
+# ===========================================================================
 # The page
 # ===========================================================================
 @router.get("/", response_class=HTMLResponse)
@@ -322,6 +357,7 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
   <div class="tab" data-t="cohorts">Cohorts</div>
   <div class="tab" data-t="credentials">Credentials</div>
   <div class="tab" data-t="seats">Seat codes</div>
+  <div class="tab" data-t="store">Store</div>
 </div>
 <div class=wrap>
   <div class="panel on" id=p-coupons>
@@ -388,6 +424,13 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
     </div>
     <div class=card><h2>Batches</h2><table id=t-seats><thead><tr><th>Batch</th><th>Owner</th><th>Total</th><th>Redeemed</th><th>Unused</th></tr></thead><tbody></tbody></table></div>
   </div>
+
+  <div class="panel" id=p-store>
+    <div class=card><h2>Store merchandising</h2>
+      <p class=muted style="margin-top:-.6rem">Set each offer's category (store bucket) and its order-bump add-ons. Changes are live immediately.</p>
+      <table id=t-store><thead><tr><th>Offer</th><th>Price</th><th>Category</th><th>Order-bump add-ons</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
 </div>
 <script>
 const API='/api/v1/bbu/admin';
@@ -398,8 +441,27 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); document.getElementById('p-'+t.dataset.t).classList.add('on');
-  if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats();
+  if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
 }});
+// Store merchandising
+const CATS=['','Birth Classes','Postpartum Classes','Spanish Classes','Professional Training','Bundles','eBooks'];
+let STORE=[];
+function loadStore(){{j('/offers').then(d=>{{ STORE=d||[];
+  document.querySelector('#t-store tbody').innerHTML=STORE.map(o=>{{
+    const opts=CATS.map(c=>`<option value="${{esc(c)}}" ${{o.category===c?'selected':''}}>${{c||'—'}}</option>`).join('');
+    const bumps=STORE.filter(x=>x.id!==o.id).map(x=>`<label style="display:block;font-size:.78rem"><input type=checkbox ${{o.bump_ids.includes(x.id)?'checked':''}} onchange="toggleBump(${{o.id}},${{x.id}},this.checked)"> ${{esc(x.name)}} ($${{x.price}})</label>`).join('');
+    const n=o.bump_ids.length;
+    return `<tr><td><b>${{esc(o.name)}}</b></td><td>$${{o.price}}</td>`
+      +`<td><select onchange="saveCat(${{o.id}},this.value)">${{opts}}</select></td>`
+      +`<td><details><summary style="cursor:pointer;color:#3a91c6">${{n?n+' add-on'+(n>1?'s':''):'none'}}</summary><div style="max-height:150px;overflow:auto;padding:.3rem 0">${{bumps}}</div></details></td></tr>`;
+  }}).join('');
+}})}}
+function saveCat(id,cat){{j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{category:cat}})}})}}
+function toggleBump(id,bumpId,on){{
+  const o=STORE.find(x=>x.id===id); if(!o)return;
+  o.bump_ids = on ? [...new Set([...o.bump_ids,bumpId])] : o.bump_ids.filter(x=>x!==bumpId);
+  j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{bump_ids:o.bump_ids}})}});
+}}
 // Coupons
 function loadCoupons(){{j('/coupons').then(d=>{{
   document.querySelector('#t-coupons tbody').innerHTML=(d||[]).map(c=>
