@@ -41,6 +41,7 @@ import {
   FolderSimple,
   Certificate,
   IdentificationCard,
+  Ticket,
 } from '@phosphor-icons/react'
 import { DiscordIcon } from '@components/Objects/Icons/DiscordIcon'
 import CommandPaletteTrigger from '@components/Dashboard/CommandPalette/CommandPaletteTrigger'
@@ -418,6 +419,15 @@ function DashLeftMenu() {
               href={`${getAPIUrl()}bbu/cert-admin/`}
               icon={<Certificate size={20} weight="fill" />}
               label={t('common.certificates') !== 'common.certificates' ? t('common.certificates') : 'Certificates'}
+              isCollapsed={isCollapsed}
+              isExternal
+            />
+
+            {/* BBU Operations Console — coupons / cohorts / credentials / seat codes (API-served, session-gated) */}
+            <MenuLink
+              href={`${getAPIUrl()}bbu/admin/`}
+              icon={<Ticket size={20} weight="fill" />}
+              label="Operations"
               isCollapsed={isCollapsed}
               isExternal
             />

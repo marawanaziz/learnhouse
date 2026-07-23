@@ -33,6 +33,9 @@ function MembersManager() {
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [newGroup, setNewGroup] = useState('')
   const [creating, setCreating] = useState(false)
+  // The per-course purchase-access groups (auto-created, named "… · Access") clutter
+  // the list; hide them by default so human cohorts/tiers stand out.
+  const [showAccess, setShowAccess] = useState(false)
   const [courseModal, setCourseModal] = useState(false)
 
   const orgId = org?.id
@@ -159,8 +162,17 @@ function MembersManager() {
             >
               <Users size={16} weight="fill" /> All members
             </button>
+            {(() => {
+              const accessCount = groups.filter((g) => / · Access$/.test(g.name)).length
+              return accessCount > 0 ? (
+                <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 cursor-pointer select-none">
+                  <input type="checkbox" checked={showAccess} onChange={(e) => setShowAccess(e.target.checked)} />
+                  Show {accessCount} per-course access groups
+                </label>
+              ) : null
+            })()}
             <div className="mt-1 space-y-0.5 max-h-[420px] overflow-y-auto">
-              {groups.map((g) => (
+              {groups.filter((g) => showAccess || !/ · Access$/.test(g.name)).map((g) => (
                 <div key={g.id} className={`group flex items-center rounded-lg ${selectedGroup?.id === g.id ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}>
                   <button
                     onClick={() => { setSelectedGroup(g); setPage(1); setPicked(new Set()) }}

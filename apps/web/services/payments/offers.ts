@@ -72,11 +72,12 @@ export async function getOfferCheckoutSession(
   orgId: number,
   offerUuid: string,
   redirect_uri: string,
-  access_token: string
+  access_token: string,
+  bumps: string[] = []
 ) {
   const result = await secureFetch(
     `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/${encodeURIComponent(offerUuid)}/checkout?redirect_uri=${encodeURIComponent(redirect_uri)}`,
-    RequestBodyWithAuthHeader('POST', null, null, access_token)
+    RequestBodyWithAuthHeader('POST', { bumps }, null, access_token)
   );
   return getResponseMetadata(result);
 }

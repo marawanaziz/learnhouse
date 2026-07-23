@@ -101,6 +101,7 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
   const token = session?.data?.tokens?.access_token ?? access_token
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const [selectedBumps, setSelectedBumps] = useState<Set<string>>(new Set())
   const { track } = useLHAnalytics('learner')
 
   useTrackView(
@@ -149,7 +150,7 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
     setLoading(true)
     try {
       const redirectUri = window.location.href
-      const result = await getOfferCheckoutSession(orgId, offerUuid, redirectUri, token)
+      const result = await getOfferCheckoutSession(orgId, offerUuid, redirectUri, token, [...selectedBumps])
       const url = result?.data?.checkout_url
       if (url) {
         track(AnalyticsEvent.CheckoutSessionCreated, { offer_type: offer.offer_type, amount: offer.amount })
@@ -244,6 +245,40 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
                   <p className="text-sm text-indigo-400 font-medium mt-0.5">recurring</p>
                 )}
               </div>
+
+              {/* Order bumps — optional add-ons */}
+              {Array.isArray(offer.bump_offers) && offer.bump_offers.length > 0 && (
+                <div className="mb-4 rounded-xl border border-dashed border-gray-200 p-3 space-y-2">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Add to your order</p>
+                  {offer.bump_offers.map((b: any) => {
+                    const on = selectedBumps.has(b.offer_uuid)
+                    return (
+                      <label key={b.offer_uuid} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => setSelectedBumps(prev => {
+                            const n = new Set(prev)
+                            e.target.checked ? n.add(b.offer_uuid) : n.delete(b.offer_uuid)
+                            return n
+                          })}
+                        />
+                        <span className="flex-1 truncate">{b.name}</span>
+                        <span className="font-semibold text-gray-900">
+                          +{new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency }).format(b.amount)}
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {selectedBumps.size > 0 && (
+                    <p className="text-xs text-gray-500 pt-1 border-t border-gray-100">
+                      Total: <span className="font-bold text-gray-900">{new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency }).format(
+                        offer.amount + offer.bump_offers.filter((b: any) => selectedBumps.has(b.offer_uuid)).reduce((s: number, b: any) => s + b.amount, 0)
+                      )}</span>
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Checkout */}
               <button

@@ -28,8 +28,15 @@ interface Offer {
   currency: string
   benefits: string
   payments_group_id: number | null
+  category?: string
   included_resources: Resource[]
 }
+
+// Store bucket display order; anything else falls into "More".
+const CATEGORY_ORDER = [
+  'Birth Classes', 'Postpartum Classes', 'Spanish Classes',
+  'Professional Training', 'Bundles', 'eBooks',
+]
 
 interface StoreProps {
   orgslug: string
@@ -242,11 +249,42 @@ function Store({ orgslug, offers }: StoreProps) {
             <p className="text-sm text-gray-400 mb-5">
               {offers.length} {offers.length === 1 ? 'offer' : 'offers'} available
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {offers.map((offer, index) => (
-                <OfferCard key={offer.id} offer={offer} orgslug={orgslug} orgUuid={org?.org_uuid ?? ''} position={index} />
-              ))}
-            </div>
+            {(() => {
+              // Group by category; ordered buckets first, then any extras, then uncategorized.
+              const groups = new Map<string, Offer[]>()
+              offers.forEach(o => {
+                const key = (o.category && o.category.trim()) || 'More'
+                if (!groups.has(key)) groups.set(key, [])
+                groups.get(key)!.push(o)
+              })
+              const ordered = [
+                ...CATEGORY_ORDER.filter(c => groups.has(c)),
+                ...[...groups.keys()].filter(c => !CATEGORY_ORDER.includes(c) && c !== 'More'),
+                ...(groups.has('More') ? ['More'] : []),
+              ]
+              // If nothing is categorized, fall back to a single flat grid.
+              const allUncategorized = ordered.length === 1 && ordered[0] === 'More'
+              if (allUncategorized) {
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {offers.map((offer, index) => (
+                      <OfferCard key={offer.id} offer={offer} orgslug={orgslug} orgUuid={org?.org_uuid ?? ''} position={index} />
+                    ))}
+                  </div>
+                )
+              }
+              let pos = 0
+              return ordered.map(cat => (
+                <section key={cat} className="mb-9">
+                  <h2 className="text-lg font-black text-gray-800 mb-3 tracking-tight">{cat}</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {groups.get(cat)!.map(offer => (
+                      <OfferCard key={offer.id} offer={offer} orgslug={orgslug} orgUuid={org?.org_uuid ?? ''} position={pos++} />
+                    ))}
+                  </div>
+                </section>
+              ))
+            })()}
           </>
         )}
       </GeneralWrapperStyled>
