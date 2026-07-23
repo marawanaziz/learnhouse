@@ -14,6 +14,11 @@ RUN bun install --frozen-lockfile
 FROM oven/bun:1-alpine AS frontend-builder
 WORKDIR /app
 COPY --from=frontend-deps /app/node_modules ./node_modules
+# Cache-bust: bump WEB_BUILD_REV to force the frontend COPY+build to re-run when
+# Railway's layer cache reuses a stale standalone bundle. Changing this ARG
+# invalidates the layers below it, so the current apps/web source is recompiled.
+ARG WEB_BUILD_REV=2026-07-23-antiskip
+RUN echo "frontend build rev: ${WEB_BUILD_REV}"
 COPY apps/web .
 
 # Disable telemetry during build
