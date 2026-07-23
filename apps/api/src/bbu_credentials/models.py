@@ -34,6 +34,9 @@ class BBUCredential(SQLModel, table=True):
     # CEUs already counted toward the CURRENT full window (reset on upgrade/renew)
     renewal_ceu_baseline: int = Field(default=0)
     directory_opt_in: bool = Field(default=False)
+    # last pre-expiry reminder window (days) already fired, so the scheduled
+    # reminder job doesn't re-notify the same window repeatedly. 0 = none yet.
+    last_reminder_days: int = Field(default=0)
     updated_at: str = Field(default="", sa_column=Column(String(40)))
 
 
