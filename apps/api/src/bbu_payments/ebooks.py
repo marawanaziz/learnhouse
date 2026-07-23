@@ -33,6 +33,36 @@ def _check_admin(request: Request, body_key: str = ""):
         raise HTTPException(403, "Forbidden")
 
 
+@router.post("/create")
+async def create_ebook(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Create/update an ebook product from metadata only (no file yet), so it
+    can be merchandised in the store while the deliverable PDF is sourced. Body:
+    {name, price_cents, description, image_url?, benefits?, public?}. Delivery
+    stays inert (download 404s) until a PDF is attached via /upload."""
+    body = await request.json()
+    _check_admin(request, body.get("key", ""))
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    existing = (await db_session.execute(
+        select(BBUProduct).where(BBUProduct.name == name, BBUProduct.org_id == 1)
+    )).scalars().first()
+    p = existing or BBUProduct(org_id=1, name=name, kind="ebook")
+    p.kind = "ebook"
+    p.price_cents = int(body.get("price_cents", p.price_cents or 0))
+    p.description = body.get("description", p.description) or ""
+    if "image_url" in body:
+        p.image_url = body["image_url"]
+    if "benefits" in body:
+        p.benefits = body["benefits"]
+    p.public = bool(body.get("public", True))
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    return {"product_id": p.id, "name": p.name, "price_cents": p.price_cents,
+            "public": p.public, "has_file": bool(p.asset_path)}
+
+
 @router.post("/upload")
 async def upload_ebook(
     request: Request,
