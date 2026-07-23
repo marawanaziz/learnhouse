@@ -336,6 +336,51 @@ async def migrate_students(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/certifications")
+async def setup_certifications(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Create/update a Certifications record per course with BBU config (idempotent —
+    one cert per course). Body: {items:[{course_uuid, config}]}. config carries
+    certificate_pattern:'bbu', bbu_template, bbu_layout, bbu_validity_years,
+    certification_name/description/type."""
+    from uuid import uuid4
+    from src.db.courses.certifications import Certifications
+
+    body = await request.json()
+    _check(request, body)
+    items = body.get("items") or []
+    made, updated, errors = 0, 0, []
+    for it in items:
+        cu = (it or {}).get("course_uuid", "")
+        config = (it or {}).get("config") or {}
+        try:
+            course = (await db_session.execute(
+                select(Course).where(Course.course_uuid == cu)
+            )).scalars().first()
+            if not course:
+                errors.append(f"{cu}: course not found")
+                continue
+            existing = (await db_session.execute(
+                select(Certifications).where(Certifications.course_id == course.id)
+            )).scalars().first()
+            if existing:
+                existing.config = config
+                existing.update_date = _now()
+                db_session.add(existing)
+                updated += 1
+            else:
+                db_session.add(Certifications(
+                    course_id=course.id or 0, config=config,
+                    certification_uuid=f"certification_{uuid4()}",
+                    creation_date=_now(), update_date=_now(),
+                ))
+                made += 1
+            await db_session.commit()
+        except Exception as e:
+            await db_session.rollback()
+            errors.append(f"{cu}: {e}")
+    return {"created": made, "updated": updated, "errors": errors[:20], "error_count": len(errors)}
+
+
 @router.post("/thumbnails")
 async def import_thumbnails(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Set course thumbnails from remote image URLs (e.g. the original Circle

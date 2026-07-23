@@ -12,6 +12,13 @@ interface CertificatePreviewProps {
   certificateId?: string;
   awardedDate?: string;
   qrCodeLink?: string;
+  // BBU-branded design (when certificatePattern === 'bbu')
+  bbuTemplate?: string;       // background image URL (the exact BBU artwork)
+  bbuLayout?: string;         // 'certification' | 'completion'
+  recipientName?: string;     // goes on the blank line
+  issueDate?: string;         // formatted
+  expirationDate?: string;    // formatted (certification layout)
+  surfaceId?: string;         // DOM id so the PDF export can canvas this exact node
 }
 
 const CertificatePreview: React.FC<CertificatePreviewProps> = ({
@@ -22,8 +29,70 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
   certificateInstructor,
   certificateId,
   awardedDate,
-  qrCodeLink
+  qrCodeLink,
+  bbuTemplate,
+  bbuLayout,
+  recipientName,
+  issueDate,
+  expirationDate,
+  surfaceId,
 }) => {
+  // ---- BBU-branded certificate ------------------------------------------
+  // Renders the client's exact Canva artwork as the background and overlays
+  // only the live fields (recipient name + dates + credential ID) onto the
+  // blank lines. One position set works across all 13 templates since they
+  // share the same layout skeleton. Font sizes use cqw so text scales with the
+  // certificate width (container query) for pixel-consistent PDF export.
+  if (certificatePattern === 'bbu' && bbuTemplate) {
+    const isCertification = bbuLayout === 'certification';
+    return (
+      <div
+        id={surfaceId || 'bbu-certificate-surface'}
+        style={{
+          position: 'relative',
+          width: '100%',
+          aspectRatio: '1100 / 850',
+          backgroundImage: `url(${bbuTemplate})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          containerType: 'inline-size',
+          fontFamily: 'Georgia, "Times New Roman", serif',
+          color: '#113d5d',
+        }}
+      >
+        {/* Recipient name — sits on the blank line under "This certifies that:" */}
+        <div style={{
+          position: 'absolute', top: '40%', left: '15%', right: '15%',
+          textAlign: 'center', fontFamily: '"Playfair Display", Georgia, serif',
+          fontWeight: 700, fontSize: '4.2cqw', color: '#113d5d', lineHeight: 1,
+        }}>{recipientName || ''}</div>
+
+        {isCertification ? (
+          <>
+            {/* DATE OF ISSUE — above its printed label */}
+            <div style={{ position: 'absolute', top: '70.5%', left: '26.5%', width: '20%',
+              textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{issueDate || ''}</div>
+            {/* DATE OF EXPIRATION */}
+            <div style={{ position: 'absolute', top: '70.5%', left: '53.5%', width: '20%',
+              textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{expirationDate || ''}</div>
+            {/* CREDENTIAL ID */}
+            <div style={{ position: 'absolute', top: '78.5%', left: '26.5%', width: '20%',
+              textAlign: 'center', fontSize: '1.5cqw', color: '#113d5d', letterSpacing: '0.02em' }}>{certificateId || ''}</div>
+          </>
+        ) : (
+          <>
+            {/* DATE OF COMPLETION */}
+            <div style={{ position: 'absolute', top: '76.2%', left: '18%', width: '22%',
+              textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{issueDate || awardedDate || ''}</div>
+            {/* INSTRUCTOR NAME — defaults to the org's director */}
+            <div style={{ position: 'absolute', top: '76.2%', left: '41%', width: '22%',
+              textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{certificateInstructor || 'Anna Rodney'}</div>
+          </>
+        )}
+      </div>
+    );
+  }
+  // ---- default (non-BBU) LearnHouse patterns ----------------------------
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const org = useOrg() as any;
 

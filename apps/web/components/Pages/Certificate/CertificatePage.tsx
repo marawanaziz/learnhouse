@@ -17,6 +17,24 @@ interface CertificatePageProps {
   qrCodeLink: string;
 }
 
+// Format an ISO/date string as "Month D, YYYY" (falls back to raw on parse fail)
+function fmtDate(raw?: string): string {
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+// Expiration = issue date + bbu_validity_years (0 / missing => no expiration)
+function bbuExpiration(userCertificate: any): string {
+  const years = Number(userCertificate?.certification?.config?.bbu_validity_years || 0);
+  if (!years) return '';
+  const d = new Date(userCertificate?.certificate_user?.created_at);
+  if (isNaN(d.getTime())) return '';
+  d.setFullYear(d.getFullYear() + years);
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 const CertificatePage: React.FC<CertificatePageProps> = ({ orgslug, courseid, qrCodeLink }) => {
   const session = useLHSession() as any;
   const org = useOrg() as any;
@@ -67,9 +85,42 @@ const CertificatePage: React.FC<CertificatePageProps> = ({ orgslug, courseid, qr
 
 
 
+  // BBU certs: capture the exact on-screen BBU surface (WYSIWYG) → landscape PDF.
+  const downloadBBUCertificate = async () => {
+    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+      import('html2canvas'), import('jspdf'),
+    ]);
+    const el = document.getElementById('bbu-certificate-surface');
+    if (!el) throw new Error('certificate surface not found');
+    const canvas = await html2canvas(el as HTMLElement, {
+      scale: 3, useCORS: true, allowTaint: true, backgroundColor: '#ffffff',
+    });
+    const pdf = new jsPDF('landscape', 'mm', [279.4, 215.9]); // US Letter landscape
+    const w = pdf.internal.pageSize.getWidth();
+    const h = pdf.internal.pageSize.getHeight();
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, w, h);
+    const nm = (userCertificate.certification.config.certification_name || 'certificate')
+      .replace(/[^a-zA-Z0-9]/g, '_');
+    pdf.save(`${nm}_Certificate.pdf`);
+    track(AnalyticsEvent.CertificateDownloaded, {
+      certification_type: userCertificate.certification.config.certification_type,
+    });
+  };
+
   // Generate PDF using canvas
   const downloadCertificate = async () => {
     if (!userCertificate) return;
+
+    // BBU-branded certificates render from their own artwork — capture directly.
+    if (userCertificate.certification.config.certificate_pattern === 'bbu') {
+      try {
+        await downloadBBUCertificate();
+      } catch (error) {
+        console.error('Error generating BBU PDF:', error);
+        toast.error('Failed to generate PDF. Please try again.');
+      }
+      return;
+    }
 
     try {
       const [{ default: html2canvas }, { default: jsPDF }, QRCode] = await Promise.all([
@@ -478,12 +529,14 @@ const CertificatePage: React.FC<CertificatePageProps> = ({ orgslug, courseid, qr
               certificatePattern={userCertificate.certification.config.certificate_pattern}
               certificateInstructor={userCertificate.certification.config.certificate_instructor}
               certificateId={userCertificate.certificate_user.user_certification_uuid}
-              awardedDate={new Date(userCertificate.certificate_user.created_at).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })}
+              awardedDate={fmtDate(userCertificate.certificate_user.created_at)}
               qrCodeLink={qrCodeLink}
+              bbuTemplate={userCertificate.certification.config.bbu_template}
+              bbuLayout={userCertificate.certification.config.bbu_layout}
+              recipientName={userCertificate.recipient_name || (session?.data?.user ? `${session.data.user.first_name || ''} ${session.data.user.last_name || ''}`.trim() : '')}
+              issueDate={fmtDate(userCertificate.certificate_user.created_at)}
+              expirationDate={bbuExpiration(userCertificate)}
+              surfaceId="bbu-certificate-surface"
             />
           </div>
         </div>

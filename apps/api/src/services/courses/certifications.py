@@ -396,12 +396,20 @@ async def get_user_certificates_for_course(
     # Build a map of certification_id -> Certifications (already fetched above)
     cert_map = {cert.id: cert for cert in certifications if cert.id}
 
+    # Recipient name for rendering on the certificate (these are the caller's
+    # own certificates, so the recipient is current_user).
+    recipient_name = " ".join(
+        p for p in [getattr(current_user, "first_name", "") or "",
+                    getattr(current_user, "last_name", "") or ""] if p
+    ).strip() or getattr(current_user, "username", "")
+
     result = []
     for cert_user in cert_users:
         certification = cert_map.get(cert_user.certification_id)
         result.append({
             "certificate_user": CertificateUserRead(**cert_user.model_dump()),
-            "certification": CertificationRead(**certification.model_dump()) if certification else None
+            "certification": CertificationRead(**certification.model_dump()) if certification else None,
+            "recipient_name": recipient_name,
         })
 
     return result
