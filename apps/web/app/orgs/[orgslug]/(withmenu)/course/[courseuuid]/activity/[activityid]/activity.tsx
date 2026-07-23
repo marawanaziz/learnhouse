@@ -7,6 +7,7 @@ import { markActivityAsComplete, unmarkActivityAsComplete } from '@services/cour
 import { usePathname, useRouter } from 'next/navigation'
 import AuthenticatedClientElement from '@components/Security/AuthenticatedClientElement'
 import { getCourseThumbnailMediaDirectory, getUserAvatarMediaDirectory } from '@services/media/media'
+import { getNoSkipCourses } from '@services/media/noSkipCourses'
 import { useOrg, useOrgMembership } from '@components/Contexts/OrgContext'
 import { CourseProvider } from '@components/Contexts/CourseContext'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
@@ -131,6 +132,7 @@ interface ActivityActionsProps {
   assignment: any
   showNavigation?: boolean
   trailData?: any
+  completeBlocked?: boolean
 }
 
 // Custom hook for activity position
@@ -160,7 +162,7 @@ function useActivityPosition(course: any, activityId: string) {
   }, [course, activityId]);
 }
 
-function ActivityActions({ activity, activityid, course, orgslug, assignment, showNavigation = true, trailData }: ActivityActionsProps) {
+function ActivityActions({ activity, activityid, course, orgslug, assignment, showNavigation = true, trailData, completeBlocked }: ActivityActionsProps) {
 
   const { t: _t } = useTranslation();
   const _org = useOrg() as any;
@@ -180,6 +182,7 @@ function ActivityActions({ activity, activityid, course, orgslug, assignment, sh
                 course={course}
                 orgslug={orgslug}
                 trailData={trailData}
+                completeBlocked={completeBlocked}
               />
             </>
           )}
@@ -287,6 +290,60 @@ function ActivityClient(props: ActivityClientProps) {
   // Get previous and next activities
   const prevActivity = currentIndex > 0 ? allActivities[currentIndex - 1] : null;
   const nextActivity = currentIndex < allActivities.length - 1 ? allActivities[currentIndex + 1] : null;
+
+  // Sequential progression lock (cert/CEU integrity courses): a learner can only
+  // reach an activity once every earlier activity is complete — no skipping ahead
+  // to a later class or quiz. Contributors/admins are exempt. This render-level
+  // gate covers ALL navigation paths (next button, timeline, dropdown, direct URL).
+  const [noSkipCourse, setNoSkipCourse] = React.useState(false);
+  React.useEffect(() => {
+    let alive = true;
+    if (course?.course_uuid) {
+      getNoSkipCourses().then((set) => {
+        if (alive) setNoSkipCourse(set.has(course.course_uuid));
+      });
+    }
+    return () => { alive = false; };
+  }, [course?.course_uuid]);
+
+  const sequentialGate = useMemo(() => {
+    if (!noSkipCourse || contributorStatus === 'ACTIVE') return { locked: false, firstIncomplete: null as any };
+    if (!trailData || !course?.course_uuid || currentIndex < 0) return { locked: false, firstIncomplete: null };
+    const run = trailData?.runs?.find((r: any) => {
+      const a = r.course?.course_uuid?.replace('course_', '');
+      const b = course.course_uuid?.replace('course_', '');
+      return a === b || r.course_uuid === course.course_uuid;
+    });
+    const isComplete = (act: any) =>
+      !!run?.steps?.find((s: any) =>
+        (s.activity_uuid === act.activity_uuid ||
+          s.activity_id === act.id) && s.complete === true);
+    // furthest reachable = index of the first not-yet-complete activity
+    let firstIncompleteIdx = allActivities.findIndex((a: any) => !isComplete(a));
+    if (firstIncompleteIdx === -1) firstIncompleteIdx = allActivities.length; // all done → free review
+    const locked = currentIndex > firstIncompleteIdx;
+    return { locked, firstIncomplete: allActivities[firstIncompleteIdx] || null };
+  }, [noSkipCourse, contributorStatus, trailData, course, allActivities, currentIndex]);
+
+  // Full-watch gate: on no-skip courses, if the current activity contains a gated
+  // video, "mark complete" is disabled until the video is watched through. The
+  // player dispatches bbu:video-present on mount and bbu:video-watched at the end.
+  const [hasGatedVideo, setHasGatedVideo] = React.useState(false);
+  const [videoWatched, setVideoWatched] = React.useState(false);
+  React.useEffect(() => {
+    // reset per activity
+    setHasGatedVideo(false);
+    setVideoWatched(false);
+    const onPresent = () => setHasGatedVideo(true);
+    const onWatched = () => setVideoWatched(true);
+    window.addEventListener('bbu:video-present', onPresent);
+    window.addEventListener('bbu:video-watched', onWatched);
+    return () => {
+      window.removeEventListener('bbu:video-present', onPresent);
+      window.removeEventListener('bbu:video-watched', onWatched);
+    };
+  }, [activityid]);
+  const completeBlocked = noSkipCourse && contributorStatus !== 'ACTIVE' && hasGatedVideo && !videoWatched;
 
   // Memoize activity content
   const activityContent = useMemo(() => {
@@ -507,6 +564,43 @@ function ActivityClient(props: ActivityClientProps) {
     )
   }
 
+  if (sequentialGate.locked && activityid !== 'end') {
+    const firstIncomplete = sequentialGate.firstIncomplete;
+    const cleanCourseUuid = course.course_uuid?.replace('course_', '');
+    const resumeUuid = firstIncomplete?.activity_uuid?.replace('activity_', '') || firstIncomplete?.cleanUuid;
+    return (
+      <GeneralWrapperStyled>
+        <div className="max-w-2xl mx-auto my-16 bg-white rounded-2xl border border-gray-200/80 shadow-sm p-8 text-center">
+          <div className="mx-auto w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mb-4">
+            <Lock className="text-amber-500" size={24} />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">
+            {t('course.sequential_locked_title', 'Complete the earlier lessons first')}
+          </h1>
+          <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+            {t('course.sequential_locked_body', 'This is a certification course — lessons and quizzes must be completed in order. Finish the lesson you left off on to unlock this one.')}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            {resumeUuid && (
+              <Link
+                href={getUriWithOrg(orgslug, '') + `/course/${cleanCourseUuid}/activity/${resumeUuid}`}
+                className="inline-flex items-center justify-center px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors"
+              >
+                {t('course.resume_lesson', 'Go to my next lesson')}
+              </Link>
+            )}
+            <Link
+              href={getUriWithOrg(orgslug, '') + `/course/${courseuuid}`}
+              className="inline-flex items-center justify-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors"
+            >
+              {t('course.back_to_course', 'Back to course')}
+            </Link>
+          </div>
+        </div>
+      </GeneralWrapperStyled>
+    )
+  }
+
   return (
     <>
       <CourseProvider courseuuid={course?.course_uuid} initialCourseStructure={course}>
@@ -713,6 +807,7 @@ function ActivityClient(props: ActivityClientProps) {
                               assignment={assignment}
                               showNavigation={false}
                               trailData={trailData}
+                              completeBlocked={completeBlocked}
                             />
                             <button
                               onClick={() => navigateToActivity(nextActivity)}
@@ -984,6 +1079,7 @@ function ActivityClient(props: ActivityClientProps) {
                               assignment={assignment}
                               showNavigation={false}
                               trailData={trailData}
+                              completeBlocked={completeBlocked}
                             />
                             <NextActivityButton
                               course={course}
@@ -1024,6 +1120,7 @@ export function MarkStatus(props: {
   course: any
   orgslug: string,
   trailData: any
+  completeBlocked?: boolean
 }) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -1263,8 +1360,9 @@ export function MarkStatus(props: {
         <div className="flex items-center space-x-2">
           <div className="relative">
             <div
-              className={`${isLoading ? 'opacity-90' : ''} bg-gray-800 rounded-md px-4 nice-shadow flex flex-col p-2.5 text-white hover:cursor-pointer transition-all duration-200 ${isLoading ? 'cursor-not-allowed' : 'hover:bg-gray-700'}`}
-              onClick={!isLoading ? markActivityAsCompleteFront : undefined}
+              className={`${isLoading ? 'opacity-90' : ''} ${props.completeBlocked ? 'bg-gray-400 opacity-60 cursor-not-allowed' : 'bg-gray-800 hover:bg-gray-700 hover:cursor-pointer'} rounded-md px-4 nice-shadow flex flex-col p-2.5 text-white transition-all duration-200 ${isLoading ? 'cursor-not-allowed' : ''}`}
+              onClick={(!isLoading && !props.completeBlocked) ? markActivityAsCompleteFront : undefined}
+              title={props.completeBlocked ? t('activities.finish_video_first', 'Finish watching the video to mark this complete') : undefined}
             >
               <span className="text-[10px] font-bold mb-1 uppercase">{t('common.status')}</span>
               <div className="flex items-center space-x-2">

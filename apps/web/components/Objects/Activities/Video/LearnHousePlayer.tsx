@@ -237,12 +237,26 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       if (noSkip) {
         const SKIP_TOLERANCE = 1.0
         let maxWatched = 0
+        let watchedFired = false
+        // Tell the activity page a gated video is present so it can require a
+        // full watch before "mark complete" unlocks the next lesson.
+        try { window.dispatchEvent(new CustomEvent('bbu:video-present')) } catch { /* noop */ }
+        const fireWatched = () => {
+          if (watchedFired) return
+          watchedFired = true
+          try { window.dispatchEvent(new CustomEvent('bbu:video-watched')) } catch { /* noop */ }
+        }
         player.on('timeupdate', () => {
           const t = player.currentTime() ?? 0
+          const d = player.duration() || 0
           // advance the watermark only when playback crept forward normally
           // (small delta), never when a seek jumped ahead.
           if (t > maxWatched && t - maxWatched < 1.5) maxWatched = t
+          // within 15s of the end (or 98%) counts as watched — forgiving so a
+          // learner who watched through is never stuck unable to complete.
+          if (d > 0 && (d - t <= 15 || t / d >= 0.98)) fireWatched()
         })
+        player.on('ended', fireWatched)
         const clampForward = () => {
           const t = player.currentTime() ?? 0
           if (t > maxWatched + SKIP_TOLERANCE) player.currentTime(maxWatched)
