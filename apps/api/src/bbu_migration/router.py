@@ -336,6 +336,80 @@ async def migrate_students(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/provision-login")
+async def provision_login(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Operator tool (admin-key gated): create a login or reset an existing one
+    directly in the DB, using LearnHouse's own password hashing so the login
+    works. Needed because SMTP isn't configured, so the normal reset-by-email
+    flow can't deliver. Body: {email, password, first_name?, last_name?,
+    role_uuid?, org_id?}. Sets email_verified so login works without email.
+
+    NOTE: passwords are one-way bcrypt hashes — an existing password cannot be
+    recovered, only reset to a new known value (which replaces the old one)."""
+    from uuid import uuid4
+    body = await request.json()
+    _check(request, body)
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    if not email or not password:
+        raise HTTPException(400, "email and password required")
+    first = (body.get("first_name") or "").strip()
+    last = (body.get("last_name") or "").strip()
+    role_uuid = body.get("role_uuid") or "role_global_user"
+    org_id = int(body.get("org_id", 1))
+
+    role = (await db_session.execute(
+        select(Role).where(Role.role_uuid == role_uuid)
+    )).scalars().first()
+    role_id = role.id if role and role.id else await _learner_role_id(db_session)
+
+    user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+    created = False
+    if user:
+        user.password = security_hash_password(password)
+        user.email_verified = True
+        if first:
+            user.first_name = first
+        if last:
+            user.last_name = last
+        user.update_date = _now()
+        db_session.add(user)
+        await db_session.commit()
+    else:
+        username = await _unique_username(db_session, email)
+        user = User(
+            username=username, email=email,
+            first_name=first or "Test", last_name=last or "User",
+            password=security_hash_password(password),
+            user_uuid=f"user_{uuid4()}", email_verified=True,
+            signup_method="admin_provision",
+            creation_date=_now(), update_date=_now(),
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+        created = True
+
+    membership = (await db_session.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == user.id, UserOrganization.org_id == org_id
+        )
+    )).scalars().first()
+    if not membership:
+        db_session.add(UserOrganization(
+            user_id=user.id or 0, org_id=org_id, role_id=role_id,
+            creation_date=_now(), update_date=_now(),
+        ))
+        await db_session.commit()
+    elif role and membership.role_id != role_id:
+        membership.role_id = role_id
+        db_session.add(membership)
+        await db_session.commit()
+
+    return {"email": email, "created": created, "user_id": user.id,
+            "username": user.username, "role_uuid": role_uuid, "org_id": org_id}
+
+
 @router.post("/certifications")
 async def setup_certifications(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Create/update a Certifications record per course with BBU config (idempotent —
