@@ -39,6 +39,7 @@ import {
   Cube,
   ShoppingBag,
   FolderSimple,
+  Certificate,
 } from '@phosphor-icons/react'
 import { DiscordIcon } from '@components/Objects/Icons/DiscordIcon'
 import CommandPaletteTrigger from '@components/Dashboard/CommandPalette/CommandPaletteTrigger'
@@ -401,6 +402,16 @@ function DashLeftMenu() {
               })()}
             </HoverMenu>
             </div>
+
+            {/* BBU Certificate Manager (served by the API; session-gated, opens in a new tab) */}
+            <MenuLink
+              href={`${getAPIUrl()}bbu/cert-admin/`}
+              icon={<Certificate size={20} weight="fill" />}
+              label={t('common.certificates') !== 'common.certificates' ? t('common.certificates') : 'Certificates'}
+              isCollapsed={isCollapsed}
+              isExternal
+            />
+
             {showLibrary && (
               <MenuLink
                 href="/dash/library"

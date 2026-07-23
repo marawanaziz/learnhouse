@@ -18,6 +18,8 @@ from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
+from src.security.auth import get_current_user
+from src.security.org_auth import is_org_admin
 from src.db.courses.courses import Course
 from src.db.courses.certifications import Certifications
 from src.bbu_payments.branding import NAVY, SKY, STEEL, ICE, PAPER, LOGO, _FONTS
@@ -44,10 +46,20 @@ TEMPLATES = [
 TEMPLATE_KEYS = {t[0] for t in TEMPLATES}
 
 
-def _check(request: Request, body_key: str = ""):
+async def _authorize(request: Request, db_session: AsyncSession, body_key: str = ""):
+    """Allow either the admin key (scripts) OR a logged-in org-1 admin (the
+    dashboard nav link relies on the session cookie — no key in the URL)."""
     key = request.query_params.get("key") or request.headers.get("x-bbu-admin-key") or body_key
-    if not ADMIN_KEY or key != ADMIN_KEY:
-        raise HTTPException(403, "Forbidden")
+    if ADMIN_KEY and key == ADMIN_KEY:
+        return
+    try:
+        user = await get_current_user(request, db_session)
+        uid = getattr(user, "id", 0)
+        if uid and await is_org_admin(uid, 1, db_session):
+            return
+    except Exception:
+        pass
+    raise HTTPException(403, "Forbidden")
 
 
 def _tpl_name_from_url(url: str) -> str:
@@ -58,7 +70,7 @@ def _tpl_name_from_url(url: str) -> str:
 
 @router.get("/data")
 async def data(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    _check(request)
+    await _authorize(request, db_session)
     courses = (await db_session.execute(
         select(Course).where(Course.org_id == 1).order_by(Course.name)
     )).scalars().all()
@@ -86,7 +98,7 @@ async def data(request: Request, db_session: AsyncSession = Depends(get_db_sessi
 @router.post("/save")
 async def save(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     body = await request.json()
-    _check(request, body.get("key", ""))
+    await _authorize(request, db_session, body.get("key", ""))
     cu = (body.get("course_uuid") or "").strip()
     template = (body.get("template") or "").strip()
     layout = (body.get("layout") or "").strip()
@@ -140,8 +152,8 @@ async def save(request: Request, db_session: AsyncSession = Depends(get_db_sessi
 
 
 @router.get("/", response_class=HTMLResponse)
-async def page(request: Request):
-    _check(request)
+async def page(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    await _authorize(request, db_session)
     key = request.query_params.get("key", "")
     tpl_options = "".join(
         f"<option value='{k}' data-layout='{lay}'>{lbl}</option>" for k, lbl, lay in TEMPLATES
