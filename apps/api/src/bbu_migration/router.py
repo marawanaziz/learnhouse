@@ -336,6 +336,57 @@ async def migrate_students(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/seed-catalog")
+async def seed_catalog(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Idempotent upsert of the full BBU store catalog. Body: {items:[{name,
+    kind, price_cents, currency?, course_names?[] | course_uuids?[], description?,
+    benefits?, public?}]}. Maps course_names -> course_uuids by matching Course.name
+    so products grant access to the right courses. Upsert key = (name, org_id)."""
+    from src.bbu_payments.models import BBUProduct
+    body = await request.json()
+    _check(request, body)
+    items = body.get("items") or []
+    org_id = 1
+    # name -> course_uuid lookup for this org
+    courses = (await db_session.execute(select(Course).where(Course.org_id == org_id))).scalars().all()
+    by_name = {c.name.strip().lower(): c.course_uuid for c in courses}
+    created, updated, errors = 0, 0, []
+    for it in items:
+        try:
+            name = (it.get("name") or "").strip()
+            if not name:
+                continue
+            uuids = list(it.get("course_uuids") or [])
+            for cn in (it.get("course_names") or []):
+                cu = by_name.get(cn.strip().lower())
+                if cu:
+                    uuids.append(cu)
+                else:
+                    errors.append(f"{name}: no course '{cn}'")
+            existing = (await db_session.execute(
+                select(BBUProduct).where(BBUProduct.name == name, BBUProduct.org_id == org_id)
+            )).scalars().first()
+            p = existing or BBUProduct(org_id=org_id, name=name)
+            p.kind = it.get("kind", p.kind or "course")
+            p.price_cents = int(it.get("price_cents", p.price_cents or 0))
+            p.currency = (it.get("currency") or p.currency or "usd").lower()
+            if uuids:
+                p.course_uuids = ",".join(uuids)
+            p.description = it.get("description", p.description) or ""
+            p.benefits = it.get("benefits", p.benefits) or ""
+            if "image_url" in it:
+                p.image_url = it["image_url"]
+            p.public = bool(it.get("public", True))
+            db_session.add(p)
+            await db_session.commit()
+            updated += 1 if existing else 0
+            created += 0 if existing else 1
+        except Exception as e:
+            await db_session.rollback()
+            errors.append(f"{it.get('name')}: {e}")
+    return {"created": created, "updated": updated, "errors": errors[:30], "error_count": len(errors)}
+
+
 @router.post("/gate-courses")
 async def gate_courses(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Gate course access via native usergroups. Per course: find/create an
