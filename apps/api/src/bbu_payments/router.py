@@ -219,6 +219,8 @@ async def _grant_course_access(db_session: AsyncSession, order, product):
     success re-hit doesn't create duplicate enrollments."""
     from src.db.courses.courses import Course
     from src.db.users import User
+    from src.db.usergroups import UserGroup
+    from src.db.usergroup_user import UserGroupUser
     from src.bbu_migration.router import _ensure_trail, _ensure_run
 
     uuids = [u for u in (product.course_uuids or "").split(",") if u]
@@ -236,13 +238,30 @@ async def _grant_course_access(db_session: AsyncSession, order, product):
         )).scalars().first()
     if not user:
         return  # no account yet (guest email) — order stays the record of purchase
+    now = datetime.now(timezone.utc).isoformat()
     trail = await _ensure_trail(db_session, order.org_id, user.id)
     for cu in uuids:
         course = (await db_session.execute(
             select(Course).where(Course.course_uuid == cu)
         )).scalars().first()
         if course:
+            # 1) enrollment (trail run) — for progress tracking / "my courses"
             await _ensure_run(db_session, trail, course, user.id)
+            # 2) ACCESS — add the buyer to the course's access usergroup. This is
+            #    what actually unlocks a gated (non-public) course. Access group
+            #    is keyed by course_uuid in its description (see gate-courses).
+            grp = (await db_session.execute(select(UserGroup).where(
+                UserGroup.org_id == order.org_id, UserGroup.description == cu
+            ))).scalars().first()
+            if grp:
+                has = (await db_session.execute(select(UserGroupUser).where(
+                    UserGroupUser.usergroup_id == grp.id,
+                    UserGroupUser.user_id == user.id,
+                ))).scalars().first()
+                if not has:
+                    db_session.add(UserGroupUser(
+                        usergroup_id=grp.id or 0, user_id=user.id or 0,
+                        org_id=order.org_id, creation_date=now, update_date=now))
     await db_session.commit()
 
 

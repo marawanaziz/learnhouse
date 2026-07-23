@@ -336,6 +336,102 @@ async def migrate_students(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/gate-courses")
+async def gate_courses(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Gate course access via native usergroups. Per course: find/create an
+    access usergroup (description=course_uuid for reliable lookup), link the
+    course to it, backfill members from existing TrailRuns (preserve access the
+    students already had), and optionally set public=False.
+
+    Body: {course_uuids?: [..] (default all org-1 courses), make_private?: bool,
+    dry_run?: bool}. Idempotent. Access after gating = access-group membership,
+    which is what a purchase grants (see bbu_payments _grant_course_access)."""
+    from uuid import uuid4
+    from src.db.usergroups import UserGroup
+    from src.db.usergroup_user import UserGroupUser
+    from src.db.usergroup_resources import UserGroupResource
+
+    body = await request.json()
+    _check(request, body)
+    filt = body.get("course_uuids") or []
+    make_private = bool(body.get("make_private", False))
+    dry = bool(body.get("dry_run", False))
+    org_id = 1
+
+    q = select(Course).where(Course.org_id == org_id)
+    if filt:
+        q = q.where(Course.course_uuid.in_(filt))
+    courses = (await db_session.execute(q)).scalars().all()
+
+    results = []
+    for c in courses:
+        grp = (await db_session.execute(select(UserGroup).where(
+            UserGroup.org_id == org_id, UserGroup.description == c.course_uuid
+        ))).scalars().first()
+
+        # enrolled users (from trail runs) — the access to preserve
+        enrolled = set((await db_session.execute(
+            select(TrailRun.user_id).where(TrailRun.course_id == c.id)
+        )).scalars().all())
+
+        if dry:
+            existing = set()
+            if grp:
+                existing = set((await db_session.execute(
+                    select(UserGroupUser.user_id).where(UserGroupUser.usergroup_id == grp.id)
+                )).scalars().all())
+            results.append({"course": c.name, "public": c.public,
+                            "group_exists": bool(grp), "enrolled": len(enrolled),
+                            "would_add": len([u for u in enrolled if u not in existing]),
+                            "would_make_private": make_private and c.public})
+            continue
+
+        if not grp:
+            grp = UserGroup(org_id=org_id, name=f"{c.name} · Access",
+                            description=c.course_uuid, usergroup_uuid=f"usergroup_{uuid4()}",
+                            creation_date=_now(), update_date=_now())
+            db_session.add(grp)
+            await db_session.commit()
+            await db_session.refresh(grp)
+
+        # link course to the access group
+        link = (await db_session.execute(select(UserGroupResource).where(
+            UserGroupResource.usergroup_id == grp.id,
+            UserGroupResource.resource_uuid == c.course_uuid,
+        ))).scalars().first()
+        if not link:
+            db_session.add(UserGroupResource(
+                usergroup_id=grp.id or 0, resource_uuid=c.course_uuid, org_id=org_id,
+                creation_date=_now(), update_date=_now()))
+            await db_session.commit()
+
+        # backfill members
+        existing = set((await db_session.execute(
+            select(UserGroupUser.user_id).where(UserGroupUser.usergroup_id == grp.id)
+        )).scalars().all())
+        to_add = [u for u in enrolled if u not in existing]
+        for uid in to_add:
+            db_session.add(UserGroupUser(usergroup_id=grp.id or 0, user_id=uid,
+                                         org_id=org_id, creation_date=_now(), update_date=_now()))
+        if to_add:
+            await db_session.commit()
+
+        made_private = False
+        if make_private and c.public:
+            c.public = False
+            db_session.add(c)
+            await db_session.commit()
+            made_private = True
+
+        results.append({"course": c.name, "group_id": grp.id, "enrolled": len(enrolled),
+                        "added": len(to_add), "made_private": made_private,
+                        "public_now": c.public})
+
+    return {"courses": len(results), "dry_run": dry,
+            "made_private": sum(1 for r in results if r.get("made_private")),
+            "detail": results[:40]}
+
+
 @router.post("/provision-login")
 async def provision_login(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Operator tool (admin-key gated): create a login or reset an existing one
