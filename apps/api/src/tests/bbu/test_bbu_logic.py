@@ -12,6 +12,7 @@ from src.bbu_credentials.models import BBUCredential
 from src.bbu_credentials import service as S
 from src.bbu_payments.models import BBUCoupon
 from src.bbu_payments import coupons as C
+from src.bbu_payments.helpers import merge_course_uuids
 
 UTC = dt.timezone.utc
 
@@ -93,3 +94,18 @@ def test_reminder_windows():
     assert _window(50) == 60
     assert _window(25) == 30
     assert _window(200) is None     # too early — no reminder yet
+
+
+# --------------------------------------------------------------------------- #
+# Order-bump course merge (access-control path)
+# --------------------------------------------------------------------------- #
+def test_merge_course_uuids_dedup_and_order():
+    # primary grants A,B; a bump grants B,C -> A,B,C once, order preserved
+    assert merge_course_uuids(["course_A,course_B", "course_B,course_C"]) == "course_A,course_B,course_C"
+
+
+def test_merge_course_uuids_handles_empties():
+    assert merge_course_uuids(["", "course_A", ""]) == "course_A"
+    assert merge_course_uuids([]) == ""
+    # whitespace + trailing commas don't produce blank entries
+    assert merge_course_uuids([" course_A , course_B ,"]) == "course_A,course_B"

@@ -38,6 +38,7 @@ from src.db.organizations import Organization
 from src.bbu_payments.models import BBUProduct, BBUOrder, BBUCoupon
 from src.bbu_payments.router import _fulfill, _as_dict
 from src.bbu_payments import coupons as coupon_svc
+from src.bbu_payments.helpers import merge_course_uuids
 
 router = APIRouter()
 
@@ -232,13 +233,7 @@ async def checkout(
     line_items = [_line(p)] + [_line(bp) for bp in bump_products]
 
     # Merge course access across the primary product + any bumps (dedup, ordered).
-    all_uuids, seen = [], set()
-    for prod in [p] + bump_products:
-        for cu in (prod.course_uuids or "").split(","):
-            if cu and cu not in seen:
-                seen.add(cu)
-                all_uuids.append(cu)
-    merged_courses = ",".join(all_uuids)
+    merged_courses = merge_course_uuids(prod.course_uuids for prod in [p] + bump_products)
     total_cents = p.price_cents + sum(bp.price_cents for bp in bump_products)
 
     session = stripe.checkout.Session.create(
