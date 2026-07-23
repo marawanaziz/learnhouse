@@ -319,15 +319,21 @@ async def run_reminders(db: AsyncSession, org_id: int = 1, dry: bool = False) ->
                         entry["pushed"] = True
                     except Exception as e:
                         entry["push_error"] = str(e)[:100]
-            c.last_reminder_days = window
-            c.updated_at = _now()
-            db.add(c)
+            # Only mark the window done once the reminder actually went out, so a
+            # transient GHL failure (or a run before GHL is configured) retries
+            # next time instead of silently dropping the reminder.
+            if entry["pushed"]:
+                c.last_reminder_days = window
+                c.updated_at = _now()
+                db.add(c)
             fired.append(entry)
         await db.commit()
     finally:
         if ghl:
             await ghl.__aexit__(None, None, None)
-    return {"dry_run": False, "fired": len(fired), "ghl_configured": ghl_ok,
+    return {"dry_run": False,
+            "fired": sum(1 for e in fired if e.get("pushed")),
+            "processed": len(fired), "ghl_configured": ghl_ok,
             "results": fired}
 
 
