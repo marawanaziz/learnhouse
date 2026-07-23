@@ -25,6 +25,8 @@ ALTERS = [
     "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS asset_path VARCHAR DEFAULT ''",
     "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS asset_filename VARCHAR(300) DEFAULT ''",
     "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS benefits VARCHAR DEFAULT ''",
+    "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS category VARCHAR(60) DEFAULT ''",
+    "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS bump_offer_ids VARCHAR DEFAULT ''",
     "CREATE INDEX IF NOT EXISTS ix_bbu_order_download_token ON bbu_order (download_token)",
 ]
 

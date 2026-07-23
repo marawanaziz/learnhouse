@@ -91,6 +91,24 @@ async def _included_resources(db: AsyncSession, product: BBUProduct, org_uuid: s
     return resources
 
 
+async def _bump_offers(db: AsyncSession, p: BBUProduct) -> list:
+    """Resolve a product's order-bump add-on ids into light summaries for the UI."""
+    ids = [int(x) for x in (p.bump_offer_ids or "").split(",") if x.strip().isdigit()]
+    if not ids:
+        return []
+    rows = (await db.execute(select(BBUProduct).where(
+        BBUProduct.id.in_(ids), BBUProduct.org_id == p.org_id))).scalars().all()
+    by_id = {b.id: b for b in rows}
+    out = []
+    for i in ids:  # preserve order
+        b = by_id.get(i)
+        if b:
+            out.append({"offer_uuid": _offer_uuid(b.id), "name": b.name,
+                        "amount": round((b.price_cents or 0) / 100, 2),
+                        "kind": b.kind})
+    return out
+
+
 async def _to_offer(db: AsyncSession, p: BBUProduct, org_uuid: str) -> dict:
     return {
         "id": p.id,
@@ -104,6 +122,8 @@ async def _to_offer(db: AsyncSession, p: BBUProduct, org_uuid: str) -> dict:
         "benefits": p.benefits or "",
         "payments_group_id": None,
         "kind": p.kind,
+        "category": p.category or "",
+        "bump_offers": await _bump_offers(db, p),
         "included_resources": await _included_resources(db, p, org_uuid),
     }
 
@@ -167,6 +187,28 @@ async def checkout(
         raise HTTPException(500, "Stripe not configured")
     p = await _get_product(db_session, org_id, offer_uuid)
 
+    # Optional order-bump add-ons selected at checkout (list of offer_uuids).
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    bump_uuids = body.get("bumps") or []
+    if isinstance(bump_uuids, str):
+        bump_uuids = [b for b in bump_uuids.split(",") if b]
+    allowed_bumps = {x.strip() for x in (p.bump_offer_ids or "").split(",") if x.strip()}
+    bump_products = []
+    for bu in bump_uuids:
+        try:
+            bid = _parse_offer_uuid(bu)
+        except HTTPException:
+            continue
+        if str(bid) not in allowed_bumps:      # only bumps the product declares
+            continue
+        bp = (await db_session.execute(select(BBUProduct).where(
+            BBUProduct.id == bid, BBUProduct.org_id == org_id))).scalars().first()
+        if bp:
+            bump_products.append(bp)
+
     redirect_uri = request.query_params.get("redirect_uri", "") or _base_from_request(request)
     parsed = urlparse(redirect_uri)
     origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme else _base_from_request(request)
@@ -178,28 +220,43 @@ async def checkout(
     success_url = (f"{origin}/api/v1/payments/{org_id}/checkout-success"
                    f"?session_id={{CHECKOUT_SESSION_ID}}&next={quote(next_url, safe='')}")
 
+    def _line(prod):
+        return {
+            "price_data": {
+                "currency": prod.currency,
+                "product_data": {"name": prod.name, "description": (prod.description or "")[:300]},
+                "unit_amount": prod.price_cents,
+            },
+            "quantity": 1,
+        }
+    line_items = [_line(p)] + [_line(bp) for bp in bump_products]
+
+    # Merge course access across the primary product + any bumps (dedup, ordered).
+    all_uuids, seen = [], set()
+    for prod in [p] + bump_products:
+        for cu in (prod.course_uuids or "").split(","):
+            if cu and cu not in seen:
+                seen.add(cu)
+                all_uuids.append(cu)
+    merged_courses = ",".join(all_uuids)
+    total_cents = p.price_cents + sum(bp.price_cents for bp in bump_products)
+
     session = stripe.checkout.Session.create(
         mode="payment",
         customer_email=email or None,
-        line_items=[{
-            "price_data": {
-                "currency": p.currency,
-                "product_data": {"name": p.name, "description": (p.description or "")[:300]},
-                "unit_amount": p.price_cents,
-            },
-            "quantity": 1,
-        }],
+        line_items=line_items,
         success_url=success_url,
         cancel_url=redirect_uri or f"{origin}{org_root}/store",
         allow_promotion_codes=True,  # buyers enter BBU promo codes on Stripe's page
-        metadata={"bbu_product_id": str(p.id), "course_uuids": p.course_uuids,
+        metadata={"bbu_product_id": str(p.id), "course_uuids": merged_courses,
+                  "bump_ids": ",".join(str(bp.id) for bp in bump_products),
                   "affiliate_ref": "", "buyer_user_id": str(uid)},
     )
 
     order = BBUOrder(
         org_id=p.org_id, product_id=p.id, stripe_session_id=session.id,
-        email=email, user_id=uid, amount_cents=p.price_cents, currency=p.currency,
-        status="pending", course_uuids=p.course_uuids,
+        email=email, user_id=uid, amount_cents=total_cents, currency=p.currency,
+        status="pending", course_uuids=merged_courses,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     db_session.add(order)
@@ -333,6 +390,8 @@ async def admin_create_offer(org_id: int, request: Request, db_session: AsyncSes
         currency=(body.get("currency", "usd") or "usd").lower(),
         description=body.get("description", ""),
         benefits=body.get("benefits", ""),
+        category=body.get("category", ""),
+        bump_offer_ids=",".join(str(x) for x in (body.get("bump_offer_ids") or [])),
         public=True,
     )
     db_session.add(p)
@@ -349,6 +408,9 @@ async def admin_update_offer(org_id: int, offer_uuid: str, request: Request, db_
     if "name" in body: p.name = body["name"]
     if "description" in body: p.description = body["description"]
     if "benefits" in body: p.benefits = body["benefits"]
+    if "category" in body: p.category = body["category"] or ""
+    if "bump_offer_ids" in body:
+        p.bump_offer_ids = ",".join(str(x) for x in (body["bump_offer_ids"] or []))
     if "amount" in body: p.price_cents = round(float(body["amount"]) * 100)
     if "currency" in body: p.currency = (body["currency"] or "usd").lower()
     if "resource_uuids" in body:

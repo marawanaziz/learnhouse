@@ -30,6 +30,10 @@ class BBUProduct(SQLModel, table=True):
     asset_filename: str = Field(default="", sa_column=Column(String(300)))
     # comma-separated selling points shown on the native offer page
     benefits: str = Field(default="", sa_column=Column(String))
+    # store bucket for categorization (e.g. Birth, Postpartum, Spanish, Professional)
+    category: str = Field(default="", sa_column=Column(String(60)))
+    # order bumps: comma-separated product ids offered as add-ons at checkout
+    bump_offer_ids: str = Field(default="", sa_column=Column(String))
 
 
 class BBUOrder(SQLModel, table=True):

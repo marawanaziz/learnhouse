@@ -223,7 +223,9 @@ async def _grant_course_access(db_session: AsyncSession, order, product):
     from src.db.usergroup_user import UserGroupUser
     from src.bbu_migration.router import _ensure_trail, _ensure_run
 
-    uuids = [u for u in (product.course_uuids or "").split(",") if u]
+    # Prefer the order's recorded course set (includes any order-bump add-ons),
+    # falling back to the primary product's courses.
+    uuids = [u for u in ((order.course_uuids or product.course_uuids) or "").split(",") if u]
     if not uuids:
         return
     # Resolve the buyer: prefer the user_id captured at checkout, else by email.
