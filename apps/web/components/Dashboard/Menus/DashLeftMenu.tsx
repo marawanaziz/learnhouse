@@ -40,6 +40,7 @@ import {
   ShoppingBag,
   FolderSimple,
   Certificate,
+  IdentificationCard,
 } from '@phosphor-icons/react'
 import { DiscordIcon } from '@components/Objects/Icons/DiscordIcon'
 import CommandPaletteTrigger from '@components/Dashboard/CommandPalette/CommandPaletteTrigger'
@@ -402,6 +403,15 @@ function DashLeftMenu() {
               })()}
             </HoverMenu>
             </div>
+
+            {/* Members — roster + groups/cohorts management */}
+            <MenuLink
+              href="/dash/members"
+              icon={<IdentificationCard size={20} weight="fill" />}
+              label={t('common.members') !== 'common.members' ? t('common.members') : 'Members'}
+              isCollapsed={isCollapsed}
+              active={isActivePath('/dash/members')}
+            />
 
             {/* BBU Certificate Manager (served by the API; session-gated, opens in a new tab) */}
             <MenuLink
