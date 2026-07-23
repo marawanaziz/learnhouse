@@ -538,8 +538,13 @@ async def admin_delete_coupon(org_id: int, coupon_id: int, request: Request, db_
 
 
 @router.post("/{org_id}/offers/{offer_uuid}/validate-coupon")
-async def validate_coupon(org_id: int, offer_uuid: str, request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    """Pre-checkout preview: given a code + offer, return the discounted price."""
+async def validate_coupon(org_id: int, offer_uuid: str, request: Request,
+                          db_session: AsyncSession = Depends(get_db_session),
+                          user=Depends(get_current_user)):
+    """Pre-checkout preview: given a code + offer, return the discounted price.
+    Requires a signed-in user (same as checkout) so anonymous visitors can't
+    enumerate/brute-force coupon codes."""
+    _require_user(user)
     body = await request.json()
     code = (body.get("code") or "").strip()
     p = await _get_product(db_session, org_id, offer_uuid)
