@@ -381,6 +381,50 @@ async def setup_certifications(request: Request, db_session: AsyncSession = Depe
     return {"created": made, "updated": updated, "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/issue-certificate")
+async def issue_certificate(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Admin: issue a course certificate to a user (by email) — for testing /
+    manual grants. Body: {email, course_uuid}. Idempotent per (user, cert)."""
+    import secrets as _secrets
+    from uuid import uuid4
+    from src.db.courses.certifications import Certifications, CertificateUser
+
+    body = await request.json()
+    _check(request, body)
+    email = (body.get("email") or "").strip().lower()
+    cu = (body.get("course_uuid") or "").strip()
+    user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    course = (await db_session.execute(select(Course).where(Course.course_uuid == cu))).scalars().first()
+    if not course:
+        raise HTTPException(404, "Course not found")
+    cert = (await db_session.execute(
+        select(Certifications).where(Certifications.course_id == course.id)
+    )).scalars().first()
+    if not cert:
+        raise HTTPException(404, "No certification configured for this course")
+    existing = (await db_session.execute(
+        select(CertificateUser).where(
+            CertificateUser.user_id == user.id,
+            CertificateUser.certification_id == cert.id,
+        )
+    )).scalars().first()
+    if existing:
+        return {"already": True, "user_certification_uuid": existing.user_certification_uuid}
+    _alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    now = datetime.now()
+    ucid = (f"{_secrets.choice(_alpha)}{_secrets.choice(_alpha)}-"
+            f"{now.year}{now.month:02d}{now.day:02d}-{(user.user_uuid or '')[-4:] or 'USER'}-"
+            f"{_secrets.token_hex(4)}")
+    row = CertificateUser(user_id=user.id or 0, certification_id=cert.id or 0,
+                          user_certification_uuid=ucid, created_at=_now(), updated_at=_now())
+    db_session.add(row)
+    await db_session.commit()
+    return {"issued": True, "user_certification_uuid": ucid,
+            "course": course.name}
+
+
 @router.post("/thumbnails")
 async def import_thumbnails(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Set course thumbnails from remote image URLs (e.g. the original Circle

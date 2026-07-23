@@ -201,6 +201,12 @@ const CertificateVerificationPage: React.FC<CertificateVerificationPageProps> = 
                     day: 'numeric'
                   })}
                   qrCodeLink={qrCodeLink}
+                  bbuTemplate={certificateData.certification.config.bbu_template}
+                  bbuLayout={certificateData.certification.config.bbu_layout}
+                  recipientName={certificateData.recipient_name}
+                  issueDate={new Date(certificateData.certificate_user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                  expirationDate={(() => { const y = Number(certificateData.certification.config.bbu_validity_years || 0); if (!y) return ''; const d = new Date(certificateData.certificate_user.created_at); if (isNaN(d.getTime())) return ''; d.setFullYear(d.getFullYear() + y); return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); })()}
+                  surfaceId="bbu-certificate-surface"
                 />
               </div>
             </div>

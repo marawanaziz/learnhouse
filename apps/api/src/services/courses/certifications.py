@@ -554,11 +554,23 @@ async def get_certificate_by_user_certification_uuid(
             detail="Course not found",
         )
 
-    # No RBAC check - allow anyone to access certificates by UUID
+    # No RBAC check - allow anyone to access certificates by UUID (public verify)
+
+    # Recipient name — the certificate holder, shown on the certificate itself.
+    from src.db.users import User
+    holder = (await db_session.execute(
+        select(User).where(User.id == certificate_user.user_id)
+    )).scalars().first()
+    recipient_name = ""
+    if holder:
+        recipient_name = " ".join(
+            p for p in [holder.first_name or "", holder.last_name or ""] if p
+        ).strip() or holder.username
 
     return {
         "certificate_user": CertificateUserRead(**certificate_user.model_dump()),
         "certification": CertificationRead(**certification.model_dump()),
+        "recipient_name": recipient_name,
         "course": {
             "id": course.id,
             "course_uuid": course.course_uuid,
