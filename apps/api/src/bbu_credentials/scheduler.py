@@ -36,6 +36,6 @@ async def start_reminder_scheduler():
         return
     try:
         asyncio.create_task(_loop())
-        logger.info("[BBU] credential reminder scheduler started")
+        print("[BBU] credential reminder scheduler started", flush=True)
     except Exception as e:
-        logger.warning("[BBU] could not start reminder scheduler: %s", e)
+        print(f"[BBU] could not start reminder scheduler: {e}", flush=True)
