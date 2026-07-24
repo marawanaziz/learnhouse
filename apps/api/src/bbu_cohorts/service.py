@@ -4,7 +4,8 @@ Access is granted via a native usergroup linked to the cohort's course (same
 mechanism as course-gating). Completing a cohort calls the credentials engine to
 upgrade the member's provisional credential to full.
 """
-from datetime import datetime, timezone
+import calendar
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -18,6 +19,25 @@ from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _add_months_iso(date_str: str, months: int) -> str:
+    """date_str (ISO, may carry time) + N months → ISO date. Clamps day to the
+    target month's length. Returns '' if unparseable."""
+    s = (date_str or "")[:10]
+    try:
+        d = date.fromisoformat(s)
+    except Exception:
+        return ""
+    m = d.month - 1 + int(months or 0)
+    y = d.year + m // 12
+    mo = m % 12 + 1
+    day = min(d.day, calendar.monthrange(y, mo)[1])
+    return date(y, mo, day).isoformat()
 
 
 async def ensure_usergroup(db: AsyncSession, cohort: BBUCohort) -> int:
@@ -200,6 +220,47 @@ async def close(db: AsyncSession, cohort: BBUCohort, revoke_access: bool = True)
     return {"closed": True, "access_revoked": revoked}
 
 
+def access_until(cohort: BBUCohort) -> str:
+    """The ISO date a cohort's member access is meant to lapse: (end_date, or
+    start_date if no end) + access_months. '' when no anchor date is set."""
+    anchor = (cohort.end_date or cohort.start_date or "")
+    if not anchor or not cohort.access_months:
+        return ""
+    return _add_months_iso(anchor, cohort.access_months)
+
+
+async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dict:
+    """Idempotent daily bookkeeping over all non-closed cohorts:
+      • open/full → 'running' once start_date has passed (so the buy-into-cohort
+        resolver stops enrolling new buyers into a class already in progress);
+      • past its access window (access_until) → close + revoke access, enforcing
+        the 6-/12-month access rule that a completed cohort promises.
+    Completion is NEVER automated (dropping before completion = no cert — that's
+    a deliberate admin act). Safe to re-run; returns what it changed."""
+    today = _today()
+    started, expired = [], []
+    cohorts = (await db.execute(select(BBUCohort).where(
+        BBUCohort.org_id == org_id, BBUCohort.status != "closed"))).scalars().all()
+    for c in cohorts:
+        exp = access_until(c)
+        if exp and today > exp:
+            # access window is over → close and revoke (unless already closed)
+            expired.append({"id": c.id, "name": c.name, "access_until": exp})
+            if not dry:
+                await close(db, c, revoke_access=True)
+            continue
+        start = (c.start_date or "")[:10]
+        if c.status in ("open", "full") and start and start <= today:
+            started.append({"id": c.id, "name": c.name, "start_date": start})
+            if not dry:
+                c.status = "running"
+                c.updated_at = _now()
+                db.add(c)
+                await db.commit()
+    return {"ran": True, "dry": dry, "started": started, "expired": expired,
+            "started_count": len(started), "expired_count": len(expired)}
+
+
 async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, program: str = ""):
     """Pick the cohort a purchase should enroll into: a specific cohort_id if the
     product pins one, otherwise the NEXT open cohort of the program (earliest
@@ -212,9 +273,16 @@ async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, p
             BBUCohort.org_id == org_id, BBUCohort.program == program,
             BBUCohort.status.in_(["open", "full"]))
         )).scalars().all()
-        # earliest upcoming start date first ("" sorts last)
-        rows.sort(key=lambda c: (c.start_date or "9999", c.id))
-        return rows[0] if rows else None
+        today = _today()
+        # Only enroll into an UPCOMING cohort (start date empty/TBD or in the
+        # future). A cohort that has already started keeps its 'open' status but
+        # should NOT absorb new buyers — that would drop them into a class in
+        # progress. If none upcoming, return None → fail-soft "no open cohort"
+        # (order still completes; admin creates the next cohort). An admin can
+        # always force a specific cohort by pinning cohort_id.
+        upcoming = [c for c in rows if not (c.start_date or "")[:10] or (c.start_date or "")[:10] >= today]
+        upcoming.sort(key=lambda c: ((c.start_date or "9999")[:10], c.id))
+        return upcoming[0] if upcoming else None
     return None
 
 

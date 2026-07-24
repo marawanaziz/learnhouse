@@ -66,6 +66,10 @@ app.add_event_handler("shutdown", shutdown_app(app))
 from src.bbu_credentials.scheduler import start_reminder_scheduler  # noqa: E402
 app.add_event_handler("startup", start_reminder_scheduler)
 
+# BBU: in-process daily cohort lifecycle scheduler (start→running, access-window close).
+from src.bbu_cohorts.scheduler import start_cohort_scheduler  # noqa: E402
+app.add_event_handler("startup", start_cohort_scheduler)
+
 # Content delivery — S3-aware router when S3 is enabled, local otherwise.
 # Both paths enforce access control; neither serves raw StaticFiles.
 if learnhouse_config.hosting_config.content_delivery.type == "s3api":

@@ -42,6 +42,7 @@ def _cohort_dict(c: BBUCohort, active: int = None) -> dict:
         "access_months": c.access_months, "zoom_link": c.zoom_link,
         "workbook_url": c.workbook_url, "credential_type": c.credential_type,
         "recordings": [r for r in (c.recordings or "").split("\n") if r],
+        "access_until": svc.access_until(c),
     }
     if active is not None:
         d["active_members"] = active
@@ -182,6 +183,16 @@ async def delete_cohort(cohort_id: int, request: Request, db_session: AsyncSessi
     await db_session.delete(c)
     await db_session.commit()
     return {"deleted": cohort_id, "members_removed": len(members)}
+
+
+@router.post("/run-lifecycle")
+async def run_lifecycle(request: Request, org_id: int = 1, dry_run: bool = True,
+                        db_session: AsyncSession = Depends(get_db_session)):
+    """Manual trigger for the same job the daily scheduler runs: flip started
+    cohorts to 'running' and close cohorts past their access window. dry_run
+    defaults True — preview what would change."""
+    _check(request)
+    return await svc.run_lifecycle(db_session, org_id=org_id, dry=dry_run)
 
 
 @router.post("/{cohort_id}/close")
