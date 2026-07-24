@@ -30,6 +30,10 @@ export default function RootLayout({
             brand theme color. Makes learn.birthandbabyuniversity.com installable on
             phones without an App Store build. */}
         <link rel="manifest" href="/manifest.webmanifest" />
+        {/* BBU browser-tab favicon (overrides the default LearnHouse favicon.ico) */}
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" type="image/png" sizes="192x192" href="/bbu-icon-192.png" />
+        <link rel="icon" type="image/png" sizes="512x512" href="/bbu-icon-512.png" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="theme-color" content="#113d5d" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
