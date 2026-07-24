@@ -98,6 +98,29 @@ async def create_cohort(request: Request, db_session: AsyncSession = Depends(get
     return _cohort_dict(c, 0)
 
 
+@router.get("/zoom-status")
+async def zoom_status(request: Request):
+    """Ops check: is the Zoom S2S integration configured and can it authenticate?
+    Returns {configured, token_ok, scopes} — no secrets. Admin-key gated.
+    Defined before GET /{cohort_id} so the literal path wins over the int param."""
+    _check(request)
+    from src.bbu_zoom import client as zoom
+    if not zoom.is_configured():
+        return {"configured": False, "token_ok": False, "scopes": ""}
+    try:
+        import base64 as _b64, httpx as _httpx
+        basic = _b64.b64encode(f"{zoom.CLIENT_ID}:{zoom.CLIENT_SECRET}".encode()).decode()
+        async with _httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(zoom._TOKEN_URL, params={
+                "grant_type": "account_credentials", "account_id": zoom.ACCOUNT_ID,
+            }, headers={"Authorization": f"Basic {basic}"})
+        data = r.json() if r.status_code == 200 else {}
+        return {"configured": True, "token_ok": bool(data.get("access_token")),
+                "scopes": data.get("scope", "") or data.get("reason", "")}
+    except Exception as e:
+        return {"configured": True, "token_ok": False, "error": str(e)[:200]}
+
+
 @router.get("/{cohort_id}")
 async def get_cohort(cohort_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
     _check(request)
@@ -202,29 +225,6 @@ async def delete_cohort(cohort_id: int, request: Request, db_session: AsyncSessi
     await db_session.delete(c)
     await db_session.commit()
     return {"deleted": cohort_id, "members_removed": len(members)}
-
-
-@router.get("/zoom-status")
-async def zoom_status(request: Request):
-    """Ops check: is the Zoom S2S integration configured and can it authenticate?
-    Returns {configured, token_ok, scopes} — no secrets. Admin-key gated."""
-    _check(request)
-    from src.bbu_zoom import client as zoom
-    if not zoom.is_configured():
-        return {"configured": False, "token_ok": False, "scopes": ""}
-    try:
-        tok = await zoom._get_token()
-        # a fresh token response cached the scopes; re-request to read them cleanly
-        import base64 as _b64, httpx as _httpx
-        basic = _b64.b64encode(f"{zoom.CLIENT_ID}:{zoom.CLIENT_SECRET}".encode()).decode()
-        async with _httpx.AsyncClient(timeout=20) as c:
-            r = await c.post(zoom._TOKEN_URL, params={
-                "grant_type": "account_credentials", "account_id": zoom.ACCOUNT_ID,
-            }, headers={"Authorization": f"Basic {basic}"})
-        data = r.json() if r.status_code == 200 else {}
-        return {"configured": True, "token_ok": bool(tok), "scopes": data.get("scope", "")}
-    except Exception as e:
-        return {"configured": True, "token_ok": False, "error": str(e)[:200]}
 
 
 @router.post("/run-lifecycle")
