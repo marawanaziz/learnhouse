@@ -58,14 +58,24 @@ function MembersManager() {
     if (selectedGroup) { p.append('usergroup_id', String(selectedGroup.id)); p.append('usergroup_filter', 'in_group') }
     return p.toString()
   }
+  // "All members" (no group selected) is powered by the reliable /bbu/people
+  // roster with progress/cert/spend rollups; group views keep the native roster.
+  const usingPeople = !selectedGroup
   const { data: roster, isFetching } = useQuery({
     queryKey: ['members', 'roster', orgId, page, search, selectedGroup?.id],
     queryFn: () => apiFetch(`${getAPIUrl()}orgs/${orgId}/users?${rosterQuery()}`, token),
-    enabled,
+    enabled: enabled && !usingPeople,
     placeholderData: (p) => p,
   })
+  const { data: peopleData, isFetching: peopleFetching } = useQuery({
+    queryKey: ['bbu-people', page, search],
+    queryFn: () => apiFetch(`${getAPIUrl()}bbu/people?q=${encodeURIComponent(search)}&limit=${PAGE}&offset=${(page - 1) * PAGE}`, token),
+    enabled: enabled && usingPeople,
+    placeholderData: (p: any) => p,
+  })
+  const people: any[] = peopleData?.people || []
   const rows: any[] = roster?.items || []
-  const total: number = roster?.total || 0
+  const total: number = usingPeople ? (peopleData?.total || 0) : (roster?.total || 0)
   const pages = Math.max(1, Math.ceil(total / PAGE))
 
   // ---- group's linked courses ----
@@ -268,6 +278,35 @@ function MembersManager() {
             )}
 
             {/* table */}
+            {usingPeople ? (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                  <th className="px-3 py-2">Member</th>
+                  <th className="px-3 py-2">Email</th>
+                  <th className="px-3 py-2 text-center">Completed</th>
+                  <th className="px-3 py-2 text-center">Certs</th>
+                  <th className="px-3 py-2 text-right">Spend</th>
+                </tr>
+              </thead>
+              <tbody>
+                {people.map((p: any) => (
+                  <tr key={p.user_id} className="border-b border-gray-50 hover:bg-gray-50/60">
+                    <td className="px-3 py-2">
+                      <button onClick={() => setProfileUserId(p.user_id)} className="font-medium text-gray-800 hover:text-indigo-600 hover:underline text-left">{p.name || p.email}</button>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500">{p.email}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{p.completed}/{p.enrolled}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{p.certificates}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">${p.spend}</td>
+                  </tr>
+                ))}
+                {people.length === 0 && !peopleFetching && (
+                  <tr><td colSpan={5} className="px-3 py-10 text-center text-gray-400 text-sm">No people found</td></tr>
+                )}
+              </tbody>
+            </table>
+            ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100">
@@ -315,6 +354,7 @@ function MembersManager() {
                 )}
               </tbody>
             </table>
+            )}
 
             {/* pagination */}
             <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100">
