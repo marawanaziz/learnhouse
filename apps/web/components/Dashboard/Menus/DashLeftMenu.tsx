@@ -42,6 +42,7 @@ import {
   Certificate,
   IdentificationCard,
   Ticket,
+  Handshake,
 } from '@phosphor-icons/react'
 import { DiscordIcon } from '@components/Objects/Icons/DiscordIcon'
 import CommandPaletteTrigger from '@components/Dashboard/CommandPalette/CommandPaletteTrigger'
@@ -433,6 +434,15 @@ function DashLeftMenu() {
               label="Operations"
               isCollapsed={isCollapsed}
               active={isActivePath('/dash/operations')}
+            />
+
+            {/* BBU Affiliate program — partners, referrals, commissions, payouts (embedded in-app) */}
+            <MenuLink
+              href="/dash/affiliates"
+              icon={<Handshake size={20} weight="fill" />}
+              label="Affiliates"
+              isCollapsed={isCollapsed}
+              active={isActivePath('/dash/affiliates')}
             />
 
             {showLibrary && (

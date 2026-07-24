@@ -27,6 +27,7 @@ from src.bbu_payments.models import (
     BBUAffiliate, BBUCommission, BBUPayout,
 )
 from src.bbu_payments import affiliates as aff
+from src.bbu_admin.auth import authorize_admin
 from src.bbu_payments.affiliate_branding import (
     join_page, portal_page, admin_page,
 )
@@ -264,7 +265,7 @@ async def run_payouts(db_session: AsyncSession, org_id: int = 1, dry_run: bool =
 # --------------------------------------------------------------------------- #
 @router.get("/admin", response_class=HTMLResponse)
 async def admin(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    _check_admin(request)
+    await authorize_admin(request, db_session, "")  # session (dashboard) or key
     settings = await aff.get_settings(db_session)
     affs = (await db_session.execute(select(BBUAffiliate).order_by(BBUAffiliate.id.desc()))).scalars().all()
     # totals
@@ -286,7 +287,7 @@ async def admin(request: Request, db_session: AsyncSession = Depends(get_db_sess
 @router.post("/admin/settings")
 async def update_settings(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     body = await request.json()
-    _check_admin(request, body)
+    await authorize_admin(request, db_session, body.get("key", ""))
     s = await aff.get_settings(db_session)
     for field in ("default_commission_rate", "commissionable_events", "commission_basis",
                   "attribution_window_days", "attribution_model", "refund_hold_days",
@@ -307,7 +308,7 @@ async def admin_run_payouts(request: Request, db_session: AsyncSession = Depends
         body = await request.json()
     except Exception:
         pass
-    _check_admin(request, body)
+    await authorize_admin(request, db_session, body.get("key", ""))
     results = await run_payouts(db_session, dry_run=bool(body.get("dry_run")))
     return {"results": results}
 
