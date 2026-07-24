@@ -1419,7 +1419,7 @@ export function MarkStatus(props: {
         <div className="flex items-center space-x-2">
           <div className="relative">
             <div
-              className={`${isLoading ? 'opacity-90' : ''} ${props.completeBlocked ? 'bg-gray-400 opacity-60 cursor-not-allowed' : 'bg-gray-800 hover:bg-gray-700 hover:cursor-pointer'} rounded-md px-4 nice-shadow flex flex-col p-2.5 text-white transition-all duration-200 ${isLoading ? 'cursor-not-allowed' : ''}`}
+              className={`${isLoading ? 'opacity-90' : ''} ${props.completeBlocked ? 'bg-gray-400 opacity-60 cursor-not-allowed' : 'bg-[#113d5d] hover:bg-[#0d3350] hover:cursor-pointer hover:scale-[1.02]'} rounded-xl px-6 nice-shadow flex flex-col py-3 text-white transition-all duration-200 ${isLoading ? 'cursor-not-allowed' : ''}`}
               onClick={(!isLoading && !props.completeBlocked) ? markActivityAsCompleteFront : undefined}
               title={props.completeBlocked ? t('activities.finish_lesson_first', 'Finish watching the video and passing the quiz before marking this complete') : undefined}
             >
@@ -1454,7 +1454,7 @@ export function MarkStatus(props: {
                     <rect x="3" y="3" width="18" height="18" rx="2" />
                   </svg>
                 )}
-                <span className="text-xs font-bold min-w-[90px]">{isLoading ? t('activities.marking') : t('activities.mark_as_complete')}</span>
+                <span className="text-sm font-bold min-w-[120px]">{isLoading ? t('activities.marking') : t('activities.mark_as_complete')}</span>
               </div>
             </div>
             {showUnmarkedTooltip && (

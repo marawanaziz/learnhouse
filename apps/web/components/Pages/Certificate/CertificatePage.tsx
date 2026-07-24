@@ -6,7 +6,7 @@ import { useLHSession } from '@components/Contexts/LHSessionContext';
 import { useOrg } from '@components/Contexts/OrgContext';
 import { getUserCertificates } from '@services/courses/certifications';
 import CertificatePreview from '@components/Dashboard/Pages/Course/EditCourseCertification/CertificatePreview';
-import { ArrowLeft, Download, Share2, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Download, Copy, Check } from 'lucide-react';
 import Link from 'next/link';
 import { getUriWithOrg } from '@services/config/config';
 import { useLHAnalytics, useTrackView, AnalyticsEvent } from '@services/analytics';
@@ -410,6 +410,18 @@ const CertificatePage: React.FC<CertificatePageProps> = ({ orgslug, courseid, qr
     });
   };
 
+  // Generic social share to the public verification link (X / Twitter, Facebook)
+  const shareToSocial = (network: 'x' | 'facebook') => {
+    if (!qrCodeLink) return;
+    const certName = userCertificate?.certification?.config?.certification_name || 'my certification';
+    const text = `I earned ${certName} from ${org?.name || 'Birth & Baby University'}! 🎉`;
+    const url =
+      network === 'x'
+        ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(qrCodeLink)}`
+        : `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(qrCodeLink)}&quote=${encodeURIComponent(text)}`;
+    window.open(url, '_blank', 'noopener,noreferrer,width=600,height=600');
+  };
+
   // Copy the public certificate verification link to the clipboard
   const copyVerificationLink = async () => {
     if (!qrCodeLink) return;
@@ -500,13 +512,30 @@ const CertificatePage: React.FC<CertificatePageProps> = ({ orgslug, courseid, qr
               {linkCopied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
               <span>{linkCopied ? 'Copied' : 'Copy link'}</span>
             </button>
+            <span className="text-sm text-gray-500 hidden sm:inline">Share:</span>
             <button
               onClick={shareToLinkedIn}
               aria-label="Add this certificate to your LinkedIn profile"
-              className="inline-flex items-center space-x-2 bg-[#0a66c2] text-white px-6 py-3 rounded-full hover:bg-[#004182] transition duration-200"
+              title="Share on LinkedIn"
+              className="inline-flex items-center justify-center w-11 h-11 bg-[#0a66c2] text-white rounded-full hover:bg-[#004182] transition duration-200"
             >
-              <Share2 className="w-5 h-5" />
-              <span>Share on LinkedIn</span>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.44-2.13 2.94v5.67H9.35V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.55V9h3.57v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>
+            </button>
+            <button
+              onClick={() => shareToSocial('x')}
+              aria-label="Share this certificate on X"
+              title="Share on X"
+              className="inline-flex items-center justify-center w-11 h-11 bg-black text-white rounded-full hover:bg-neutral-800 transition duration-200"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.15h3.68l-8.04 9.19L24 22.85h-7.41l-5.8-7.58-6.64 7.58H.46l8.6-9.83L0 1.15h7.6l5.24 6.93 6.06-6.93zm-1.29 19.5h2.04L6.49 3.24H4.3L17.61 20.65z"/></svg>
+            </button>
+            <button
+              onClick={() => shareToSocial('facebook')}
+              aria-label="Share this certificate on Facebook"
+              title="Share on Facebook"
+              className="inline-flex items-center justify-center w-11 h-11 bg-[#1877f2] text-white rounded-full hover:bg-[#0d5fd4] transition duration-200"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07z"/></svg>
             </button>
             <button
               onClick={downloadCertificate}
