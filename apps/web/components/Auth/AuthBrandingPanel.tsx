@@ -30,7 +30,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
     if (background_type === 'gradient' || !background_image) {
       // Keep the original black gradient
       return {
-        background: 'linear-gradient(041.61deg, #202020 7.15%, #000000 90.96%)',
+        background: 'linear-gradient(157deg, #0d3350 0%, #164e77 46%, #3f7cb4 82%, #79b4e6 130%)',
       }
     }
     if (background_type === 'custom' && background_image) {

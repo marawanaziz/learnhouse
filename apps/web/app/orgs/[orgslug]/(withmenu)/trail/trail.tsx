@@ -70,7 +70,8 @@ function Trail(params: any) {
       <div className="flex flex-col space-y-2 mb-6">
         <div className="flex items-center justify-between">
           <TypeOfContentTitle title={t('courses.progress')} type="tra" />
-          {trail?.runs?.length > 0 && (
+          {/* BBU: "Quit All Courses" hidden from learners */}
+          {false && trail?.runs?.length > 0 && (
             <ConfirmationModal
               confirmationButtonText={isQuittingAll ? t('courses.quitting_courses', { progress: quittingProgress }) : t('courses.quit_all_courses')}
               confirmationMessage={t('courses.quit_all_courses_confirm')}

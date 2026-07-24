@@ -198,17 +198,20 @@ function DashLeftMenu() {
           className={cn("flex items-center transition-opacity hover:opacity-70", isCollapsed ? "" : "space-x-3")}
           href={'/'}
         >
-          {plan === 'enterprise' && org?.logo_image ? (
+          {org?.logo_image ? (
             <img
               src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}
               alt={org?.name}
-              className="h-9 w-9 object-contain rounded-lg"
+              className={cn(
+                "object-contain",
+                isCollapsed ? "h-10 w-10 rounded-lg" : "h-12 w-auto max-w-[190px]"
+              )}
             />
           ) : (
             <img
               src="/lrn-dash.svg"
               alt="Learnhouse logo"
-              className="h-8 w-8"
+              className={isCollapsed ? "h-10 w-10" : "h-11 w-11"}
             />
           )}
           {!isCollapsed && (

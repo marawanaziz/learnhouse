@@ -283,15 +283,15 @@ const LoginClient = (props: LoginClientProps) => {
         )}
 
         <div className="flex-1 flex flex-row">
-        <div className="m-auto w-full max-w-sm px-6 py-8 sm:py-0">
+        <div className="m-auto w-full max-w-md px-6 py-10 sm:py-0">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-gray-900">{t('auth.welcome_back')}</h1>
-            <p className="text-gray-500 mt-1">{t('auth.enter_credentials')}</p>
+          <div className="mb-7">
+            <h1 className="text-[1.9rem] leading-[1.15] font-semibold tracking-tight text-slate-900">{t('auth.welcome_back')}</h1>
+            <p className="text-slate-500 mt-2 text-[0.95rem]">{t('auth.enter_credentials')}</p>
           </div>
 
           {/* Login Form Card */}
-          <div className="bg-white rounded-xl p-6 nice-shadow">
+          <div className="bg-white rounded-2xl p-8 shadow-xl shadow-slate-300/40 ring-1 ring-slate-900/[0.06]">
             <FormLayout onSubmit={formik.handleSubmit}>
               <FormField name="email">
                 <FormLabelAndMessage
@@ -335,7 +335,7 @@ const LoginClient = (props: LoginClientProps) => {
 
               <div className="pt-2">
                 <Form.Submit asChild>
-                  <button className="w-full bg-black text-white font-semibold text-center py-2.5 rounded-lg hover:bg-gray-800 transition-colors">
+                  <button className="w-full bg-[#113d5d] text-white font-semibold text-center py-3 rounded-xl hover:bg-[#0d3350] shadow-lg shadow-[#113d5d]/20 transition-all active:scale-[0.99]">
                     {isSubmitting ? t('common.loading') : t('auth.login')}
                   </button>
                 </Form.Submit>
@@ -356,7 +356,7 @@ const LoginClient = (props: LoginClientProps) => {
             <div className="space-y-2.5">
               <button
                 onClick={handleGoogleSignIn}
-                className="flex items-center justify-center gap-2 w-full py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                className="flex items-center justify-center gap-2 w-full py-3 bg-white border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-colors"
               >
                 <img src="https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg" alt="" className="w-4 h-4" />
                 <span>{t('auth.sign_in_with_google')}</span>
@@ -378,7 +378,7 @@ const LoginClient = (props: LoginClientProps) => {
           {/* Sign Up Link */}
           <p className="text-center text-gray-600 mt-6">
             {t('auth.no_account')}{' '}
-            <Link href="/signup" className="font-semibold text-gray-900 hover:underline">
+            <Link href="/signup" className="font-semibold text-[#113d5d] hover:underline">
               {t('auth.sign_up')}
             </Link>
           </p>

@@ -27,7 +27,7 @@ from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
 from src.bbu_credentials import service as cred_svc
 from src.bbu_seats.models import BBUSeatCode
 from src.bbu_seats.router import _gen_code
-from src.bbu_payments.branding import NAVY, SKY, ICE, PAPER
+from src.bbu_payments.branding import NAVY, SKY, STEEL, ICE, PAPER, LOGO, _FONTS
 
 router = APIRouter()
 ORG = 1
@@ -468,33 +468,46 @@ async def page(request: Request, db_session: AsyncSession = Depends(get_db_sessi
     return HTMLResponse(_PAGE)
 
 
-_PAGE = f"""<!doctype html><html><head><meta charset=utf-8>
+_PAGE = f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>Operations Console · Birth &amp; Baby University</title>
+<title>Operations · Birth &amp; Baby University</title>{_FONTS}
 <style>
-:root{{--navy:{NAVY};--sky:{SKY};--ice:{ICE};--paper:{PAPER}}}
-*{{box-sizing:border-box}}body{{margin:0;font-family:'Open Sans',system-ui,sans-serif;color:#1b2733;background:var(--paper)}}
-header{{background:var(--navy);color:#fff;padding:1.4rem 1.5rem}}
-header h1{{margin:0;font-family:'Playfair Display',Georgia,serif;font-size:1.4rem}}
-.tabs{{display:flex;gap:.3rem;background:var(--navy);padding:0 1.5rem}}
-.tab{{padding:.7rem 1.1rem;color:#cfe4f5;cursor:pointer;border-bottom:3px solid transparent;font-size:.9rem;font-weight:600}}
-.tab.on{{color:#fff;border-color:var(--sky)}}
-.wrap{{max-width:1050px;margin:1.5rem auto;padding:0 1.2rem}}
+:root{{--navy:{NAVY};--sky:{SKY};--steel:{STEEL};--ice:{ICE};--paper:{PAPER}}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'Open Sans',system-ui,sans-serif;color:{NAVY};background:{PAPER}}}
+h1,h2{{font-family:'Playfair Display',Georgia,serif}}
+.nav{{background:#fff;border-bottom:1px solid rgba(17,61,93,.08);padding:16px 0}}
+.wrap{{max-width:1180px;margin:0 auto;padding:0 22px}}
+.nav img{{height:50px}}
+.head{{padding:26px 0 4px}}
+.eyebrow{{font-family:'League Spartan',sans-serif;font-weight:600;letter-spacing:.24em;text-transform:uppercase;font-size:.7rem;color:{STEEL}}}
+.head h1{{font-size:2rem;margin:6px 0 2px}}
+.head p{{color:#5b6b78;font-size:.92rem}}
+.tabs{{display:flex;gap:.15rem;max-width:1180px;margin:14px auto 0;padding:0 22px;border-bottom:1px solid rgba(17,61,93,.1);flex-wrap:wrap}}
+.tab{{font-family:'League Spartan',sans-serif;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:.65rem 1.05rem;color:{STEEL};cursor:pointer;border-bottom:3px solid transparent;font-size:.78rem;transition:color .15s}}
+.tab:hover{{color:{NAVY}}}
+.tab.on{{color:{NAVY};border-color:{SKY}}}
 .panel{{display:none}}.panel.on{{display:block}}
-.card{{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(17,61,93,.08);padding:1.2rem;margin-bottom:1.2rem}}
-h2{{font-size:1.05rem;color:var(--navy);margin:.2rem 0 1rem}}
-table{{width:100%;border-collapse:collapse;font-size:.86rem}}
-th,td{{padding:.55rem .6rem;text-align:left;border-bottom:1px solid #eef3f8}}
-th{{background:var(--ice);color:var(--navy)}}
-input,select{{padding:.5rem .6rem;border:1px solid #cdd9e5;border-radius:8px;font-size:.86rem;margin:.2rem}}
-button{{background:var(--navy);color:#fff;border:0;padding:.55rem 1rem;border-radius:8px;font-weight:600;cursor:pointer;font-size:.85rem}}
-button.ghost{{background:#e7eef5;color:var(--navy)}}
-.row{{display:flex;flex-wrap:wrap;align-items:center;gap:.2rem;margin-bottom:.6rem}}
-.badge{{padding:.15rem .5rem;border-radius:20px;font-size:.75rem;font-weight:600}}
+.card{{background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(17,61,93,.06);padding:1.3rem 1.4rem;margin-bottom:1.3rem}}
+h2{{font-size:1.15rem;color:{NAVY};margin:.1rem 0 1rem}}
+table{{width:100%;border-collapse:collapse;font-size:.87rem;background:#fff}}
+th{{text-align:left;font-family:'League Spartan',sans-serif;font-weight:700;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:{STEEL};padding:11px 12px;border-bottom:2px solid {ICE};background:#fbfdff}}
+td{{padding:9px 12px;border-bottom:1px solid rgba(17,61,93,.06);vertical-align:middle}}
+tr:hover td{{background:#fbfdff}}
+input,select,textarea{{font-family:'Open Sans',system-ui,sans-serif;padding:.5rem .65rem;border:1px solid rgba(17,61,93,.2);border-radius:9px;font-size:.85rem;margin:.2rem;background:#fff;color:{NAVY}}}
+input:focus,select:focus{{outline:none;border-color:{STEEL}}}
+button,.btn{{font-family:'League Spartan',sans-serif;font-weight:700;letter-spacing:.03em;background:{NAVY};color:#fff;border:none;border-radius:999px;padding:.5rem 1.1rem;font-size:.8rem;cursor:pointer;transition:background .2s}}
+button:hover{{background:{STEEL}}}
+button.ghost,.btn.ghost{{background:{ICE};color:{NAVY}}}
+button.ghost:hover{{background:#dbecf8}}
+.row{{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem;margin-bottom:.6rem}}
+.badge{{padding:.15rem .6rem;border-radius:999px;font-size:.72rem;font-weight:700;font-family:'League Spartan',sans-serif}}
 .on-b{{background:#dff5e6;color:#1c7a41}}.off-b{{background:#fde8e8;color:#b42318}}
-.muted{{color:#7d93a6;font-size:.8rem}}
+.muted{{color:#7d93a6;font-size:.82rem}}
+.pill{{background:{ICE};color:{STEEL};border-radius:999px;padding:3px 12px;font-family:'League Spartan',sans-serif;font-weight:600;font-size:.76rem}}
 </style></head><body>
-<header><h1>Operations Console</h1><div class=muted style="color:#cfe4f5">Coupons · Cohorts · Credentials · Seat codes</div></header>
+<div class=nav><div class=wrap><img src="{LOGO}" alt="Birth &amp; Baby University"></div></div>
+<div class=wrap><div class=head><span class=eyebrow>Admin</span><h1>Operations</h1><p>Store · cohorts · coupons · credentials · seat codes · waitlist</p></div></div>
 <div class=tabs>
   <div class="tab on" data-t="coupons">Coupons</div>
   <div class="tab" data-t="cohorts">Cohorts</div>
@@ -502,7 +515,7 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
   <div class="tab" data-t="seats">Seat codes</div>
   <div class="tab" data-t="store">Store</div>
 </div>
-<div class=wrap>
+<div class="wrap" style="padding-top:22px;padding-bottom:50px">
   <div class="panel on" id=p-coupons>
     <div class=card><h2>Create a promo code</h2>
       <div class=row>
