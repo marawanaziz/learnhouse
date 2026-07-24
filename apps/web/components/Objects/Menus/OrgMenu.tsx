@@ -154,16 +154,21 @@ export const OrgMenu = (props: any) => {
           <div className="flex items-center space-x-5 md:w-auto w-full">
             <div className="logo flex md:w-auto w-full justify-center">
               <Link href={getUriWithOrg(orgslug, '/')}>
-                <div className="flex w-auto h-9 rounded-md items-center m-auto py-1 justify-center">
+                <div className="flex items-center m-auto justify-center">
                   {org?.logo_image ? (
+                    // Enlarge + crop the circular logo's top/bottom so the name
+                    // band reads bigger. object-cover clips vertically; navbar
+                    // height (h-[60px]) is unchanged.
                     <img
                       src={`${getOrgLogoMediaDirectory(org.org_uuid, org?.logo_image)}`}
-                      alt="Learnhouse"
-                      style={{ width: 'auto', height: '100%' }}
+                      alt="Birth & Baby University"
                       className="rounded-md"
+                      style={{ height: '48px', width: '150px', objectFit: 'cover', objectPosition: 'center' }}
                     />
                   ) : (
-                    <LearnHouseLogo logoFilter={colors.logoFilter} />
+                    <div className="flex w-auto h-9 rounded-md items-center py-1 justify-center">
+                      <LearnHouseLogo logoFilter={colors.logoFilter} />
+                    </div>
                   )}
                 </div>
               </Link>
