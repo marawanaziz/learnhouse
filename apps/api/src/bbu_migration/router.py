@@ -736,6 +736,108 @@ CREDENTIAL_TAGS = {
 }
 
 
+@router.post("/fix-certificate-dates")
+async def fix_certificate_dates(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Correct the reissued course certificates to their REAL earned dates using an
+    Accredible export. The bulk reissue stamped everything with today's date because
+    no real dates were available; this backdates each certificate to Accredible's
+    issued_on. Body: {items:[{email,group_name,issued_on}], dry_run?}.
+
+    Mapping: a 'Provisional 1 Year …' record dates the full TRAINING course (that's
+    when the training was completed). A 'Certified … Doula' record for someone with
+    NO provisional came in via cross-certification, so it dates the CROSS-CERT
+    course. Perinatal-professional records date their own course."""
+    from src.db.courses.certifications import Certifications, CertificateUser
+    body = await request.json()
+    _check(request, body)
+    dry = bool(body.get("dry_run", True))
+    items = body.get("items") or []
+    org_id = 1
+
+    PROVISIONAL_TO_COURSE = {
+        "Provisional 1 Year Certified Postpartum Doula": "Certified Postpartum Doula Training",
+        "Provisional 1 Year Certified Labor Doula": "Certified Birth Doula Training",
+    }
+    FULL_ONLY_TO_COURSE = {   # full with no provisional => came via cross-cert
+        "Certified Postpartum Doula": "Cross Certification Postpartum Doula Training",
+        "Certified Labor Doula": "Cross Certification Birth Doula Training",
+    }
+    SELF_TITLED = {
+        "Breastfeeding for Perinatal Professionals",
+        "Newborn Care for Perinatal Professionals",
+        "Comfort Measures for Perinatal Professionals",
+    }
+    FULL_TYPE = {"Certified Postpartum Doula": "postpartum", "Certified Labor Doula": "birth"}
+    PROV_TYPE = {"Provisional 1 Year Certified Postpartum Doula": "postpartum",
+                 "Provisional 1 Year Certified Labor Doula": "birth"}
+
+    # who holds a provisional per (email, type) -> a later full is an upgrade, not a cross-cert
+    has_prov = set()
+    for it in items:
+        t = PROV_TYPE.get((it.get("group_name") or "").strip())
+        if t:
+            has_prov.add(((it.get("email") or "").strip().lower(), t))
+
+    # target (email, course_name) -> earliest real date
+    targets: dict = {}
+    for it in items:
+        email = (it.get("email") or "").strip().lower()
+        grp = (it.get("group_name") or "").strip()
+        issued = (it.get("issued_on") or "").strip()
+        if not email or not issued:
+            continue
+        course_name = None
+        if grp in PROVISIONAL_TO_COURSE:
+            course_name = PROVISIONAL_TO_COURSE[grp]
+        elif grp in SELF_TITLED:
+            course_name = grp
+        elif grp in FULL_ONLY_TO_COURSE:
+            if (email, FULL_TYPE[grp]) in has_prov:
+                continue          # upgrade of their own training, already dated above
+            course_name = FULL_ONLY_TO_COURSE[grp]
+        if not course_name:
+            continue
+        key = (email, course_name)
+        if key not in targets or issued < targets[key]:
+            targets[key] = issued
+
+    courses = (await db_session.execute(select(Course).where(Course.org_id == org_id))).scalars().all()
+    by_name = {c.name.strip(): c for c in courses}
+    certs = (await db_session.execute(select(Certifications))).scalars().all()
+    cert_by_course = {c.course_id: c for c in certs}
+
+    fixed = no_user = no_course = no_cert_row = 0
+    for (email, course_name), issued in targets.items():
+        course = by_name.get(course_name)
+        if not course:
+            no_course += 1
+            continue
+        cert = cert_by_course.get(course.id)
+        if not cert:
+            no_cert_row += 1
+            continue
+        user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            no_user += 1
+            continue
+        cu = (await db_session.execute(select(CertificateUser).where(
+            CertificateUser.user_id == user.id,
+            CertificateUser.certification_id == cert.id))).scalars().first()
+        if not cu:
+            no_cert_row += 1
+            continue
+        if not dry:
+            cu.created_at = issued
+            cu.updated_at = issued
+            db_session.add(cu)
+        fixed += 1
+    if not dry:
+        await db_session.commit()
+    return {"dry_run": dry, "targets": len(targets), "certificates_dated": fixed,
+            "missing_user": no_user, "missing_course": no_course,
+            "no_certificate_issued": no_cert_row}
+
+
 @router.get("/no-skip-courses")
 async def no_skip_courses(db_session: AsyncSession = Depends(get_db_session)):
     """Public: course_uuids where video forward-seek is disabled and lessons must be
