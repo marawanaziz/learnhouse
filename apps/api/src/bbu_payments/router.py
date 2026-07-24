@@ -319,6 +319,27 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     except Exception:
         import traceback
         print(f"[BBU] course grant failed for order {order.id}:\n{traceback.format_exc()[-600:]}", flush=True)
+    # Mentorship "buy into a cohort": if the purchased product is linked to a
+    # cohort/program, enroll the buyer into the resolved cohort (waitlists if
+    # full). This grants the cohort community + course and drives the eventual
+    # provisional->full credential upgrade on completion. Fail-soft.
+    try:
+        if prod and (getattr(prod, "cohort_program", "") or getattr(prod, "cohort_id", None)):
+            from src.db.users import User as _User
+            buyer = None
+            if order.user_id:
+                buyer = (await db_session.execute(select(_User).where(_User.id == order.user_id))).scalars().first()
+            if not buyer and order.email:
+                buyer = (await db_session.execute(select(_User).where(_User.email == order.email))).scalars().first()
+            if buyer:
+                from src.bbu_cohorts import service as cohort_svc
+                res = await cohort_svc.enroll_from_product(
+                    db_session, order.org_id, buyer.id,
+                    cohort_id=prod.cohort_id, program=prod.cohort_program)
+                print(f"[BBU] cohort enroll for order {order.id}: {res}", flush=True)
+    except Exception:
+        import traceback
+        print(f"[BBU] cohort enroll failed for order {order.id}:\n{traceback.format_exc()[-600:]}", flush=True)
     # Book the affiliate commission. Always attempted — it's idempotent (one
     # commission per order+event), so re-delivered webhooks / success re-hits
     # don't double-book, and a prior partial fulfill can still be completed.

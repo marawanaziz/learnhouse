@@ -139,9 +139,12 @@ async def complete(db: AsyncSession, cohort: BBUCohort, user_id: int) -> dict:
         try:
             from src.bbu_credentials import service as cred_svc
             ctype = "" if cohort.credential_type == "both" else cohort.credential_type
+            # BBU rule: the 3-yr full cert is effective-dated to the cohort's LAST
+            # DAY, not the day the admin marks completion.
             ups = await cred_svc.on_mentorship_completion(
                 db, cohort.org_id, user_id, credential_type=ctype,
-                cohort_ref=f"cohort:{cohort.id}")
+                cohort_ref=f"cohort:{cohort.id}",
+                effective_at=(cohort.end_date or None))
             upgraded = [c.credential_type for c in ups]
         except Exception:
             import traceback
@@ -195,6 +198,35 @@ async def close(db: AsyncSession, cohort: BBUCohort, revoke_access: bool = True)
             revoked += 1
         await db.commit()
     return {"closed": True, "access_revoked": revoked}
+
+
+async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, program: str = ""):
+    """Pick the cohort a purchase should enroll into: a specific cohort_id if the
+    product pins one, otherwise the NEXT open cohort of the program (earliest
+    start date, status open/full — full still enrolls to its waitlist)."""
+    if cohort_id:
+        return (await db.execute(select(BBUCohort).where(
+            BBUCohort.id == int(cohort_id), BBUCohort.org_id == org_id))).scalars().first()
+    if program:
+        rows = (await db.execute(select(BBUCohort).where(
+            BBUCohort.org_id == org_id, BBUCohort.program == program,
+            BBUCohort.status.in_(["open", "full"]))
+        )).scalars().all()
+        # earliest upcoming start date first ("" sorts last)
+        rows.sort(key=lambda c: (c.start_date or "9999", c.id))
+        return rows[0] if rows else None
+    return None
+
+
+async def enroll_from_product(db: AsyncSession, org_id: int, user_id: int,
+                              cohort_id=None, program: str = "") -> dict:
+    """Called on a paid mentorship purchase: enroll the buyer into the resolved
+    cohort (waitlists if full). Fail-soft return so it never breaks fulfillment."""
+    cohort = await resolve_target_cohort(db, org_id, cohort_id, program)
+    if not cohort:
+        return {"enrolled": False, "reason": "no open cohort for program", "program": program}
+    res = await enroll(db, cohort, user_id)
+    return {"enrolled": True, "cohort_id": cohort.id, "cohort": cohort.name, **res}
 
 
 async def roster(db: AsyncSession, cohort_id: int) -> list:

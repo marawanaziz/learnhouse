@@ -174,10 +174,17 @@ async def maybe_upgrade_on_ceu(db: AsyncSession, org_id: int, user_id: int):
 
 
 async def on_mentorship_completion(db: AsyncSession, org_id: int, user_id: int,
-                                   credential_type: str = "", cohort_ref: str = ""):
+                                   credential_type: str = "", cohort_ref: str = "",
+                                   effective_at=None):
     """Cohort/mentorship finished → upgrade the user's provisional credential(s)
-    to full, effective now. If credential_type is empty/both, upgrade whatever
-    provisional credentials the user holds (type derived from prior training)."""
+    to full. Per BBU rule the 3-year full cert is **effective-dated to the
+    cohort's LAST DAY** (pass effective_at = cohort.end_date), not the day the
+    admin marks completion; falls back to now if none given. If credential_type
+    is empty/both, upgrade whatever provisional credentials the user holds (type
+    derived from their prior training)."""
+    # accept an ISO date/datetime string or a datetime
+    if isinstance(effective_at, str):
+        effective_at = _parse(effective_at)
     q = select(BBUCredential).where(
         BBUCredential.org_id == org_id, BBUCredential.user_id == user_id,
         BBUCredential.status == "provisional")
@@ -186,7 +193,7 @@ async def on_mentorship_completion(db: AsyncSession, org_id: int, user_id: int,
     creds = (await db.execute(q)).scalars().all()
     upgraded = []
     for c in creds:
-        await upgrade_to_full(db, c)
+        await upgrade_to_full(db, c, effective_at=effective_at)
         upgraded.append(c)
     return upgraded
 

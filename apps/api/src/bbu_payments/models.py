@@ -34,6 +34,11 @@ class BBUProduct(SQLModel, table=True):
     category: str = Field(default="", sa_column=Column(String(60)))
     # order bumps: comma-separated product ids offered as add-ons at checkout
     bump_offer_ids: str = Field(default="", sa_column=Column(String))
+    # mentorship "buy into a cohort": on purchase, enroll the buyer into a cohort.
+    # cohort_program (doula|agency) → the next open cohort of that program; OR a
+    # specific cohort_id pins the purchase to one dated cohort ("September 2026").
+    cohort_program: str = Field(default="", sa_column=Column(String(24)))
+    cohort_id: Optional[int] = Field(default=None)
 
 
 class BBUOrder(SQLModel, table=True):

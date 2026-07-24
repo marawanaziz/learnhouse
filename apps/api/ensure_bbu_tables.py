@@ -27,6 +27,8 @@ ALTERS = [
     "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS benefits VARCHAR DEFAULT ''",
     "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS category VARCHAR(60) DEFAULT ''",
     "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS bump_offer_ids VARCHAR DEFAULT ''",
+    "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS cohort_program VARCHAR(24) DEFAULT ''",
+    "ALTER TABLE bbu_product ADD COLUMN IF NOT EXISTS cohort_id INTEGER",
     "ALTER TABLE bbu_credential ADD COLUMN IF NOT EXISTS last_reminder_days INTEGER DEFAULT 0",
     "CREATE INDEX IF NOT EXISTS ix_bbu_order_download_token ON bbu_order (download_token)",
 ]
