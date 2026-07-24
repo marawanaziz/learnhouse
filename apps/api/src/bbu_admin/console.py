@@ -169,6 +169,14 @@ async def cohorts_create(request: Request, db_session: AsyncSession = Depends(ge
     return {"ok": True, "id": c.id}
 
 
+@router.get("/zoom-meetings")
+async def zoom_meetings(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Populate the cohort form's Zoom meeting/webinar dropdown from the account."""
+    await _auth(request, db_session)
+    from src.bbu_zoom import client as zoom
+    return await zoom.list_meetings()
+
+
 @router.post("/cohorts/run-lifecycle")
 async def cohorts_run_lifecycle(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     b = await request.json()
@@ -433,8 +441,9 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
         <select id=co-cred><option value="">no credential</option><option value=birth>birth</option><option value=postpartum>postpartum</option><option value=both>both</option></select>
       </div>
       <div class=row style="margin-top:.5rem">
-        <input id=co-zoom placeholder="Zoom meeting/webinar ID" style="width:220px">
-        <input id=co-workbook placeholder="Workbook URL (optional)" style="width:320px">
+        <select id=co-zoom-sel onchange="zoomSelChange()" style="width:300px"><option value="">— Zoom meeting (none) —</option></select>
+        <input id=co-zoom placeholder="Zoom meeting/webinar ID" style="width:180px;display:none">
+        <input id=co-workbook placeholder="Workbook URL (optional)" style="width:300px">
         <button onclick=createCohort()>Create</button>
       </div>
       <div class=muted id=co-msg style="margin-top:.4rem"></div>
@@ -566,9 +575,22 @@ function progDefaults(){{
   const el=document.getElementById('co-access');
   if(!el.value) el.value = document.getElementById('co-prog').value==='agency'?12:6;
 }}
+function zoomSelChange(){{
+  const s=document.getElementById('co-zoom-sel').value, t=document.getElementById('co-zoom');
+  if(s==='__manual__'){{t.style.display='';t.value='';t.focus();}} else {{t.style.display='none';}}
+}}
+function loadZoomMeetings(){{
+  j('/zoom-meetings').then(d=>{{
+    const opts=['<option value="">— Zoom meeting (none) —</option>']
+      .concat((d||[]).map(m=>`<option value="${{m.id}}">${{esc(m.topic)}}${{m.kind==='webinar'?' (webinar)':''}}</option>`))
+      .concat(['<option value="__manual__">✎ Enter ID manually…</option>']);
+    document.getElementById('co-zoom-sel').innerHTML=opts.join('');
+  }}).catch(()=>{{}});
+}}
 function loadCohorts(){{
   j('/courses').then(cs=>{{document.getElementById('co-course').innerHTML='<option value="">— course (unlocks) —</option>'+cs.map(c=>`<option value="${{c.course_uuid}}">${{esc(c.name)}}</option>`).join('')}});
   j('/communities').then(cs=>{{document.getElementById('co-comm').innerHTML='<option value="">— community (prompts) —</option>'+(cs||[]).map(c=>`<option value="${{c.id}}">${{esc(c.name)}}</option>`).join('')}});
+  loadZoomMeetings();
   j('/cohorts').then(d=>{{
     document.querySelector('#t-cohorts tbody').innerHTML=(d||[]).map(c=>{{
       const dates=(c.start_date||'').slice(0,10)+(c.end_date?' → '+c.end_date.slice(0,10):'');
@@ -582,10 +604,11 @@ function loadCohorts(){{
 }}
 function createCohort(){{
   const gv=id=>document.getElementById(id).value;
+  const zsel=gv('co-zoom-sel'); const zoom = zsel==='__manual__' ? gv('co-zoom') : zsel;
   const body={{name:gv('co-name'),program:gv('co-prog'),course_uuid:gv('co-course'),
     community_id:gv('co-comm')||null,capacity:+gv('co-cap')||0,access_months:+gv('co-access')||0,
     credential_type:gv('co-cred'),start_date:gv('co-start'),end_date:gv('co-end'),
-    zoom_meeting_id:gv('co-zoom'),workbook_url:gv('co-workbook')}};
+    zoom_meeting_id:zoom,workbook_url:gv('co-workbook')}};
   if(!body.name){{document.getElementById('co-msg').textContent='Name required';return;}}
   j('/cohorts',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{document.getElementById('co-msg').textContent=r.ok?'Created ✓ (prompts seeded)':'Error';loadCohorts();}});
 }}

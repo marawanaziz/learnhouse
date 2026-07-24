@@ -75,6 +75,46 @@ async def add_registrant(meeting_id: str, email: str, first_name: str = "",
     return {"ok": False, "error": "not a registrable meeting or webinar"}
 
 
+async def list_meetings() -> list:
+    """List the account's scheduled meetings + webinars, for the cohort Zoom-ID
+    picker. Iterates hosts (users) → their scheduled meetings (incl. recurring)
+    + webinars. Returns [{id, topic, kind, host}] sorted by topic; [] when the
+    integration isn't configured or on any error (caller shows a manual field)."""
+    if not is_configured():
+        return []
+    try:
+        hdr = await _headers()
+    except Exception:
+        return []
+    rows = []
+    async with httpx.AsyncClient(timeout=25) as c:
+        try:
+            r = await c.get(f"{_API}/users", params={"status": "active", "page_size": 300}, headers=hdr)
+            users = r.json().get("users", []) if r.status_code == 200 else []
+        except Exception:
+            users = []
+        for u in users:
+            uid, email = u.get("id"), u.get("email", "")
+            if not uid:
+                continue
+            try:
+                r = await c.get(f"{_API}/users/{uid}/meetings",
+                                params={"type": "scheduled", "page_size": 300}, headers=hdr)
+                for m in (r.json().get("meetings", []) if r.status_code == 200 else []):
+                    rows.append({"id": str(m.get("id")), "topic": m.get("topic", ""), "kind": "meeting", "host": email})
+            except Exception:
+                pass
+            try:
+                r = await c.get(f"{_API}/users/{uid}/webinars",
+                                params={"page_size": 300}, headers=hdr)
+                for w in (r.json().get("webinars", []) if r.status_code == 200 else []):
+                    rows.append({"id": str(w.get("id")), "topic": w.get("topic", ""), "kind": "webinar", "host": email})
+            except Exception:
+                pass
+    dedup = {r["id"]: r for r in rows if r.get("id")}
+    return sorted(dedup.values(), key=lambda x: (x["topic"] or "").lower())
+
+
 async def get_recording_urls(meeting_id: str) -> list:
     """Return share/play URLs for a meeting's cloud recordings ([] on any issue)."""
     if not is_configured() or not meeting_id:
