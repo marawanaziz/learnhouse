@@ -390,6 +390,74 @@ async def migrate_contacts(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/enrollments")
+async def migrate_enrollments(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Bulk enroll existing users into courses + grant gated access. Idempotent.
+    No lesson progress is fabricated (source only exposes a %). Body:
+    {enrollments:[[email, course_id], ...], grant_access?, dry_run?}."""
+    from src.db.usergroups import UserGroup
+    from src.db.usergroup_user import UserGroupUser
+    body = await request.json()
+    _check(request, body)
+    dry_run = str(body.get("dry_run", True)).lower() != "false"
+    grant_access = str(body.get("grant_access", True)).lower() != "false"
+    pairs = body.get("enrollments") or []
+    org_id = 1
+    # cache: course_id -> Course, course_uuid -> UserGroup, email -> user
+    course_cache, grp_cache, user_cache = {}, {}, {}
+    enrolled = access = not_found = missing_course = 0
+    errors = []
+    for i, pr in enumerate(pairs):
+        try:
+            email = (pr[0] or "").strip().lower()
+            cid = int(pr[1])
+            if email not in user_cache:
+                user_cache[email] = (await db_session.execute(
+                    select(User).where(User.email == email))).scalars().first()
+            user = user_cache[email]
+            if not user:
+                not_found += 1
+                continue
+            if cid not in course_cache:
+                course_cache[cid] = (await db_session.execute(
+                    select(Course).where(Course.id == cid))).scalars().first()
+            course = course_cache[cid]
+            if not course:
+                missing_course += 1
+                continue
+            if dry_run:
+                enrolled += 1
+                continue
+            trail = await _ensure_trail(db_session, org_id, user.id or 0)
+            await _ensure_run(db_session, trail, course, user.id or 0)
+            enrolled += 1
+            if grant_access:
+                cu = course.course_uuid
+                if cu not in grp_cache:
+                    grp_cache[cu] = (await db_session.execute(select(UserGroup).where(
+                        UserGroup.org_id == org_id, UserGroup.description == cu))).scalars().first()
+                grp = grp_cache[cu]
+                if grp:
+                    has = (await db_session.execute(select(UserGroupUser).where(
+                        UserGroupUser.usergroup_id == grp.id,
+                        UserGroupUser.user_id == user.id))).scalars().first()
+                    if not has:
+                        db_session.add(UserGroupUser(
+                            usergroup_id=grp.id or 0, user_id=user.id or 0, org_id=org_id,
+                            creation_date=_now(), update_date=_now()))
+                        access += 1
+            if (i + 1) % 200 == 0:
+                await db_session.commit()
+        except Exception as e:
+            await db_session.rollback()
+            errors.append(f"{pr}: {type(e).__name__}: {e}")
+    if not dry_run:
+        await db_session.commit()
+    return {"dry_run": dry_run, "grant_access": grant_access, "input": len(pairs),
+            "enrolled": enrolled, "access_granted": access, "user_not_found": not_found,
+            "course_not_found": missing_course, "errors": errors[:20], "error_count": len(errors)}
+
+
 @router.post("/seed-catalog")
 async def seed_catalog(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Idempotent upsert of the full BBU store catalog. Body: {items:[{name,
