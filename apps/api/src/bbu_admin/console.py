@@ -17,6 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.core.events.database import get_db_session
 from src.db.users import User
 from src.db.courses.courses import Course
+from src.db.communities.communities import Community
 from src.bbu_admin.auth import authorize_admin
 from src.bbu_payments.models import BBUCoupon, BBUProduct
 from src.bbu_payments import coupons as coupon_svc
@@ -117,8 +118,28 @@ async def cohorts_list(request: Request, db_session: AsyncSession = Depends(get_
             "id": c.id, "name": c.name, "program": c.program, "status": c.status,
             "capacity": c.capacity, "active_members": await cohort_svc.active_count(db_session, c.id),
             "credential_type": c.credential_type, "start_date": c.start_date, "end_date": c.end_date,
+            "community_id": c.community_id, "zoom_meeting_id": c.zoom_meeting_id,
+            "workbook_url": c.workbook_url, "access_until": cohort_svc.access_until(c),
+            "prompts": _prompt_count(c),
         })
     return out
+
+
+def _prompt_count(c: BBUCohort) -> int:
+    import json as _json
+    try:
+        return len(_json.loads(c.weekly_prompts or "[]"))
+    except Exception:
+        return 0
+
+
+@router.get("/communities")
+async def communities_list(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Community picker for the cohort form."""
+    await _auth(request, db_session)
+    rows = (await db_session.execute(select(Community).where(
+        Community.org_id == ORG).order_by(Community.name))).scalars().all()
+    return [{"id": c.id, "name": c.name} for c in rows]
 
 
 @router.post("/cohorts")
@@ -126,20 +147,33 @@ async def cohorts_create(request: Request, db_session: AsyncSession = Depends(ge
     b = await request.json()
     await _auth(request, db_session, b)
     program = b.get("program", "doula")
+    cid = b.get("community_id")
     c = BBUCohort(
         org_id=ORG, name=b.get("name", "Untitled Cohort"), program=program,
         course_uuid=(b.get("course_uuid") or "").strip(),
+        community_id=int(cid) if str(cid or "").isdigit() else None,
         capacity=int(b.get("capacity", 0) or 0),
         access_months=int(b.get("access_months", 12 if program == "agency" else 6)),
         credential_type=(b.get("credential_type") or "").strip().lower(),
         start_date=b.get("start_date", ""), end_date=b.get("end_date", ""),
+        zoom_meeting_id=(b.get("zoom_meeting_id") or "").strip(),
+        workbook_url=(b.get("workbook_url") or "").strip(),
         status="open", created_at=_now(), updated_at=_now())
+    # seed workbook + weekly prompts from the program template (blanks only)
+    cohort_svc.provision_defaults(c)
     db_session.add(c)
     await db_session.commit()
     await db_session.refresh(c)
     if c.course_uuid:
         await cohort_svc.ensure_usergroup(db_session, c)
     return {"ok": True, "id": c.id}
+
+
+@router.post("/cohorts/run-lifecycle")
+async def cohorts_run_lifecycle(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    b = await request.json()
+    await _auth(request, db_session, b)
+    return await cohort_svc.run_lifecycle(db_session, org_id=ORG, dry=bool(b.get("dry_run", False)))
 
 
 @router.get("/cohorts/{cid}/roster")
@@ -387,16 +421,30 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
     <div class=card><h2>Create a cohort</h2>
       <div class=row>
         <input id=co-name placeholder="Name (e.g. Sept 2026 Doula Mentorship)" style="width:300px">
-        <select id=co-prog><option value=doula>doula</option><option value=agency>agency</option></select>
-        <select id=co-course></select>
-        <input id=co-cap type=number placeholder="capacity (0=∞)" style="width:130px">
+        <select id=co-prog onchange="progDefaults()"><option value=doula>doula</option><option value=agency>agency</option></select>
+        <select id=co-course title="course this cohort unlocks"></select>
+        <select id=co-comm title="community for weekly prompts"></select>
+      </div>
+      <div class=row style="margin-top:.5rem">
+        <label class=muted>Start <input id=co-start type=date></label>
+        <label class=muted>End <input id=co-end type=date></label>
+        <input id=co-cap type=number placeholder="capacity (0=∞)" style="width:120px">
+        <input id=co-access type=number placeholder="access mo" title="months of access after end" style="width:110px">
         <select id=co-cred><option value="">no credential</option><option value=birth>birth</option><option value=postpartum>postpartum</option><option value=both>both</option></select>
+      </div>
+      <div class=row style="margin-top:.5rem">
+        <input id=co-zoom placeholder="Zoom meeting/webinar ID" style="width:220px">
+        <input id=co-workbook placeholder="Workbook URL (optional)" style="width:320px">
         <button onclick=createCohort()>Create</button>
-      </div><div class=muted id=co-msg></div>
+      </div>
+      <div class=muted id=co-msg style="margin-top:.4rem"></div>
+      <p class=muted style="margin-top:.3rem;font-size:.78rem">Weekly discussion prompts auto-seed from the program template and post one/week into the chosen community. Members auto-register to the Zoom ID; recordings sync back in.</p>
     </div>
-    <div class=card><h2>Cohorts</h2><table id=t-cohorts><thead><tr><th>Name</th><th>Program</th><th>Members</th><th>Cap</th><th>Cred</th><th>Status</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class=card><h2>Cohorts <button class=ghost style="float:right;font-size:.8rem" onclick=runLifecycle()>Run lifecycle now</button></h2>
+      <table id=t-cohorts><thead><tr><th>Name</th><th>Program</th><th>Dates</th><th>Members</th><th>Cap</th><th>Cred</th><th>Prompts</th><th>Access until</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+      <div class=muted id=lc-msg style="margin-top:.4rem"></div></div>
     <div class=card id=roster-card style=display:none><h2>Roster — <span id=roster-name></span></h2>
-      <div class=row><input id=co-email placeholder="member email"><button onclick="cohortAct('enroll')">Enroll</button><button class=ghost onclick="cohortAct('complete')">Mark complete</button><button class=ghost onclick="cohortAct('remove')">Remove</button></div>
+      <div class=row><input id=co-email placeholder="member email"><button onclick="cohortAct('enroll')">Enroll</button><button class=ghost onclick="cohortAct('complete')">Mark complete</button><button class=ghost onclick="cohortAct('remove')">Remove</button><button class=ghost style="margin-left:auto;color:#b23" onclick="closeCohort()">Close cohort</button></div>
       <table id=t-roster><thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
@@ -513,20 +561,39 @@ function createCoupon(){{
 function toggleCoupon(id){{j('/coupons/'+id+'/toggle',{{method:'POST'}}).then(loadCoupons)}}
 // Cohorts
 let curCohort=null;
+function progDefaults(){{
+  // sensible default access window per program (editable)
+  const el=document.getElementById('co-access');
+  if(!el.value) el.value = document.getElementById('co-prog').value==='agency'?12:6;
+}}
 function loadCohorts(){{
-  j('/courses').then(cs=>{{document.getElementById('co-course').innerHTML='<option value="">— course —</option>'+cs.map(c=>`<option value="${{c.course_uuid}}">${{esc(c.name)}}</option>`).join('')}});
+  j('/courses').then(cs=>{{document.getElementById('co-course').innerHTML='<option value="">— course (unlocks) —</option>'+cs.map(c=>`<option value="${{c.course_uuid}}">${{esc(c.name)}}</option>`).join('')}});
+  j('/communities').then(cs=>{{document.getElementById('co-comm').innerHTML='<option value="">— community (prompts) —</option>'+(cs||[]).map(c=>`<option value="${{c.id}}">${{esc(c.name)}}</option>`).join('')}});
   j('/cohorts').then(d=>{{
-    document.querySelector('#t-cohorts tbody').innerHTML=(d||[]).map(c=>
-      `<tr><td><b>${{esc(c.name)}}</b></td><td>${{esc(c.program)}}</td><td>${{c.active_members}}</td>`
-      +`<td>${{c.capacity||'∞'}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{esc(c.status)}}</td>`
-      +`<td><button class=ghost onclick="openRoster(${{c.id}},'${{esc(c.name)}}')">Roster</button></td></tr>`).join('');
+    document.querySelector('#t-cohorts tbody').innerHTML=(d||[]).map(c=>{{
+      const dates=(c.start_date||'').slice(0,10)+(c.end_date?' → '+c.end_date.slice(0,10):'');
+      const zoom=c.zoom_meeting_id?' 🎥':''; const wb=c.workbook_url?' 📓':'';
+      return `<tr><td><b>${{esc(c.name)}}</b>${{zoom}}${{wb}}</td><td>${{esc(c.program)}}</td><td class=muted style=font-size:.8rem>${{esc(dates||'—')}}</td>`
+      +`<td>${{c.active_members}}</td><td>${{c.capacity||'∞'}}</td><td>${{esc(c.credential_type||'—')}}</td>`
+      +`<td>${{c.prompts||0}}</td><td class=muted style=font-size:.8rem>${{esc((c.access_until||'—'))}}</td><td>${{esc(c.status)}}</td>`
+      +`<td><button class=ghost onclick="openRoster(${{c.id}},'${{esc(c.name).replace(/'/g,"")}}')">Roster</button></td></tr>`;
+    }}).join('');
   }});
 }}
 function createCohort(){{
-  const body={{name:document.getElementById('co-name').value,program:document.getElementById('co-prog').value,
-    course_uuid:document.getElementById('co-course').value,capacity:+document.getElementById('co-cap').value||0,
-    credential_type:document.getElementById('co-cred').value}};
-  j('/cohorts',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{document.getElementById('co-msg').textContent=r.ok?'Created ✓':'Error';loadCohorts();}});
+  const gv=id=>document.getElementById(id).value;
+  const body={{name:gv('co-name'),program:gv('co-prog'),course_uuid:gv('co-course'),
+    community_id:gv('co-comm')||null,capacity:+gv('co-cap')||0,access_months:+gv('co-access')||0,
+    credential_type:gv('co-cred'),start_date:gv('co-start'),end_date:gv('co-end'),
+    zoom_meeting_id:gv('co-zoom'),workbook_url:gv('co-workbook')}};
+  if(!body.name){{document.getElementById('co-msg').textContent='Name required';return;}}
+  j('/cohorts',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{document.getElementById('co-msg').textContent=r.ok?'Created ✓ (prompts seeded)':'Error';loadCohorts();}});
+}}
+function runLifecycle(){{
+  document.getElementById('lc-msg').textContent='Running…';
+  j('/cohorts/run-lifecycle',{{method:'POST',body:JSON.stringify({{dry_run:false}})}}).then(r=>{{
+    document.getElementById('lc-msg').textContent=`Started ${{r.started_count||0}} · closed ${{r.expired_count||0}} · prompts posted ${{r.prompts_posted||0}} · recordings +${{r.recordings_added||0}}`;
+    loadCohorts();}});
 }}
 function openRoster(id,name){{curCohort=id;document.getElementById('roster-card').style.display='block';
   document.getElementById('roster-name').textContent=name;loadRoster();}}
@@ -534,6 +601,10 @@ function loadRoster(){{j('/cohorts/'+curCohort+'/roster').then(d=>{{
   document.querySelector('#t-roster tbody').innerHTML=(d||[]).map(m=>`<tr><td>${{esc(m.name)}}</td><td>${{esc(m.email)}}</td><td>${{esc(m.status)}}</td></tr>`).join('');}})}}
 function cohortAct(action){{
   j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:action,email:document.getElementById('co-email').value}})}}).then(()=>{{loadRoster();loadCohorts();}});
+}}
+function closeCohort(){{
+  if(!confirm('Close this cohort and revoke all members\\' access?'))return;
+  j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:'close'}})}}).then(()=>{{loadRoster();loadCohorts();}});
 }}
 // Credentials
 function loadCred(){{
