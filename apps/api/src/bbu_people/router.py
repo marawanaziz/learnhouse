@@ -114,11 +114,30 @@ async def people_list(request: Request, q: str = "", limit: int = 25, offset: in
         select(func.count()).select_from(base.subquery()))).scalar() or 0
     users = (await db_session.execute(
         base.order_by(User.id.desc()).offset(offset).limit(min(100, limit)))).scalars().all()
+    # Published-activity count per course, computed once and reused for every row.
+    # A course counts as "completed" when the learner has a completed TrailStep for
+    # every published activity — LearnHouse never flips TrailRun.status to COMPLETED,
+    # so status is unreliable; step-progress is the real signal (matches the profile).
+    act_rows = (await db_session.execute(
+        select(Activity.course_id, func.count()).where(
+            Activity.published == True).group_by(Activity.course_id))).all()  # noqa: E712
+    act_counts = {cid: n for cid, n in act_rows}
     people = []
     for u in users:
         runs = (await db_session.execute(select(TrailRun).where(TrailRun.user_id == u.id))).scalars().all()
         enrolled = len(runs)
-        completed = sum(1 for r in runs if str(getattr(r, "status", "")).endswith("COMPLETED"))
+        completed = 0
+        if runs:
+            run_ids = [r.id for r in runs]
+            step_rows = (await db_session.execute(
+                select(TrailStep.trailrun_id, func.count()).where(
+                    TrailStep.trailrun_id.in_(run_ids),
+                    TrailStep.complete == True).group_by(TrailStep.trailrun_id))).all()  # noqa: E712
+            done_by_run = {rid: n for rid, n in step_rows}
+            for r in runs:
+                need = act_counts.get(r.course_id, 0)
+                if need and done_by_run.get(r.id, 0) >= need:
+                    completed += 1
         certs = (await db_session.execute(select(func.count()).select_from(CertificateUser).where(
             CertificateUser.user_id == u.id))).scalar() or 0
         spend = (await db_session.execute(select(func.coalesce(func.sum(BBUOrder.amount_cents), 0)).where(
@@ -160,12 +179,17 @@ async def profile(user_id: int, request: Request,
             cert = (await db_session.execute(select(CertificateUser).where(
                 CertificateUser.user_id == user_id,
                 CertificateUser.certification_id.in_(list(cert_ids))))).scalars().first()
+        pct = (round(100 * done / total_acts) if total_acts else 0)
+        # LearnHouse leaves TrailRun.status at In_Progress even at 100%, so derive a
+        # truthful display status from actual step-progress (matches the roster count).
+        disp_status = "Completed" if (total_acts and done >= total_acts) else (
+            "In Progress" if done else "Not Started")
         enrollments.append({
             "course": (course.name if course else f"course {r.course_id}"),
             "course_uuid": (course.course_uuid if course else ""),
-            "status": str(getattr(r, "status", "")).replace("StatusEnum.", "").replace("STATUS_", "").title(),
+            "status": disp_status,
             "completed_steps": int(done), "total_steps": int(total_acts),
-            "progress": (round(100 * done / total_acts) if total_acts else 0),
+            "progress": pct,
             "has_certificate": bool(cert),
         })
 
