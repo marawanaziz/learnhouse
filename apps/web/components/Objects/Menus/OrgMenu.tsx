@@ -163,7 +163,7 @@ export const OrgMenu = (props: any) => {
                       src={`${getOrgLogoMediaDirectory(org.org_uuid, org?.logo_image)}`}
                       alt="Birth & Baby University"
                       className="rounded-md"
-                      style={{ height: '48px', width: '150px', objectFit: 'cover', objectPosition: 'center' }}
+                      style={{ height: '50px', width: '150px', objectFit: 'cover', objectPosition: '50% 57%' }}
                     />
                   ) : (
                     <div className="flex w-auto h-9 rounded-md items-center py-1 justify-center">
