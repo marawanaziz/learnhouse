@@ -364,6 +364,59 @@ async def admin_create(request: Request, db_session: AsyncSession = Depends(get_
     return {"ok": True, "id": a.id, "ref_code": a.ref_code}
 
 
+@router.post("/admin/import")
+async def admin_import(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Bulk-import existing affiliates (e.g. the ThriveCart export). Preserves each
+    affiliate's existing referral code so their old links keep resolving. Idempotent
+    by email or ref_code. Body: {affiliates:[{name,email,ref_code}], rate?, source?,
+    status?, dry_run?}."""
+    body = await request.json()
+    await authorize_admin(request, db_session, body.get("key", ""))
+    dry = str(body.get("dry_run", True)).lower() != "false"
+    rate = body.get("rate", 0.5)
+    rate = float(rate) if rate not in (None, "") else None
+    source = (body.get("source") or "thrivecart")[:24]
+    status = (body.get("status") or "active")[:20]
+    affs = body.get("affiliates") or []
+    created = existing = skipped = 0
+    errors = []
+    for a in affs:
+        email = (a.get("email") or "").strip().lower()
+        name = (a.get("name") or "").strip()
+        code = (a.get("ref_code") or "").strip()
+        if not email or "@" not in email:
+            skipped += 1
+            continue
+        try:
+            ex = (await db_session.execute(select(BBUAffiliate).where(
+                BBUAffiliate.org_id == 1,
+                (BBUAffiliate.email == email) | (BBUAffiliate.ref_code == code)))).scalars().first()
+            if ex:
+                existing += 1
+                continue
+            if not code:
+                code = aff.gen_ref_code(name or email)
+            # avoid ref_code collisions with a different affiliate
+            while (await db_session.execute(select(BBUAffiliate).where(
+                    BBUAffiliate.ref_code == code))).scalars().first():
+                code = aff.gen_ref_code(name or email)
+            if dry:
+                created += 1
+                continue
+            db_session.add(BBUAffiliate(
+                org_id=1, name=name, email=email, ref_code=code, status=status,
+                legacy_source=source, commission_rate=rate,
+                portal_token=aff.gen_token(), created_at=aff._iso(_now())))
+            await db_session.commit()
+            created += 1
+        except Exception as e:
+            await db_session.rollback()
+            errors.append(f"{email}: {type(e).__name__}: {e}")
+    return {"dry_run": dry, "source": source, "input": len(affs), "created": created,
+            "existing": existing, "skipped": skipped, "errors": errors[:20],
+            "error_count": len(errors)}
+
+
 @router.post("/admin/set-status")
 async def admin_set_status(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Change an affiliate's status (active | suspended) or delete them."""
