@@ -736,6 +736,47 @@ CREDENTIAL_TAGS = {
 }
 
 
+@router.post("/set-learner-menu")
+async def set_learner_menu(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Set which tabs appear in the learner top nav. Body: {items:["courses",
+    "communities","store"], dry_run?} — anything omitted is hidden. Writes
+    customization.menu.items on the org config (data, not code)."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from src.db.organization_config import OrganizationConfig
+    body = await request.json()
+    _check(request, body)
+    org_id = int(body.get("org_id", 1))
+    dry = bool(body.get("dry_run"))
+    keep = body.get("items") or ["courses", "communities", "store"]
+
+    row = (await db_session.execute(select(OrganizationConfig).where(
+        OrganizationConfig.org_id == org_id))).scalars().first()
+    if not row:
+        raise HTTPException(404, "Org config not found")
+    cfg = dict(row.config or {})
+    # config is stored under a nested "config" key in this schema version
+    inner = dict(cfg.get("config") or cfg)
+    custom = dict(inner.get("customization") or {})
+    before = ((custom.get("menu") or {}).get("items")) or []
+    custom["menu"] = {"items": [{"type": t, "enabled": True, "order": i,
+                                 "label": "", "url": "", "icon": ""}
+                                for i, t in enumerate(keep)]}
+    inner["customization"] = custom
+    if "config" in cfg:
+        cfg["config"] = inner
+    else:
+        cfg = inner
+    if not dry:
+        row.config = cfg
+        flag_modified(row, "config")
+        db_session.add(row)
+        await db_session.commit()
+    return {"dry_run": dry, "kept": keep,
+            "hidden": [t for t in ["courses", "library", "podcasts", "communities",
+                                   "playgrounds", "store"] if t not in keep],
+            "previous_items": before}
+
+
 @router.post("/fix-certificate-dates")
 async def fix_certificate_dates(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Correct the reissued course certificates to their REAL earned dates using an
