@@ -414,22 +414,22 @@ function DashLeftMenu() {
               active={isActivePath('/dash/members')}
             />
 
-            {/* BBU Certificate Manager (served by the API; session-gated, opens in a new tab) */}
+            {/* BBU Certificate Manager — embedded in-app (API-served page inside an iframe) */}
             <MenuLink
-              href={`${getAPIUrl()}bbu/cert-admin/`}
+              href="/dash/certificates"
               icon={<Certificate size={20} weight="fill" />}
               label={t('common.certificates') !== 'common.certificates' ? t('common.certificates') : 'Certificates'}
               isCollapsed={isCollapsed}
-              isExternal
+              active={isActivePath('/dash/certificates')}
             />
 
-            {/* BBU Operations Console — coupons / cohorts / credentials / seat codes (API-served, session-gated) */}
+            {/* BBU Operations Console — Store, cohorts, coupons, credentials, seat codes (embedded in-app) */}
             <MenuLink
-              href={`${getAPIUrl()}bbu/admin/`}
+              href="/dash/operations"
               icon={<Ticket size={20} weight="fill" />}
               label="Operations"
               isCollapsed={isCollapsed}
-              isExternal
+              active={isActivePath('/dash/operations')}
             />
 
             {showLibrary && (
