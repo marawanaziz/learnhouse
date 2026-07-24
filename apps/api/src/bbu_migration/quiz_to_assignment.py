@@ -313,6 +313,63 @@ async def quiz_to_assignment_verify(request: Request, course_id: int,
             "remaining_inline_quiz_blocks": remaining_blocks, "detail": out}
 
 
+def _count_content_blocks(node, quiz_only_flag):
+    """Count non-quiz content nodes with actual substance (text/media/etc.).
+    Returns number of meaningful non-quiz top-level-ish blocks."""
+    n = 0
+    if isinstance(node, dict):
+        t = node.get("type")
+        if t and t not in ("doc", "blockQuiz"):
+            # a block counts if it has text or is a media/embed/heading block
+            txt = node.get("text")
+            if txt and str(txt).strip():
+                n += 1
+            elif t in ("image", "video", "blockVideo", "blockImage", "blockPDF",
+                       "blockEmbed", "heading", "blockquote", "codeBlock", "bulletList",
+                       "orderedList", "blockMathequation", "blockAudio", "blockFile"):
+                n += 1
+        for v in node.values():
+            n += _count_content_blocks(v, quiz_only_flag)
+    elif isinstance(node, list):
+        for v in node:
+            n += _count_content_blocks(v, quiz_only_flag)
+    return n
+
+
+@router.get("/quiz-to-assignment/inspect")
+async def quiz_inspect(request: Request, course_id: int,
+                       db_session: AsyncSession = Depends(get_db_session)):
+    """List activities in a course: type, whether it holds a quiz block, and how
+    much OTHER content it has (to tell quiz-only pages from mixed lessons)."""
+    _check(request)
+    acts = (await db_session.execute(select(Activity).where(
+        Activity.course_id == course_id))).scalars().all()
+    rows = []
+    quiz_only = mixed = husks = 0
+    for a in acts:
+        blocks = []
+        _find_quiz_blocks(a.content or {}, blocks)
+        other = _count_content_blocks(a.content or {}, None)
+        # when a quiz block is present, subtract nothing (other already excludes quiz)
+        has_quiz = len(blocks) > 0
+        is_husk = (not has_quiz and other == 0 and str(a.activity_type).endswith("TYPE_DYNAMIC"))
+        if has_quiz:
+            if other == 0:
+                quiz_only += 1
+            else:
+                mixed += 1
+        if is_husk:
+            husks += 1
+        rows.append({"activity_id": a.id, "name": a.name,
+                     "type": str(a.activity_type).replace("ActivityTypeEnum.", ""),
+                     "has_quiz_block": has_quiz, "quiz_questions": sum(
+                         len((b.get('attrs') or {}).get('questions') or []) for b in blocks),
+                     "other_content_blocks": other})
+    return {"course_id": course_id, "activities": len(acts),
+            "quiz_only_lessons": quiz_only, "mixed_lessons": mixed,
+            "empty_husks": husks, "rows": rows}
+
+
 async def _reindex_chapter(db: AsyncSession, chapter_id: int, src_act_id: int, new_act_id: int):
     """Re-enumerate a chapter's ChapterActivity.order 0-based, placing new_act
     immediately after src_act (reader sorts by this order)."""
