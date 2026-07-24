@@ -273,6 +273,46 @@ async def quiz_to_assignment(request: Request, db_session: AsyncSession = Depend
     return rep
 
 
+@router.get("/quiz-to-assignment/verify")
+async def quiz_to_assignment_verify(request: Request, course_id: int,
+                                    db_session: AsyncSession = Depends(get_db_session)):
+    """Read-only inspection of a course's native assignments after migration:
+    per-assignment question count, host activity, chapter order position, and
+    submission/TrailStep counts. Admin-key gated."""
+    _check(request)
+    course = (await db_session.execute(select(Course).where(Course.id == course_id))).scalars().first()
+    if not course:
+        raise HTTPException(404, "course not found")
+    assignments = (await db_session.execute(select(Assignment).where(
+        Assignment.course_id == course_id))).scalars().all()
+    # remaining inline quiz blocks in this course (should be 0 after migration)
+    acts = (await db_session.execute(select(Activity).where(Activity.course_id == course_id))).scalars().all()
+    remaining_blocks = 0
+    for a in acts:
+        b = []
+        _find_quiz_blocks(a.content or {}, b)
+        remaining_blocks += len(b)
+    out = []
+    for asg in assignments:
+        tasks = (await db_session.execute(select(AssignmentTask).where(
+            AssignmentTask.assignment_id == asg.id))).scalars().all()
+        nq = sum(len((t.contents or {}).get("questions") or []) for t in tasks)
+        link = (await db_session.execute(select(ChapterActivity).where(
+            ChapterActivity.activity_id == asg.activity_id))).scalars().first()
+        subs = (await db_session.execute(select(func.count()).select_from(AssignmentUserSubmission).where(
+            AssignmentUserSubmission.assignment_id == asg.id))).scalar() or 0
+        steps = (await db_session.execute(select(func.count()).select_from(TrailStep).where(
+            TrailStep.activity_id == asg.activity_id, TrailStep.complete == True))).scalar() or 0  # noqa: E712
+        out.append({"assignment": asg.title, "activity_id": asg.activity_id,
+                    "tasks": len(tasks), "questions": nq, "auto_grading": asg.auto_grading,
+                    "grading_type": str(asg.grading_type), "published": asg.published,
+                    "chapter_id": link.chapter_id if link else None,
+                    "order": link.order if link else None,
+                    "user_submissions": subs, "completed_steps": steps})
+    return {"course": course.name, "assignments": len(out),
+            "remaining_inline_quiz_blocks": remaining_blocks, "detail": out}
+
+
 async def _reindex_chapter(db: AsyncSession, chapter_id: int, src_act_id: int, new_act_id: int):
     """Re-enumerate a chapter's ChapterActivity.order 0-based, placing new_act
     immediately after src_act (reader sorts by this order)."""
