@@ -390,6 +390,113 @@ async def migrate_contacts(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/provision-agency-course")
+async def provision_agency_course(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Create the dedicated 'Doula Agency Owner Mentorship' course (gated) + its
+    access usergroup, then wire it to product 26 (seat_count=16, course_uuids) and
+    the agency cohort (id 7 by default). Idempotent. Body: {seat_count?, product_id?,
+    cohort_id?, dry_run?}."""
+    from uuid import uuid4
+    from src.db.courses.courses import Course
+    from src.db.courses.chapters import Chapter
+    from src.db.courses.course_chapters import CourseChapter
+    from src.db.courses.activities import (Activity, ActivityTypeEnum,
+                                           ActivitySubTypeEnum, ActivityLockType)
+    from src.db.courses.chapter_activities import ChapterActivity
+    from src.db.usergroups import UserGroup
+    from src.db.usergroup_resources import UserGroupResource
+    from src.bbu_payments.models import BBUProduct
+    from src.bbu_cohorts.models import BBUCohort
+
+    body = await request.json()
+    _check(request, body)
+    org_id = 1
+    seat_count = int(body.get("seat_count", 16))
+    product_id = int(body.get("product_id", 26))
+    cohort_id = int(body.get("cohort_id", 7))
+    NAME = "Doula Agency Owner Mentorship"
+
+    # 1) find or create the course
+    course = (await db_session.execute(select(Course).where(
+        Course.org_id == org_id, Course.name == NAME))).scalars().first()
+    created = False
+    if not course:
+        course = Course(
+            name=NAME,
+            description="Your private 5-week live cohort for scaling a doula agency — systems, leadership, and team growth. Live Zoom sessions + community. Use the Members area to manage and share your team seats.",
+            learnings="", thumbnail_type=None, thumbnail_image="", thumbnail_video="",
+            public=False, published=True, open_to_contributors=False,
+            org_id=org_id, course_uuid=f"course_{uuid4()}",
+            creation_date=_now(), update_date=_now())
+        db_session.add(course)
+        await db_session.commit()
+        await db_session.refresh(course)
+        created = True
+        # a welcome chapter + activity so the course is openable
+        chap = Chapter(name="Welcome", org_id=org_id, course_id=course.id,
+                       chapter_uuid=f"chapter_{uuid4()}", creation_date=_now(), update_date=_now())
+        db_session.add(chap)
+        await db_session.commit()
+        await db_session.refresh(chap)
+        db_session.add(CourseChapter(order=0, course_id=course.id, chapter_id=chap.id,
+                                     org_id=org_id, creation_date=_now(), update_date=_now()))
+        welcome = {"type": "doc", "content": [
+            {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Welcome, Agency Owner!"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "This is your Doula Agency Owner Mentorship home. Your live cohort sessions run over Zoom and the discussion happens in your cohort community. To view and share your team's seat codes, open the Members / seat portal link from your purchase confirmation."}]}]}
+        act = Activity(name="Welcome to the Mentorship", activity_type=ActivityTypeEnum.TYPE_DYNAMIC,
+                       activity_sub_type=ActivitySubTypeEnum.SUBTYPE_DYNAMIC_PAGE, content=welcome,
+                       details=None, published=True, lock_type=ActivityLockType.RESTRICTED,
+                       org_id=org_id, course_id=course.id, activity_uuid=f"activity_{uuid4()}",
+                       creation_date=_now(), update_date=_now())
+        db_session.add(act)
+        await db_session.commit()
+        await db_session.refresh(act)
+        db_session.add(ChapterActivity(order=0, chapter_id=chap.id, activity_id=act.id,
+                                       course_id=course.id, org_id=org_id,
+                                       creation_date=_now(), update_date=_now()))
+        await db_session.commit()
+
+    cu = course.course_uuid
+    # 2) access usergroup (description=course_uuid) + link the course to it
+    grp = (await db_session.execute(select(UserGroup).where(
+        UserGroup.org_id == org_id, UserGroup.description == cu))).scalars().first()
+    if not grp:
+        grp = UserGroup(org_id=org_id, name=f"{NAME} · Access", description=cu,
+                        usergroup_uuid=f"usergroup_{uuid4()}", creation_date=_now(), update_date=_now())
+        db_session.add(grp)
+        await db_session.commit()
+        await db_session.refresh(grp)
+    link = (await db_session.execute(select(UserGroupResource).where(
+        UserGroupResource.usergroup_id == grp.id, UserGroupResource.resource_uuid == cu))).scalars().first()
+    if not link:
+        db_session.add(UserGroupResource(usergroup_id=grp.id, resource_uuid=cu, org_id=org_id,
+                                         creation_date=_now(), update_date=_now()))
+        await db_session.commit()
+
+    # 3) wire the product: seat_count + course_uuids
+    prod = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == product_id))).scalars().first()
+    prod_wired = None
+    if prod:
+        prod.seat_count = seat_count
+        prod.course_uuids = cu
+        db_session.add(prod)
+        await db_session.commit()
+        prod_wired = {"id": prod.id, "name": prod.name, "seat_count": prod.seat_count, "course_uuids": prod.course_uuids}
+
+    # 4) wire the cohort: point it at this course
+    coh = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == cohort_id))).scalars().first()
+    coh_wired = None
+    if coh:
+        coh.course_uuid = cu
+        db_session.add(coh)
+        await db_session.commit()
+        coh_wired = {"id": coh.id, "name": coh.name, "course_uuid": coh.course_uuid}
+
+    return {"course": {"id": course.id, "uuid": cu, "name": NAME, "created": created,
+                       "public": course.public, "published": course.published},
+            "access_group_id": grp.id, "product": prod_wired, "cohort": coh_wired}
+
+
 @router.post("/enrollments")
 async def migrate_enrollments(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Bulk enroll existing users into courses + grant gated access. Idempotent.
