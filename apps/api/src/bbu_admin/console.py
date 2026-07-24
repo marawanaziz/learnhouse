@@ -21,7 +21,7 @@ from src.db.communities.communities import Community
 from src.bbu_admin.auth import authorize_admin
 from src.bbu_payments.models import BBUCoupon, BBUProduct
 from src.bbu_payments import coupons as coupon_svc
-from src.bbu_cohorts.models import BBUCohort
+from src.bbu_cohorts.models import BBUCohort, BBUCohortWaitlist
 from src.bbu_cohorts import service as cohort_svc
 from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
 from src.bbu_credentials import service as cred_svc
@@ -182,6 +182,39 @@ async def cohorts_run_lifecycle(request: Request, db_session: AsyncSession = Dep
     b = await request.json()
     await _auth(request, db_session, b)
     return await cohort_svc.run_lifecycle(db_session, org_id=ORG, dry=bool(b.get("dry_run", False)))
+
+
+@router.get("/cohort-waitlist")
+async def cohort_waitlist_list(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    await _auth(request, db_session)
+    rows = (await db_session.execute(select(BBUCohortWaitlist).where(
+        BBUCohortWaitlist.org_id == ORG).order_by(BBUCohortWaitlist.id))).scalars().all()
+    return [{
+        "id": r.id, "program": r.program, "email": r.email, "name": r.name,
+        "phone": r.phone, "status": r.status,
+        "created_at": (r.created_at or "")[:10], "notified_at": (r.notified_at or "")[:10],
+    } for r in rows]
+
+
+@router.delete("/cohort-waitlist/{wid}")
+async def cohort_waitlist_delete(wid: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    await _auth(request, db_session)
+    r = (await db_session.execute(select(BBUCohortWaitlist).where(
+        BBUCohortWaitlist.id == wid, BBUCohortWaitlist.org_id == ORG))).scalars().first()
+    if r:
+        await db_session.delete(r)
+        await db_session.commit()
+    return {"deleted": wid}
+
+
+@router.post("/cohort-waitlist/notify")
+async def cohort_waitlist_notify(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Manually invite the next N waiting prospects of a program to enroll."""
+    b = await request.json()
+    await _auth(request, db_session, b)
+    notified = await cohort_svc.notify_waitlist(
+        db_session, ORG, (b.get("program") or "doula"), int(b.get("count", 1) or 1))
+    return {"notified": [{"email": r.email, "name": r.name} for r in notified]}
 
 
 @router.get("/cohorts/{cid}/roster")
@@ -456,6 +489,10 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
       <div class=row><input id=co-email placeholder="member email"><button onclick="cohortAct('enroll')">Enroll</button><button class=ghost onclick="cohortAct('complete')">Mark complete</button><button class=ghost onclick="cohortAct('remove')">Remove</button><button class=ghost style="margin-left:auto;color:#b23" onclick="closeCohort()">Close cohort</button></div>
       <table id=t-roster><thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead><tbody></tbody></table>
     </div>
+    <div class=card><h2>Waitlist <button class=ghost style="float:right;font-size:.8rem" onclick="notifyWaitlist()">Notify next waiting</button></h2>
+      <p class=muted style="margin-top:-.6rem">Prospects who signed up while cohorts were full. They're invited automatically when a seat frees; use the button to invite the next one manually.</p>
+      <table id=t-waitlist><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Program</th><th>Status</th><th>Joined</th></tr></thead><tbody></tbody></table>
+    </div>
   </div>
 
   <div class="panel" id=p-credentials>
@@ -591,6 +628,7 @@ function loadCohorts(){{
   j('/courses').then(cs=>{{document.getElementById('co-course').innerHTML='<option value="">— course (unlocks) —</option>'+cs.map(c=>`<option value="${{c.course_uuid}}">${{esc(c.name)}}</option>`).join('')}});
   j('/communities').then(cs=>{{document.getElementById('co-comm').innerHTML='<option value="">— community (prompts) —</option>'+(cs||[]).map(c=>`<option value="${{c.id}}">${{esc(c.name)}}</option>`).join('')}});
   loadZoomMeetings();
+  loadWaitlist();
   j('/cohorts').then(d=>{{
     document.querySelector('#t-cohorts tbody').innerHTML=(d||[]).map(c=>{{
       const dates=(c.start_date||'').slice(0,10)+(c.end_date?' → '+c.end_date.slice(0,10):'');
@@ -617,6 +655,16 @@ function runLifecycle(){{
   j('/cohorts/run-lifecycle',{{method:'POST',body:JSON.stringify({{dry_run:false}})}}).then(r=>{{
     document.getElementById('lc-msg').textContent=`Started ${{r.started_count||0}} · closed ${{r.expired_count||0}} · prompts posted ${{r.prompts_posted||0}} · recordings +${{r.recordings_added||0}}`;
     loadCohorts();}});
+}}
+function loadWaitlist(){{j('/cohort-waitlist').then(d=>{{
+  const badge=s=>`<span style="font-size:.75rem;padding:2px 8px;border-radius:10px;background:${{s==='waiting'?'#eef3f7':'#e6f4ea'}};color:${{s==='waiting'?'#3a5566':'#1c7a3e'}}">${{esc(s)}}</span>`;
+  document.querySelector('#t-waitlist tbody').innerHTML=(d||[]).map(w=>
+    `<tr><td>${{esc(w.name||'—')}}</td><td>${{esc(w.email)}}</td><td>${{esc(w.phone||'—')}}</td><td>${{esc(w.program)}}</td><td>${{badge(w.status)}}</td><td class=muted style=font-size:.8rem>${{esc(w.created_at)}}</td></tr>`
+  ).join('')||'<tr><td colspan=6 class=muted>No one waiting.</td></tr>';
+}})}}
+function notifyWaitlist(){{
+  j('/cohort-waitlist/notify',{{method:'POST',body:JSON.stringify({{program:'doula',count:1}})}}).then(r=>{{
+    const n=(r.notified||[]).length; alert(n?('Invited: '+r.notified.map(x=>x.email).join(', ')):'No one waiting to notify.');loadWaitlist();}});
 }}
 function openRoster(id,name){{curCohort=id;document.getElementById('roster-card').style.display='block';
   document.getElementById('roster-name').textContent=name;loadRoster();}}

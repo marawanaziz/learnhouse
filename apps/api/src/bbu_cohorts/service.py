@@ -15,7 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.db.usergroups import UserGroup
 from src.db.usergroup_user import UserGroupUser
 from src.db.usergroup_resources import UserGroupResource
-from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
+from src.bbu_cohorts.models import BBUCohort, BBUCohortMember, BBUCohortWaitlist
 from src.bbu_cohorts import templates
 
 
@@ -185,8 +185,15 @@ async def remove(db: AsyncSession, cohort: BBUCohort, user_id: int) -> dict:
     await db.commit()
     if cohort.usergroup_id:
         await _remove_from_group(db, cohort.usergroup_id, user_id)
-    # promote the next waitlisted member if there's now room
+    # promote the next PAID waitlisted member if there's now room...
     await promote_waitlist(db, cohort)
+    # ...then, if a seat is still free, invite the earliest interest-waitlist
+    # prospect of this program to come enroll.
+    if not cohort.capacity or (await active_count(db, cohort.id)) < cohort.capacity:
+        try:
+            await notify_waitlist(db, cohort.org_id, cohort.program, 1)
+        except Exception:
+            pass
     return {"removed": True}
 
 
@@ -429,6 +436,105 @@ async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, p
                 return c
         return upcoming[0]
     return None
+
+
+async def has_open_seat(db: AsyncSession, org_id: int, program: str) -> bool:
+    """True if some UPCOMING cohort of the program still has a free active seat
+    (or is uncapped). Drives the storefront's buy-vs-waitlist decision."""
+    if not program:
+        return True
+    rows = (await db.execute(select(BBUCohort).where(
+        BBUCohort.org_id == org_id, BBUCohort.program == program,
+        BBUCohort.status.in_(["open", "full"])))).scalars().all()
+    today = _today()
+    for c in rows:
+        start = (c.start_date or "")[:10]
+        if start and start < today:
+            continue
+        if not c.capacity or (await active_count(db, c.id)) < c.capacity:
+            return True
+    return False
+
+
+# --- pre-purchase waitlist (when every upcoming cohort is full) -------------
+
+async def add_to_waitlist(db: AsyncSession, org_id: int, program: str,
+                          email: str, name: str = "", phone: str = "",
+                          product_id=None) -> dict:
+    """Record an interested prospect (idempotent per email+program while waiting)
+    and mirror them into GHL so Anna can message them. Fail-soft on the CRM push."""
+    email = (email or "").strip().lower()
+    if not email:
+        return {"ok": False, "error": "email required"}
+    existing = (await db.execute(select(BBUCohortWaitlist).where(
+        BBUCohortWaitlist.org_id == org_id, BBUCohortWaitlist.program == program,
+        BBUCohortWaitlist.email == email,
+        BBUCohortWaitlist.status.in_(["waiting", "notified"])))).scalars().first()
+    if existing:
+        return {"ok": True, "already": True, "position": await waitlist_position(db, org_id, program, existing.id)}
+    row = BBUCohortWaitlist(org_id=org_id, program=program, product_id=product_id,
+                            email=email, name=(name or "").strip(), phone=(phone or "").strip(),
+                            status="waiting", created_at=_now())
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    await _ghl_waitlist_push(email, name, phone, program, "waiting")
+    return {"ok": True, "already": False, "position": await waitlist_position(db, org_id, program, row.id)}
+
+
+async def waitlist_position(db: AsyncSession, org_id: int, program: str, row_id: int) -> int:
+    rows = (await db.execute(select(BBUCohortWaitlist).where(
+        BBUCohortWaitlist.org_id == org_id, BBUCohortWaitlist.program == program,
+        BBUCohortWaitlist.status == "waiting").order_by(BBUCohortWaitlist.id))).scalars().all()
+    for i, r in enumerate(rows, start=1):
+        if r.id == row_id:
+            return i
+    return len(rows) + 1
+
+
+async def waitlist_count(db: AsyncSession, org_id: int, program: str) -> int:
+    rows = (await db.execute(select(BBUCohortWaitlist).where(
+        BBUCohortWaitlist.org_id == org_id, BBUCohortWaitlist.program == program,
+        BBUCohortWaitlist.status == "waiting"))).scalars().all()
+    return len(rows)
+
+
+async def notify_waitlist(db: AsyncSession, org_id: int, program: str, seats: int) -> list:
+    """A spot (or `seats` spots) opened → tell the earliest waiting prospects to
+    come enroll. Marks them 'notified' and pushes a GHL status so Anna's workflow
+    can email/SMS them. Returns the entries notified."""
+    if seats <= 0:
+        return []
+    rows = (await db.execute(select(BBUCohortWaitlist).where(
+        BBUCohortWaitlist.org_id == org_id, BBUCohortWaitlist.program == program,
+        BBUCohortWaitlist.status == "waiting").order_by(BBUCohortWaitlist.id).limit(seats))).scalars().all()
+    notified = []
+    for r in rows:
+        r.status = "notified"
+        r.notified_at = _now()
+        db.add(r)
+        await db.commit()
+        await _ghl_waitlist_push(r.email, r.name, r.phone, program, "spot_open")
+        notified.append(r)
+    return notified
+
+
+async def _ghl_waitlist_push(email: str, name: str, phone: str, program: str, status: str) -> None:
+    """Fail-soft: upsert the prospect into GHL with waitlist status fields so a
+    CRM workflow can message them. Never breaks the storefront."""
+    try:
+        from src.bbu_ghl.client import GHLClient, PIT
+        if not PIT:
+            return
+        first, _, last = (name or "").partition(" ")
+        async with GHLClient() as g:
+            await g.upsert_contact(email, first_name=first, last_name=last, phone=phone, fields={
+                "bbu__cohort_waitlist": program,
+                "bbu__cohort_waitlist_status": status,
+            })
+    except Exception:
+        import traceback
+        print(f"[BBU] waitlist GHL push failed:\n{traceback.format_exc()[-300:]}", flush=True)
 
 
 async def enroll_from_product(db: AsyncSession, org_id: int, user_id: int,

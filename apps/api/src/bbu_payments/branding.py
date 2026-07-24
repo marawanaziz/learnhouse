@@ -104,7 +104,50 @@ def store_page(products, base):
     return _shell("Course Catalog", inner)
 
 
-def checkout_page(p, pub_key, base):
+def waitlist_page(p, base, program):
+    """Shown instead of the pay button when every upcoming cohort is full."""
+    inner = (
+        f"<div class='checkout'>"
+        f"<span class='eyebrow'>Join the waitlist</span>"
+        f"<h1 style='font-size:2rem;margin:12px 0 6px'>{p.name}</h1>"
+        f"<p style='color:#4a5b68;margin-bottom:6px'>Our upcoming cohorts are currently full. "
+        f"Add your details and we'll message you the moment a spot opens up — no charge to join.</p>"
+        f"<div style='height:10px'></div>"
+        f"<label for='wname'>Your name</label>"
+        f"<input id='wname' type='text' placeholder='First and last name'>"
+        f"<label for='wemail' style='margin-top:10px;display:block'>Email</label>"
+        f"<input id='wemail' type='email' placeholder='you@example.com' required>"
+        f"<label for='wphone' style='margin-top:10px;display:block'>Mobile (for a text when a spot opens)</label>"
+        f"<input id='wphone' type='tel' placeholder='(555) 555-5555'>"
+        f"<div style='height:18px'></div>"
+        f"<button class='btn' style='width:100%' id='join'>Join the waitlist →</button>"
+        f"<div class='methods' id='wmsg'></div>"
+        f"</div>"
+        f"<script>"
+        f"const jb=document.getElementById('join');"
+        f"jb.onclick=async()=>{{"
+        f"const email=document.getElementById('wemail').value;"
+        f"if(!email){{document.getElementById('wmsg').textContent='Please enter your email.';return;}}"
+        f"jb.textContent='Joining…';jb.disabled=true;"
+        f"const r=await fetch('{base}/api/v1/bbu/cohort-waitlist',{{method:'POST',"
+        f"headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{product_id:{p.id},"
+        f"email,name:document.getElementById('wname').value,phone:document.getElementById('wphone').value}})}});"
+        f"const d=await r.json();"
+        f"if(d.ok){{document.querySelector('.checkout').innerHTML="
+        f"\"<div style='text-align:center'><div style='font-size:3rem'>✅</div>"
+        f"<h1 style='font-size:1.8rem;margin:12px 0'>You're on the list!</h1>"
+        f"<p style='color:#4a5b68'>We'll reach out the moment a spot opens up.\"+"
+        f"(d.position?(' You're #'+d.position+' in line.'):'')+\"</p></div>\";}}"
+        f"else{{jb.textContent='Try again';jb.disabled=false;document.getElementById('wmsg').textContent=(d.error||'Something went wrong.');}}"
+        f"}};"
+        f"</script>"
+    )
+    return _shell(f"Waitlist · {p.name}", inner)
+
+
+def checkout_page(p, pub_key, base, sold_out=False, program=""):
+    if sold_out:
+        return waitlist_page(p, base, program)
     is_ebook = getattr(p, "kind", "") == "ebook"
     eyebrow = "Buy the e-book" if is_ebook else "Enroll"
     email_label = ("Email for your download link &amp; receipt" if is_ebook
@@ -131,7 +174,7 @@ def checkout_page(p, pub_key, base):
         f"const r=await fetch('{base}/api/v1/bbu/checkout',{{method:'POST',"
         f"headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{product_id:{p.id},email,ref:decodeURIComponent(ref)}})}});"
         f"const d=await r.json();"
-        f"if(d.url){{window.location=d.url}}else{{btn.textContent='Error — try again';btn.disabled=false;}}"
+        f"if(d.url){{window.location=d.url}}else if(d.waitlist){{window.location='{base}/api/v1/bbu/buy/{p.id}'}}else{{btn.textContent='Error — try again';btn.disabled=false;}}"
         f"}};"
         f"</script>"
     )

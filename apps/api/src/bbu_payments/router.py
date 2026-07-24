@@ -33,6 +33,7 @@ CERT_TEMPLATE_DIR = os.path.normpath(
 from src.core.events.database import get_db_session
 from src.db.courses.courses import Course
 from src.bbu_payments.models import BBUProduct, BBUOrder
+from src.bbu_cohorts.models import BBUCohort
 from src.bbu_payments.branding import store_page, checkout_page, success_page
 from src.bbu_payments import affiliates as aff
 
@@ -142,7 +143,21 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
     p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == product_id))).scalars().first()
     if not p:
         raise HTTPException(404, "Product not found")
-    resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request)))
+    # cohort products: if every upcoming cohort is full, render the waitlist form
+    sold_out, program = False, ""
+    prog = getattr(p, "cohort_program", "") or ""
+    if prog or getattr(p, "cohort_id", None):
+        from src.bbu_cohorts import service as cohort_svc
+        pinned = getattr(p, "cohort_id", None)
+        if pinned:
+            c = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == pinned))).scalars().first()
+            program = (c.program if c else prog) or ""
+            sold_out = not bool(c and c.status in ("open", "full") and
+                                (not c.capacity or (await cohort_svc.active_count(db_session, c.id)) < c.capacity))
+        else:
+            program = prog
+            sold_out = not await cohort_svc.has_open_seat(db_session, p.org_id, prog)
+    resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request), sold_out=sold_out, program=program))
     await _apply_ref(request, resp, db_session)
     return resp
 
@@ -167,6 +182,46 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
     return HTMLResponse(success_page(order, _base_url(request)))
 
 
+@router.get("/cohort-availability")
+async def cohort_availability(product_id: int, db_session: AsyncSession = Depends(get_db_session)):
+    """Storefront check: is this a cohort product, and does it have an open seat?
+    When sold out, the buy page shows a waitlist form instead of the pay button."""
+    p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == product_id))).scalars().first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+    prog = getattr(p, "cohort_program", "") or ""
+    if not prog and not getattr(p, "cohort_id", None):
+        return {"is_cohort": False, "available": True}
+    from src.bbu_cohorts import service as cohort_svc
+    if getattr(p, "cohort_id", None):
+        c = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == p.cohort_id))).scalars().first()
+        avail = bool(c and c.status in ("open", "full") and
+                     (not c.capacity or (await cohort_svc.active_count(db_session, c.id)) < c.capacity))
+        prog = prog or (c.program if c else "")
+    else:
+        avail = await cohort_svc.has_open_seat(db_session, p.org_id, prog)
+    return {"is_cohort": True, "available": avail, "program": prog,
+            "waitlist_count": await cohort_svc.waitlist_count(db_session, p.org_id, prog)}
+
+
+@router.post("/cohort-waitlist")
+async def cohort_waitlist_join(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Public: join the waitlist for a sold-out cohort product (no charge)."""
+    b = await request.json()
+    p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == b.get("product_id")))).scalars().first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+    prog = getattr(p, "cohort_program", "") or ""
+    if not prog and getattr(p, "cohort_id", None):
+        c = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == p.cohort_id))).scalars().first()
+        prog = c.program if c else "doula"
+    from src.bbu_cohorts import service as cohort_svc
+    return await cohort_svc.add_to_waitlist(
+        db_session, p.org_id, prog or "doula",
+        email=b.get("email", ""), name=b.get("name", ""), phone=b.get("phone", ""),
+        product_id=p.id)
+
+
 @router.post("/checkout")
 async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     body = await request.json()
@@ -177,6 +232,23 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
         raise HTTPException(404, "Product not found")
     if not stripe.api_key:
         raise HTTPException(500, "Stripe not configured")
+
+    # Waitlist gate: never sell a seat that doesn't exist. If this is a cohort
+    # product and every upcoming cohort is full, refuse checkout and steer the
+    # buyer to the waitlist (belt-and-suspenders — the buy page already hides the
+    # pay button, this stops a direct API hit too).
+    prog = getattr(p, "cohort_program", "") or ""
+    if (prog or getattr(p, "cohort_id", None)):
+        from src.bbu_cohorts import service as cohort_svc
+        pinned = getattr(p, "cohort_id", None)
+        if pinned:
+            c = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == pinned))).scalars().first()
+            open_seat = bool(c and c.status in ("open", "full") and
+                             (not c.capacity or (await cohort_svc.active_count(db_session, c.id)) < c.capacity))
+        else:
+            open_seat = await cohort_svc.has_open_seat(db_session, p.org_id, prog)
+        if not open_seat:
+            return {"waitlist": True, "message": "This cohort is full — join the waitlist and we'll message you the moment a spot opens."}
 
     # Affiliate attribution: ref from body (JS reads the cookie) or the cookie.
     ref = (body.get("ref") or request.cookies.get(REF_COOKIE) or "").strip()

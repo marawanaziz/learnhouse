@@ -41,6 +41,26 @@ class BBUCohort(SQLModel, table=True):
     updated_at: str = Field(default="", sa_column=Column(String(40)))
 
 
+class BBUCohortWaitlist(SQLModel, table=True):
+    """Pre-purchase interest list: when every upcoming cohort of a program is
+    full, the storefront collects a prospect here (no charge) instead of selling.
+    When a seat frees, the earliest 'waiting' entries are notified to come buy."""
+    __tablename__ = "bbu_cohort_waitlist"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    program: str = Field(default="doula", sa_column=Column(String(24), index=True))
+    product_id: Optional[int] = Field(default=None)
+    email: str = Field(default="", sa_column=Column(String(320), index=True))
+    name: str = Field(default="", sa_column=Column(String(200)))
+    phone: str = Field(default="", sa_column=Column(String(40)))
+    # waiting | notified | converted | cancelled
+    status: str = Field(default="waiting", sa_column=Column(String(16), index=True))
+    created_at: str = Field(default="", sa_column=Column(String(40)))
+    notified_at: str = Field(default="", sa_column=Column(String(40)))
+
+
 class BBUCohortMember(SQLModel, table=True):
     __tablename__ = "bbu_cohort_member"
     __table_args__ = {"extend_existing": True}

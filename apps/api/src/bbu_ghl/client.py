@@ -59,7 +59,7 @@ class GHLClient:
 
     # ---------------------------------------------------------------- contacts
     async def upsert_contact(self, email: str, first_name: str = "",
-                             last_name: str = "",
+                             last_name: str = "", phone: str = "",
                              fields: Optional[dict] = None) -> Optional[str]:
         """Upsert by email. `fields` maps bbu__* field keys -> values."""
         body: dict = {"locationId": LOCATION_ID, "email": email}
@@ -67,6 +67,8 @@ class GHLClient:
             body["firstName"] = first_name
         if last_name:
             body["lastName"] = last_name
+        if phone:
+            body["phone"] = phone
         if fields:
             body["customFields"] = [
                 {"key": k, "field_value": v} for k, v in fields.items()
