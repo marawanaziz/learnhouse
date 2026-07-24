@@ -171,8 +171,9 @@ def _is_assignment_past_due(assignment: Assignment) -> bool:
 
 # Default passing threshold as a percentage (0-100). Used for PASS_FAIL,
 # NUMERIC, and PERCENTAGE grading types — any type where the pass/fail line
-# isn't implied by the display format itself.
-DEFAULT_PASSING_THRESHOLD_PERCENTAGE = 50.0
+# isn't implied by the display format itself. BBU policy (Jul 2026 team
+# review): quizzes must be passed at 80% to unlock the next module.
+DEFAULT_PASSING_THRESHOLD_PERCENTAGE = 80.0
 
 # For ALPHABET (A/B/C/D/F) and GPA_SCALE (0.0-4.0), we use 60% as the passing
 # line so the `passed` field stays consistent with the display: any score that

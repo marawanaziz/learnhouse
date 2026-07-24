@@ -448,7 +448,16 @@ async def update_settings(request: Request, db_session: AsyncSession = Depends(g
                   "payout_schedule", "min_payout_cents", "self_referral_allowed",
                   "exclude_zero_revenue"):
         if field in body and body[field] is not None:
-            setattr(s, field, body[field])
+            val = body[field]
+            # Commission rate is entered as a PERCENTAGE in the admin UI (e.g. 50),
+            # but stored as a 0-1 decimal. Normalize: any value > 1 is a percent.
+            if field == "default_commission_rate":
+                try:
+                    fv = float(val)
+                    val = fv / 100.0 if fv > 1 else fv
+                except (TypeError, ValueError):
+                    continue
+            setattr(s, field, val)
     s.updated_at = _now().isoformat()
     db_session.add(s)
     await db_session.commit()

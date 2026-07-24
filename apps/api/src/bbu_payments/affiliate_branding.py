@@ -186,7 +186,7 @@ def admin_page(settings, affs, totals, earned, base, admin_key=""):
         f"<h3 style='font-size:1.15rem;margin-bottom:6px'>Program settings</h3>"
         f"<p style='color:#6b6f79;font-size:.88rem'>Everything here is editable — no code changes needed.</p>"
         f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:0 20px'>"
-        + setting_input("Commission rate (0.50 = 50%)", "default_commission_rate", settings.default_commission_rate)
+        + setting_input("Default commission rate (%) — e.g. 50", "default_commission_rate", int(round((settings.default_commission_rate or 0) * 100)), "number")
         + setting_input("Commissionable events (comma-sep)", "commissionable_events", settings.commissionable_events)
         + setting_input("Commission basis", "commission_basis", settings.commission_basis)
         + setting_input("Attribution window (days)", "attribution_window_days", settings.attribution_window_days, "number")
