@@ -738,17 +738,20 @@ CREDENTIAL_TAGS = {
 
 @router.get("/no-skip-courses")
 async def no_skip_courses(db_session: AsyncSession = Depends(get_db_session)):
-    """Public: course_uuids whose video activities disable forward-seek (cert/CEU
-    integrity). Read from each course's Certifications.config bbu_no_skip flag."""
+    """Public: course_uuids where video forward-seek is disabled and lessons must be
+    completed in order.
+
+    BBU policy: this applies to EVERY course — a student should never be able to
+    skip a video or jump ahead, regardless of whether the course carries a
+    certificate. A course can opt OUT by setting bbu_allow_skip=true on its
+    Certifications.config (nothing does today)."""
     from src.db.courses.certifications import Certifications
     org_id = 1
     certs = (await db_session.execute(select(Certifications))).scalars().all()
-    course_ids = [c.course_id for c in certs if (c.config or {}).get("bbu_no_skip")]
-    if not course_ids:
-        return {"course_uuids": []}
+    opted_out = {c.course_id for c in certs if (c.config or {}).get("bbu_allow_skip")}
     courses = (await db_session.execute(select(Course).where(
-        Course.org_id == org_id, Course.id.in_(course_ids)))).scalars().all()
-    return {"course_uuids": [c.course_uuid for c in courses]}
+        Course.org_id == org_id))).scalars().all()
+    return {"course_uuids": [c.course_uuid for c in courses if c.id not in opted_out]}
 
 
 @router.post("/tag-credential-courses")

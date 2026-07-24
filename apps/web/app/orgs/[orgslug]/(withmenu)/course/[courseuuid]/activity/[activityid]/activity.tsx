@@ -307,7 +307,11 @@ function ActivityClient(props: ActivityClientProps) {
   }, [course?.course_uuid]);
 
   const sequentialGate = useMemo(() => {
-    if (!noSkipCourse || contributorStatus === 'ACTIVE') return { locked: false, firstIncomplete: null as any };
+    // NOTE: course authors are intentionally NOT exempt. Every BBU course is
+    // authored by @admin, so exempting contributors silently disabled the gate
+    // for every admin/owner account — making it look like it wasn't working.
+    // Admins edit content through the editor route, not the learner reader.
+    if (!noSkipCourse) return { locked: false, firstIncomplete: null as any };
     if (!trailData || !course?.course_uuid || currentIndex < 0) return { locked: false, firstIncomplete: null };
     const run = trailData?.runs?.find((r: any) => {
       const a = r.course?.course_uuid?.replace('course_', '');
@@ -322,8 +326,18 @@ function ActivityClient(props: ActivityClientProps) {
     let firstIncompleteIdx = allActivities.findIndex((a: any) => !isComplete(a));
     if (firstIncompleteIdx === -1) firstIncompleteIdx = allActivities.length; // all done → free review
     const locked = currentIndex > firstIncompleteIdx;
-    return { locked, firstIncomplete: allActivities[firstIncompleteIdx] || null };
-  }, [noSkipCourse, contributorStatus, trailData, course, allActivities, currentIndex]);
+    const cur = allActivities[currentIndex];
+    return {
+      locked,
+      firstIncomplete: allActivities[firstIncompleteIdx] || null,
+      // used to disable the Next button until this lesson is actually finished
+      currentComplete: cur ? isComplete(cur) : true,
+      enforcing: true,
+    };
+  }, [noSkipCourse, trailData, course, allActivities, currentIndex]);
+
+  // On a no-skip course you cannot advance until the current lesson is complete.
+  const nextBlocked = !!sequentialGate.enforcing && !sequentialGate.currentComplete;
 
   // Full-watch gate: on no-skip courses, if the current activity contains a gated
   // video, "mark complete" is disabled until the video is watched through. The
@@ -355,8 +369,9 @@ function ActivityClient(props: ActivityClientProps) {
   }, [activityid]);
   // On no-skip courses, block "mark complete" until any gated video is watched
   // through AND any gated quiz is passed.
+  // Course authors are NOT exempt here either — see the note on sequentialGate.
   const completeBlocked =
-    noSkipCourse && contributorStatus !== 'ACTIVE' &&
+    noSkipCourse &&
     ((hasGatedVideo && !videoWatched) || (hasGatedQuiz && !quizPassed));
 
   // Memoize activity content
@@ -824,13 +839,13 @@ function ActivityClient(props: ActivityClientProps) {
                               completeBlocked={completeBlocked}
                             />
                             <button
-                              onClick={() => navigateToActivity(nextActivity)}
-                              className={`flex items-center space-x-1.5 p-2 rounded-md transition-all duration-200 cursor-pointer ${
-                                nextActivity
-                                  ? 'text-gray-700'
+                              onClick={() => { if (!nextBlocked) navigateToActivity(nextActivity) }}
+                              className={`flex items-center space-x-1.5 p-2 rounded-md transition-all duration-200 ${
+                                nextActivity && !nextBlocked
+                                  ? 'text-gray-700 cursor-pointer'
                                   : 'opacity-50 text-gray-400 cursor-not-allowed'
                               }`}
-                              disabled={!nextActivity}
+                              disabled={!nextActivity || nextBlocked}
                               title={nextActivity ? `${t('common.next')}: ${nextActivity.name}` : t('activities.no_next_activity')}
                             >
                               <div className="flex flex-col items-end">
@@ -1099,6 +1114,7 @@ function ActivityClient(props: ActivityClientProps) {
                               course={course}
                               currentActivityId={activity.id}
                               orgslug={orgslug}
+                              blocked={nextBlocked}
                             />
                           </div>
                         </div>
@@ -1429,7 +1445,7 @@ export function MarkStatus(props: {
   )
 }
 
-function NextActivityButton({ course, currentActivityId, orgslug }: { course: any, currentActivityId: string, orgslug: string }) {
+function NextActivityButton({ course, currentActivityId, orgslug, blocked = false }: { course: any, currentActivityId: string, orgslug: string, blocked?: boolean }) {
   const { t } = useTranslation();
   const router = useRouter();
   const _isMobile = useMediaQuery('(max-width: 768px)');
@@ -1464,6 +1480,7 @@ function NextActivityButton({ course, currentActivityId, orgslug }: { course: an
   if (!nextActivity) return null;
 
   const navigateToActivity = () => {
+    if (blocked) return;   // finish this lesson first
     const cleanCourseUuid = course.course_uuid?.replace('course_', '');
     router.push(getUriWithOrg(orgslug, '') + `/course/${cleanCourseUuid}/activity/${nextActivity.cleanUuid}`);
   };
@@ -1471,9 +1488,14 @@ function NextActivityButton({ course, currentActivityId, orgslug }: { course: an
   return (
     <div
       onClick={navigateToActivity}
-      className="bg-gray-200 rounded-md px-3 sm:px-4 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)] flex flex-col p-2 sm:p-2.5 text-gray-600 hover:cursor-pointer transition delay-150 duration-300 ease-in-out hover:bg-gray-200"
+      title={blocked ? t('activities.finish_lesson_first', 'Finish this lesson — watch the video and pass the quiz — before moving on') : undefined}
+      className={`rounded-md px-3 sm:px-4 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)] flex flex-col p-2 sm:p-2.5 transition delay-150 duration-300 ease-in-out ${
+        blocked
+          ? 'bg-gray-100 text-gray-400 opacity-60 cursor-not-allowed'
+          : 'bg-gray-200 text-gray-600 hover:cursor-pointer hover:bg-gray-200'
+      }`}
     >
-      <span className="text-[10px] font-bold text-gray-500 mb-1 uppercase">{t('common.next')}</span>
+      <span className="text-[10px] font-bold text-gray-500 mb-1 uppercase">{blocked ? (t('activities.locked', 'Locked')) : t('common.next')}</span>
       <div className="flex items-center space-x-1">
         <span className="text-xs sm:text-sm font-semibold truncate max-w-[120px] sm:max-w-[200px]">{nextActivity.name}</span>
         <ChevronRight size={17} className="shrink-0" />
