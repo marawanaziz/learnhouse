@@ -49,6 +49,7 @@ async def ensure_usergroup(db: AsyncSession, cohort: BBUCohort) -> int:
             UserGroup.id == cohort.usergroup_id))).scalars().first()
         if grp:
             await _ensure_course_link(db, grp.id, cohort)
+            await _ensure_community_link(db, grp.id, cohort)
             return grp.id
     grp = UserGroup(org_id=cohort.org_id, name=f"{cohort.name} · Cohort",
                     description=f"cohort:{cohort.id}",
@@ -61,22 +62,38 @@ async def ensure_usergroup(db: AsyncSession, cohort: BBUCohort) -> int:
     db.add(cohort)
     await db.commit()
     await _ensure_course_link(db, grp.id, cohort)
+    await _ensure_community_link(db, grp.id, cohort)
     return grp.id
 
 
-async def _ensure_course_link(db: AsyncSession, usergroup_id: int, cohort: BBUCohort):
-    if not cohort.course_uuid:
+async def _link_resource(db: AsyncSession, usergroup_id: int, org_id: int, resource_uuid: str):
+    if not resource_uuid:
         return
     link = (await db.execute(select(UserGroupResource).where(
         UserGroupResource.usergroup_id == usergroup_id,
-        UserGroupResource.resource_uuid == cohort.course_uuid,
+        UserGroupResource.resource_uuid == resource_uuid,
     ))).scalars().first()
     if not link:
-        db.add(UserGroupResource(usergroup_id=usergroup_id,
-                                 resource_uuid=cohort.course_uuid,
-                                 org_id=cohort.org_id,
-                                 creation_date=_now(), update_date=_now()))
+        db.add(UserGroupResource(usergroup_id=usergroup_id, resource_uuid=resource_uuid,
+                                 org_id=org_id, creation_date=_now(), update_date=_now()))
         await db.commit()
+
+
+async def _ensure_course_link(db: AsyncSession, usergroup_id: int, cohort: BBUCohort):
+    await _link_resource(db, usergroup_id, cohort.org_id, cohort.course_uuid)
+
+
+async def _ensure_community_link(db: AsyncSession, usergroup_id: int, cohort: BBUCohort):
+    """Grant cohort members access to the cohort's community (where the weekly
+    prompts post) by linking the community to the access usergroup — same
+    UserGroupResource mechanism community-gating uses."""
+    if not cohort.community_id:
+        return
+    from src.db.communities.communities import Community
+    comm = (await db.execute(select(Community).where(
+        Community.id == cohort.community_id))).scalars().first()
+    if comm and getattr(comm, "community_uuid", ""):
+        await _link_resource(db, usergroup_id, cohort.org_id, comm.community_uuid)
 
 
 async def _in_group(db: AsyncSession, usergroup_id: int, user_id: int) -> bool:

@@ -231,6 +231,11 @@ async def cohorts_update(cid: int, request: Request, db_session: AsyncSession = 
     c.updated_at = _now()
     db_session.add(c)
     await db_session.commit()
+    # re-ensure the access group (links course + community) so edits self-heal
+    try:
+        await cohort_svc.ensure_usergroup(db_session, c)
+    except Exception:
+        pass
     return res
 
 
