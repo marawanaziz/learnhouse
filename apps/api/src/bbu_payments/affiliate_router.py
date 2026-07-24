@@ -364,6 +364,27 @@ async def admin_create(request: Request, db_session: AsyncSession = Depends(get_
     return {"ok": True, "id": a.id, "ref_code": a.ref_code}
 
 
+@router.post("/admin/set-status")
+async def admin_set_status(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Change an affiliate's status (active | suspended) or delete them."""
+    body = await request.json()
+    await authorize_admin(request, db_session, body.get("key", ""))
+    a = (await db_session.execute(select(BBUAffiliate).where(
+        BBUAffiliate.id == int(body.get("id", 0))))).scalars().first()
+    if not a:
+        raise HTTPException(404, "Affiliate not found")
+    if body.get("delete"):
+        await db_session.delete(a)
+        await db_session.commit()
+        return {"ok": True, "deleted": a.id}
+    st = (body.get("status") or "").strip()
+    if st in ("active", "suspended", "pending", "onboarding"):
+        a.status = st
+        db_session.add(a)
+        await db_session.commit()
+    return {"ok": True, "status": a.status}
+
+
 @router.post("/admin/settings")
 async def update_settings(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     body = await request.json()

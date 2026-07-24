@@ -118,7 +118,10 @@ async function openDetail(id){
     '<div style="position:sticky;top:0;background:#fff;border-bottom:1px solid #e2ebf2;padding:18px 22px;display:flex;justify-content:space-between;align-items:center">'
     +'<div><div style="font-size:1.3rem;font-weight:700;color:#113d5d;font-family:Playfair Display,serif">'+esc(d.name||d.email)+'</div>'
     +'<div style="color:#6b6f79;font-size:.85rem">'+esc(d.email)+' · '+esc(d.ref_code)+' · '+esc(d.status)+' · '+d.rate+'%</div></div>'
-    +'<button style="'+MINI+'" onclick="document.getElementById(\'detail\').style.display=\'none\'">Close</button></div>'
+    +'<div style="display:flex;gap:6px">'
+    +'<button style="'+MINI+'" onclick="setAff('+id+',\''+(d.status==='suspended'?'active':'suspended')+'\')">'+(d.status==='suspended'?'Reactivate':'Suspend')+'</button>'
+    +'<button style="border:1px solid #f0c9c9;background:#fdf3f3;color:#a12a2a;border-radius:999px;padding:5px 11px;font-size:.76rem;cursor:pointer;font-family:League Spartan;font-weight:700" onclick="delAff('+id+')">Remove</button>'
+    +'<button style="'+MINI+'" onclick="document.getElementById(\'detail\').style.display=\'none\'">Close</button></div></div>'
     +'<div style="padding:20px 22px">'
     +'<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">'
     +'<div style="'+STAT+'"><div style="font-size:.7rem;color:#6b6f79;text-transform:uppercase">Clicks</div><div style="font-size:1.4rem;font-weight:700;color:#113d5d">'+d.clicks+'</div></div>'
@@ -132,6 +135,8 @@ async function openDetail(id){
     +'</div>';
   document.getElementById('detail').style.display='flex';
 }
+async function setAff(id,status){var d=await post('__BASE__/api/v1/bbu/affiliate/admin/set-status',{id:id,status:status});if(d.ok){location.reload()}else{alert(d.detail||'Error')}}
+async function delAff(id){if(!confirm('Remove this affiliate? Their referral link will stop working. This cannot be undone.'))return;var d=await post('__BASE__/api/v1/bbu/affiliate/admin/set-status',{id:id,delete:true});if(d.ok){document.getElementById('detail').style.display='none';location.reload()}else{alert(d.detail||'Error')}}
 document.getElementById('addaff').onclick=async function(){var name=document.getElementById('na-name').value;var email=document.getElementById('na-email').value;if(!email){alert('Email required');return}var d=await post('__BASE__/api/v1/bbu/affiliate/admin/create',{name:name,email:email});if(d.ok){alert('Added. Referral code: '+d.ref_code);location.reload()}else{alert(d.detail||'Error')}};
 """
     return js.replace("__BASE__", base)
