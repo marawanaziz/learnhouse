@@ -98,6 +98,49 @@ async def quiz_submit(request: Request, db_session: AsyncSession = Depends(get_d
     return {"ok": True, "score": score, "passed": passed}
 
 
+# ------------------------------------------------------ quiz-block scan (scope)
+def _walk_quiz_blocks(node, out):
+    """Recursively collect blockQuiz nodes from a Tiptap doc."""
+    if isinstance(node, dict):
+        if node.get("type") == "blockQuiz":
+            out.append(node)
+        for v in node.values():
+            _walk_quiz_blocks(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_quiz_blocks(v, out)
+
+
+@router.get("/_quiz-scan")
+async def quiz_scan(request: Request, db_session: AsyncSession = Depends(get_db_session),
+                    user=Depends(get_current_user)):
+    """Read-only: count inline quiz blocks + questions per course. Scopes the
+    quiz->assignment migration (how many activities/blocks/questions exist)."""
+    await _guard(request, db_session, user)
+    courses = (await db_session.execute(select(Course).where(Course.org_id == ORG))).scalars().all()
+    per_course, tot_act, tot_blocks, tot_q = [], 0, 0, 0
+    for c in courses:
+        acts = (await db_session.execute(select(Activity).where(Activity.course_id == c.id))).scalars().all()
+        c_act = c_blocks = c_q = 0
+        for a in acts:
+            blocks = []
+            _walk_quiz_blocks(a.content or {}, blocks)
+            if blocks:
+                c_act += 1
+                c_blocks += len(blocks)
+                for b in blocks:
+                    c_q += len((b.get("attrs") or {}).get("questions") or [])
+        if c_blocks:
+            per_course.append({"course_id": c.id, "course": c.name,
+                               "activities_with_quiz": c_act, "quiz_blocks": c_blocks, "questions": c_q})
+            tot_act += c_act
+            tot_blocks += c_blocks
+            tot_q += c_q
+    per_course.sort(key=lambda x: -x["quiz_blocks"])
+    return {"courses_with_quiz": len(per_course), "total_activities_with_quiz": tot_act,
+            "total_quiz_blocks": tot_blocks, "total_questions": tot_q, "per_course": per_course}
+
+
 # ---------------------------------------------------------------- roster list
 @router.get("")
 async def people_list(request: Request, q: str = "", limit: int = 25, offset: int = 0,
