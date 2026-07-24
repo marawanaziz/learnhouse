@@ -294,6 +294,119 @@ async def delete_credential(credential_id: int, request: Request,
     return {"deleted": credential_id}
 
 
+# Accredible credential tiers -> (credential_type, tier). Anything not listed and
+# not in CEU_GROUPS is ignored so an unexpected tier never silently mis-issues.
+ACCREDIBLE_GROUPS = {
+    "Provisional 1 Year Certified Postpartum Doula": ("postpartum", "provisional"),
+    "Certified Postpartum Doula": ("postpartum", "full"),
+    "Provisional 1 Year Certified Labor Doula": ("birth", "provisional"),
+    "Certified Labor Doula": ("birth", "full"),
+}
+ACCREDIBLE_CEU_GROUPS = {
+    "Breastfeeding for Perinatal Professionals": 3,
+    "Newborn Care for Perinatal Professionals": 3,
+    "Comfort Measures for Perinatal Professionals": 3,
+}
+
+
+@router.post("/import-accredible")
+async def import_accredible(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Backfill real credentials from an Accredible export so migrated doulas keep
+    their TRUE issue/expiry dates (the platform's own clock would otherwise restart
+    everyone). Body: {items:[{email,name,group_name,issued_on,expired_on}], dry_run?}.
+
+    Per person+type we keep the strongest record (full beats provisional) and use
+    its real dates; 'for Perinatal Professionals' rows become CEU ledger entries.
+    Idempotent: re-running updates in place and never double-counts CEUs."""
+    b = await request.json()
+    _check(request)
+    org_id = int(b.get("org_id", 1))
+    dry = bool(b.get("dry_run", True))
+    items = b.get("items") or []
+
+    # 1) collapse to the strongest credential per (email, credential_type)
+    best: dict = {}
+    ceu_rows, skipped_groups = [], {}
+    for it in items:
+        email = (it.get("email") or "").strip().lower()
+        grp = (it.get("group_name") or "").strip()
+        if not email:
+            continue
+        if grp in ACCREDIBLE_CEU_GROUPS:
+            ceu_rows.append((email, grp, it))
+            continue
+        mapped = ACCREDIBLE_GROUPS.get(grp)
+        if not mapped:
+            skipped_groups[grp] = skipped_groups.get(grp, 0) + 1
+            continue
+        ctype, tier = mapped
+        key = (email, ctype)
+        cur = best.get(key)
+        # full outranks provisional; within a tier keep the most recently issued
+        rank = 1 if tier == "full" else 0
+        if not cur or rank > cur["rank"] or (rank == cur["rank"] and
+                                             (it.get("issued_on") or "") > (cur["it"].get("issued_on") or "")):
+            best[key] = {"rank": rank, "tier": tier, "ctype": ctype, "it": it}
+
+    created = updated = unmatched = ceu_awarded = 0
+    unmatched_emails = []
+    for (email, ctype), rec in best.items():
+        user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            unmatched += 1
+            if len(unmatched_emails) < 25:
+                unmatched_emails.append(email)
+            continue
+        if dry:
+            continue
+        it, tier = rec["it"], rec["tier"]
+        issued, expires = (it.get("issued_on") or ""), (it.get("expired_on") or "")
+        cred = (await db_session.execute(select(BBUCredential).where(
+            BBUCredential.org_id == org_id, BBUCredential.user_id == user.id,
+            BBUCredential.credential_type == ctype))).scalars().first()
+        if not cred:
+            cred = BBUCredential(org_id=org_id, user_id=user.id, credential_type=ctype)
+            created += 1
+        else:
+            updated += 1
+        cred.issued_at = issued
+        cred.source = "accredible"
+        cred.source_ref = str(it.get("id") or "")
+        if tier == "full":
+            cred.status = "full"
+            cred.full_effective_at = issued
+            cred.full_expires_at = expires
+            cred.provisional_expires_at = ""
+        else:
+            cred.status = "provisional"
+            cred.provisional_expires_at = expires
+            cred.full_effective_at = ""
+            cred.full_expires_at = ""
+        cred.updated_at = svc._now()
+        db_session.add(cred)
+
+    # 2) CEU-bearing professional courses -> ledger (idempotent per accredible id)
+    for email, grp, it in ceu_rows:
+        user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            continue
+        if dry:
+            ceu_awarded += 1
+            continue
+        await svc.award_ceu(db_session, org_id, user.id, ACCREDIBLE_CEU_GROUPS[grp],
+                            source="course", source_ref=f"accredible:{it.get('id')}")
+        ceu_awarded += 1
+
+    if not dry:
+        await db_session.commit()
+    return {"dry_run": dry, "input_rows": len(items),
+            "people_with_credentials": len(best),
+            "created": created, "updated": updated,
+            "unmatched_users": unmatched, "unmatched_sample": unmatched_emails,
+            "ceu_rows": len(ceu_rows), "ceu_awarded": ceu_awarded,
+            "skipped_groups": skipped_groups}
+
+
 @router.post("/run-reminders")
 async def run_reminders(request: Request, org_id: int = 1,
                         db_session: AsyncSession = Depends(get_db_session)):
