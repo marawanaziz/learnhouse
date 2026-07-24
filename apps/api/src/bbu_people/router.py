@@ -18,7 +18,7 @@ from src.db.trail_runs import TrailRun
 from src.db.trail_steps import TrailStep
 from src.db.courses.courses import Course
 from src.db.courses.activities import Activity
-from src.db.courses.certifications import CertificateUser
+from src.db.courses.certifications import CertificateUser, Certifications
 from src.bbu_payments.models import BBUOrder
 from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
@@ -139,8 +139,13 @@ async def profile(user_id: int, request: Request,
             Activity.course_id == r.course_id, Activity.published == True))).scalar() or 0  # noqa: E712
         done = (await db_session.execute(select(func.count()).select_from(TrailStep).where(
             TrailStep.trailrun_id == r.id, TrailStep.complete == True))).scalar() or 0  # noqa: E712
-        cert = (await db_session.execute(select(CertificateUser).where(
-            CertificateUser.user_id == user_id, CertificateUser.course_id == r.course_id))).scalars().first()
+        cert_ids = (await db_session.execute(select(Certifications.id).where(
+            Certifications.course_id == r.course_id))).scalars().all()
+        cert = None
+        if cert_ids:
+            cert = (await db_session.execute(select(CertificateUser).where(
+                CertificateUser.user_id == user_id,
+                CertificateUser.certification_id.in_(list(cert_ids))))).scalars().first()
         enrollments.append({
             "course": (course.name if course else f"course {r.course_id}"),
             "course_uuid": (course.course_uuid if course else ""),
@@ -169,9 +174,13 @@ async def profile(user_id: int, request: Request,
         CertificateUser.user_id == user_id))).scalars().all()
     certificates = []
     for c in cert_rows:
-        course = (await db_session.execute(select(Course).where(Course.id == c.course_id))).scalars().first()
-        certificates.append({"course": (course.name if course else f"course {c.course_id}"),
-                             "issued": (getattr(c, "creation_date", "") or "")[:10]})
+        cdef = (await db_session.execute(select(Certifications).where(
+            Certifications.id == c.certification_id))).scalars().first()
+        course = None
+        if cdef:
+            course = (await db_session.execute(select(Course).where(Course.id == cdef.course_id))).scalars().first()
+        certificates.append({"course": (course.name if course else "Certificate"),
+                             "issued": (getattr(c, "created_at", "") or "")[:10]})
 
     # --- credentials + CEU ---
     creds = (await db_session.execute(select(BBUCredential).where(
@@ -180,7 +189,7 @@ async def profile(user_id: int, request: Request,
         BBUCeuLedger.org_id == ORG, BBUCeuLedger.user_id == user_id, BBUCeuLedger.approved == True))).scalar() or 0  # noqa: E712
     credentials = [{
         "type": c.credential_type, "status": c.status,
-        "issued": (c.full_effective_at or c.issued_at or "")[:10] if hasattr(c, "issued_at") else (c.full_effective_at or "")[:10],
+        "issued": (c.full_effective_at or c.issued_at or "")[:10],
         "expires": (c.full_expires_at or c.provisional_expires_at or "")[:10],
     } for c in creds]
 
