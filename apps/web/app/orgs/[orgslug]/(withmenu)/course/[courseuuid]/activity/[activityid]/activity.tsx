@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { getUriWithOrg } from '@services/config/config'
+import { getUriWithOrg, getAPIUrl } from '@services/config/config'
 import { BookOpenCheck, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, UserRoundPen, Edit2, Maximize2, Minimize2, Trophy, Sparkles, XCircle, Lock, RotateCcw, Infinity as InfinityIcon } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { markActivityAsComplete, unmarkActivityAsComplete } from '@services/courses/activity'
@@ -346,6 +346,14 @@ function ActivityClient(props: ActivityClientProps) {
   const [videoWatched, setVideoWatched] = React.useState(false);
   const [hasGatedQuiz, setHasGatedQuiz] = React.useState(false);
   const [quizPassed, setQuizPassed] = React.useState(false);
+  // keep the latest auth/course context for the quiz-submit POST (avoids stale closure)
+  const quizSubmitCtx = React.useRef<any>({});
+  quizSubmitCtx.current = {
+    token: access_token,
+    course_uuid: course?.course_uuid,
+    activity_uuid: activity?.activity_uuid,
+    activity_name: activity?.name,
+  };
   React.useEffect(() => {
     // reset per activity
     setHasGatedVideo(false);
@@ -356,15 +364,36 @@ function ActivityClient(props: ActivityClientProps) {
     const onVideoWatched = () => setVideoWatched(true);
     const onQuizPresent = () => setHasGatedQuiz(true);
     const onQuizPassed = () => setQuizPassed(true);
+    // BBU: persist the quiz attempt (answers + score) for customer profiles.
+    const onQuizSubmitted = (e: any) => {
+      const d = (e && e.detail) || {};
+      const ctx = quizSubmitCtx.current || {};
+      try {
+        fetch(`${getAPIUrl()}bbu/people/quiz-submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(ctx.token ? { Authorization: `Bearer ${ctx.token}` } : {}) },
+          credentials: 'include',
+          body: JSON.stringify({
+            activity_uuid: d.activity_uuid || ctx.activity_uuid || '',
+            course_uuid: ctx.course_uuid || '',
+            activity_name: ctx.activity_name || '',
+            questions: d.questions || [],
+            user_answers: d.user_answers || [],
+          }),
+        }).catch(() => { /* fail-soft */ });
+      } catch { /* noop */ }
+    };
     window.addEventListener('bbu:video-present', onVideoPresent);
     window.addEventListener('bbu:video-watched', onVideoWatched);
     window.addEventListener('bbu:quiz-present', onQuizPresent);
     window.addEventListener('bbu:quiz-passed', onQuizPassed);
+    window.addEventListener('bbu:quiz-submitted', onQuizSubmitted);
     return () => {
       window.removeEventListener('bbu:video-present', onVideoPresent);
       window.removeEventListener('bbu:video-watched', onVideoWatched);
       window.removeEventListener('bbu:quiz-present', onQuizPresent);
       window.removeEventListener('bbu:quiz-passed', onQuizPassed);
+      window.removeEventListener('bbu:quiz-submitted', onQuizSubmitted);
     };
   }, [activityid]);
   // On no-skip courses, block "mark complete" until any gated video is watched

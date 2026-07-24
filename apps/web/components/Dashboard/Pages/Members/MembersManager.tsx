@@ -5,6 +5,7 @@ import { useLHSession } from '@components/Contexts/LHSessionContext'
 import { getAPIUrl } from '@services/config/config'
 import { apiFetch } from '@services/utils/ts/requests'
 import { getUserAvatarMediaDirectory } from '@services/media/media'
+import MemberProfile from './MemberProfile'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createUserGroup, deleteUserGroup,
@@ -37,6 +38,7 @@ function MembersManager() {
   // the list; hide them by default so human cohorts/tiers stand out.
   const [showAccess, setShowAccess] = useState(false)
   const [courseModal, setCourseModal] = useState(false)
+  const [profileUserId, setProfileUserId] = useState<number | null>(null)
 
   const orgId = org?.id
   const enabled = !!orgId && !!token
@@ -290,7 +292,9 @@ function MembersManager() {
                           <div className="w-7 h-7 rounded-full bg-gray-200 overflow-hidden shrink-0 flex items-center justify-center text-[10px] text-gray-500">
                             {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : (u.first_name?.[0] || u.username?.[0] || '?')}
                           </div>
-                          <span className="font-medium text-gray-800">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}</span>
+                          <button onClick={() => setProfileUserId(u.id)} className="font-medium text-gray-800 hover:text-indigo-600 hover:underline text-left">
+                            {[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}
+                          </button>
                         </div>
                       </td>
                       <td className="px-3 py-2 text-gray-500">{u.email}</td>
@@ -352,6 +356,10 @@ function MembersManager() {
             </div>
           </div>
         </div>
+      )}
+
+      {profileUserId && (
+        <MemberProfile userId={profileUserId} onClose={() => setProfileUserId(null)} />
       )}
     </div>
   )

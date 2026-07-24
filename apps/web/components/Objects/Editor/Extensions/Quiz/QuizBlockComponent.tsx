@@ -106,6 +106,16 @@ function QuizBlockComponent(props: any) {
     });
 
     setSubmissionMessage(correctAnswers ? 'correct' : 'incorrect');
+
+    // BBU: persist the attempt (answers + score) so it shows in customer
+    // profiles. The activity page (which holds the auth session) does the POST.
+    if (!isEditable) {
+      try {
+        window.dispatchEvent(new CustomEvent('bbu:quiz-submitted', {
+          detail: { activity_uuid: activityUuid, questions, user_answers: userAnswers },
+        }))
+      } catch { /* noop */ }
+    }
   }
 
   const getAnswerID = (answerIndex: number, _questionId: string) => {
