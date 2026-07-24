@@ -12,7 +12,7 @@ from sqlalchemy import select, func, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
-from src.security.auth import get_current_user
+from src.security.auth import get_current_user, resolve_acting_user_id
 from src.security.org_auth import is_org_admin
 from src.db.users import User, AnonymousUser
 from src.db.user_organizations import UserOrganization
@@ -43,7 +43,7 @@ async def _guard(request: Request, db: AsyncSession, user):
     if ADMIN_KEY and key == ADMIN_KEY:
         return
     if user and not isinstance(user, AnonymousUser):
-        uid = getattr(user, "id", 0) or 0
+        uid = resolve_acting_user_id(user)
         if uid and await is_org_admin(uid, ORG, db):
             return
     raise HTTPException(403, "Forbidden")
@@ -59,7 +59,7 @@ async def quiz_submit(request: Request, db_session: AsyncSession = Depends(get_d
                       user=Depends(get_current_user)):
     """Persist a learner's quiz attempt (answers + score). Called by the reader
     when a quiz is submitted. Recomputes correctness server-side from the payload."""
-    uid = getattr(user, "id", 0)
+    uid = resolve_acting_user_id(user) if user and not isinstance(user, AnonymousUser) else 0
     if not uid:
         raise HTTPException(401, "Sign in required")
     b = await request.json()
