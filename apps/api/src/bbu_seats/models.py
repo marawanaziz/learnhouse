@@ -24,6 +24,8 @@ class BBUSeatCode(SQLModel, table=True):
     product_id: Optional[int] = Field(default=None)
     # who bought the pack (agency owner) — for reporting; not required to redeem
     owner_email: str = Field(default="", sa_column=Column(String(320), index=True))
+    # magic-link key for the owner's self-serve portal (shared across a batch)
+    owner_token: str = Field(default="", sa_column=Column(String(64), index=True))
     status: str = Field(default="unused", sa_column=Column(String(12)))  # unused|redeemed|void
     redeemed_by_user_id: Optional[int] = Field(default=None)
     redeemed_by_email: str = Field(default="", sa_column=Column(String(320)))

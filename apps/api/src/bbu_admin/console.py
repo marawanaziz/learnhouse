@@ -422,6 +422,7 @@ async def offers_list(request: Request, db_session: AsyncSession = Depends(get_d
         "bump_ids": [int(x) for x in (p.bump_offer_ids or "").split(",") if x.strip().isdigit()],
         "cohort_program": p.cohort_program or "",
         "cohort_id": p.cohort_id,
+        "seat_count": int(getattr(p, "seat_count", 0) or 0),
     } for p in rows]
 
 
@@ -446,6 +447,8 @@ async def offers_merch(pid: int, request: Request, db_session: AsyncSession = De
         p.cohort_id = int(cid) if str(cid or "").isdigit() and int(cid) > 0 else None
     if "public" in b:
         p.public = bool(b.get("public"))
+    if "seat_count" in b:
+        p.seat_count = max(0, int(b.get("seat_count") or 0))
     db_session.add(p)
     await db_session.commit()
     return {"ok": True}
@@ -582,7 +585,7 @@ button.ghost{{background:#e7eef5;color:var(--navy)}}
   <div class="panel" id=p-store>
     <div class=card><h2>Store merchandising</h2>
       <p class=muted style="margin-top:-.6rem">Set each offer's category (store bucket), order-bump add-ons, and — for mentorship offers — the cohort a purchase enrolls into. Changes are live immediately.</p>
-      <table id=t-store><thead><tr><th>Offer</th><th>Price</th><th>Listed</th><th>Category</th><th>Order-bump add-ons</th><th>Cohort enroll</th></tr></thead><tbody></tbody></table>
+      <table id=t-store><thead><tr><th>Offer</th><th>Price</th><th>Listed</th><th>Category</th><th>Seats/pack</th><th>Order-bump add-ons</th><th>Cohort enroll</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 </div>
@@ -616,9 +619,11 @@ function renderStore(){{
     const bumps=STORE.filter(x=>x.id!==o.id).map(x=>`<label style="display:block;font-size:.78rem"><input type=checkbox ${{o.bump_ids.includes(x.id)?'checked':''}} onchange="toggleBump(${{o.id}},${{x.id}},this.checked)"> ${{esc(x.name)}} ($${{x.price}})</label>`).join('');
     const n=o.bump_ids.length;
     const listed=`<label style="cursor:pointer"><input type=checkbox ${{o.public?'checked':''}} onchange="saveListed(${{o.id}},this.checked)"> ${{o.public?'live':'hidden'}}</label>`;
+    const seats=`<input type=number min=0 value="${{o.seat_count||0}}" title="0 = not a seat pack; N = buying it mints N shareable seats" style="width:56px" onchange="saveSeats(${{o.id}},this.value)">`;
     return `<tr><td><b>${{esc(o.name)}}</b></td><td>$${{o.price}}</td>`
       +`<td>${{listed}}</td>`
       +`<td><select onchange="saveCat(${{o.id}},this.value)">${{opts}}</select></td>`
+      +`<td>${{seats}}</td>`
       +`<td><details><summary style="cursor:pointer;color:#3a91c6">${{n?n+' add-on'+(n>1?'s':''):'none'}}</summary><div style="max-height:150px;overflow:auto;padding:.3rem 0">${{bumps}}</div></details></td>`
       +`<td>${{cohortSel(o)}}</td></tr>`;
   }}).join('');
@@ -636,6 +641,8 @@ function saveCohort(id,val){{
 }}
 function saveListed(id,on){{const o=STORE.find(x=>x.id===id);if(o)o.public=on;
   j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{public:on}})}}).then(()=>renderStore());}}
+function saveSeats(id,val){{const o=STORE.find(x=>x.id===id);if(o)o.seat_count=+val||0;
+  j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{seat_count:+val||0}})}});}}
 function saveCat(id,cat){{j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{category:cat}})}})}}
 function toggleBump(id,bumpId,on){{
   const o=STORE.find(x=>x.id===id); if(!o)return;

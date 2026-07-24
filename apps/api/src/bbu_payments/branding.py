@@ -197,6 +197,17 @@ def success_page(order, base):
         status_line = "Your enrollment is confirmed." if paid \
             else "Payment received — finalizing your enrollment."
         cta = f"<a class='btn' href='{base}/courses'>Go to my courses →</a>"
+    # Reseller/bulk pack: link the buyer straight to their self-serve seat portal.
+    seat_token = ((getattr(order, "extra", None) or {}).get("seat_owner_token")) if order else None
+    if seat_token:
+        seats = (getattr(order, "extra", None) or {}).get("seat_count", "")
+        headline = "Your seats are ready!"
+        status_line = (f"You've got {seats} seats to share with your team."
+                       if seats else "Share access with your team below.")
+        cta = (f"<a class='btn' href='{base}/api/v1/bbu/seats/portal?token={seat_token}'>"
+               f"Manage &amp; share your seats →</a>"
+               f"<p style='margin-top:12px;color:#6b6f79;font-size:.85rem'>"
+               f"Bookmark this — it's your private link to view and share seats anytime.</p>")
     inner = (
         f"<div class='checkout' style='text-align:center'>"
         f"<div style='font-size:3rem'>{'📘' if is_ebook else '🎉'}</div>"

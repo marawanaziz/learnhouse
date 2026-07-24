@@ -87,22 +87,14 @@ async def generate(request: Request, db_session: AsyncSession = Depends(get_db_s
         course_uuids = [u for u in (p.course_uuids or "").split(",") if u]
     if not course_uuids:
         raise HTTPException(400, "course_uuids or a product_id with courses required")
-    label = b.get("batch_label") or f"batch-{_now()[:10]}"
-    codes = []
-    for _ in range(count):
-        code = _gen_code()
-        while (await db_session.execute(select(BBUSeatCode).where(
-                BBUSeatCode.code == code))).scalars().first():
-            code = _gen_code()
-        row = BBUSeatCode(org_id=org_id, code=code, batch_label=label,
-                          course_uuids=",".join(course_uuids), product_id=product_id,
-                          owner_email=(b.get("owner_email") or "").strip().lower(),
-                          status="unused", created_at=_now())
-        db_session.add(row)
-        codes.append(code)
-    await db_session.commit()
-    return {"batch_label": label, "count": len(codes), "course_uuids": course_uuids,
-            "codes": codes}
+    from src.bbu_seats import service as _seat_svc
+    r = await _seat_svc.generate_batch(
+        db_session, org_id, count, course_uuids,
+        owner_email=(b.get("owner_email") or ""), product_id=product_id,
+        batch_label=b.get("batch_label") or "")
+    portal_url = f"{str(request.base_url).rstrip('/')}/api/v1/bbu/seats/portal?token={r['owner_token']}"
+    return {"batch_label": r["batch_label"], "count": r["count"], "course_uuids": course_uuids,
+            "codes": r["codes"], "owner_token": r["owner_token"], "portal_url": portal_url}
 
 
 @router.get("/batches")
@@ -191,3 +183,120 @@ async def redeem(request: Request, db_session: AsyncSession = Depends(get_db_ses
     await db_session.commit()
     return {"redeemed": True, "granted_courses": len(course_uuids),
             "email": target.email}
+
+
+# ===========================================================================
+# Self-serve: owner portal + recipient redeem page (branded HTML)
+# ===========================================================================
+from fastapi.responses import HTMLResponse  # noqa: E402
+from src.bbu_payments.branding import _shell  # noqa: E402
+from src.bbu_seats import service as seat_svc  # noqa: E402
+
+
+def _base(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+@router.get("/portal", response_class=HTMLResponse)
+async def owner_portal(request: Request, token: str = "", db_session: AsyncSession = Depends(get_db_session)):
+    """Self-serve owner portal (magic link). Shows the buyer their seats and
+    lets them copy/share each redeem link — no admin, no login required."""
+    rows = await seat_svc.owner_seats(db_session, token.strip())
+    if not rows:
+        return HTMLResponse(_shell("Your Seats", "<div class='checkout'><h1>Seats not found</h1>"
+                                   "<p style='color:#4a5b68'>This link looks invalid or expired. "
+                                   "Check the link in your purchase confirmation, or contact support.</p></div>"))
+    base = _base(request)
+    total = len(rows)
+    used = sum(1 for r in rows if r.status == "redeemed")
+    unused = sum(1 for r in rows if r.status == "unused")
+    def share(code):
+        return f"{base}/api/v1/bbu/seats/redeem-page?code={code}"
+    items = []
+    for r in rows:
+        if r.status == "redeemed":
+            items.append(f"<div class='seat done'><b>{r.code}</b>"
+                         f"<span class='who'>Redeemed by {r.redeemed_by_email or '—'}</span></div>")
+        elif r.status == "void":
+            items.append(f"<div class='seat void'><b>{r.code}</b><span class='who'>Void</span></div>")
+        else:
+            link = share(r.code)
+            items.append(
+                f"<div class='seat'><b>{r.code}</b>"
+                f"<div class='acts'>"
+                f"<button class='mini' onclick=\"cp('{r.code}',this)\">Copy code</button>"
+                f"<button class='mini' onclick=\"cp('{link}',this)\">Copy share link</button>"
+                f"</div></div>")
+    share_links = "\\n".join(share(r.code) for r in rows if r.status == "unused")
+    inner = (
+        f"<div class='checkout' style='max-width:640px'>"
+        f"<span class='eyebrow'>Your seats</span>"
+        f"<h1 style='font-size:2rem;margin:10px 0'>Share access with your team</h1>"
+        f"<p style='color:#4a5b68'>You have <b>{total}</b> seat{'s' if total != 1 else ''} — "
+        f"<b>{unused}</b> available, <b>{used}</b> redeemed. Send each person their own "
+        f"share link; they sign in and their access is granted automatically.</p>"
+        f"<div style='height:8px'></div>"
+        + (f"<button class='btn' style='width:100%' onclick=\"cp(`{share_links}`,this)\">Copy all {unused} share links</button>" if unused else "")
+        + f"<div style='height:14px'></div>"
+        f"<div class='seats'>{''.join(items)}</div>"
+        f"</div>"
+        f"<style>"
+        f".seats{{display:flex;flex-direction:column;gap:8px}}"
+        f".seat{{display:flex;justify-content:space-between;align-items:center;gap:10px;"
+        f"padding:12px 14px;border:1px solid #e2ebf2;border-radius:12px;background:#fff}}"
+        f".seat b{{font-family:monospace;letter-spacing:.5px}}"
+        f".seat.done{{opacity:.6}} .seat.void{{opacity:.45;text-decoration:line-through}}"
+        f".seat .who{{font-size:.8rem;color:#6b7f8d}}"
+        f".acts{{display:flex;gap:6px}}"
+        f".mini{{border:1px solid #cfe0ec;background:#f4f9fd;color:#113d5d;border-radius:999px;"
+        f"padding:6px 12px;font-size:.78rem;cursor:pointer}}"
+        f"</style>"
+        f"<script>function cp(t,b){{navigator.clipboard.writeText(t).then(()=>{{"
+        f"const o=b.textContent;b.textContent='Copied ✓';setTimeout(()=>b.textContent=o,1200);}});}}</script>"
+    )
+    return HTMLResponse(_shell("Your Seats", inner))
+
+
+@router.get("/redeem-page", response_class=HTMLResponse)
+async def redeem_page(request: Request, code: str = "", db_session: AsyncSession = Depends(get_db_session)):
+    """Recipient landing page for a shared seat link: sign in + one-click redeem."""
+    code = (code or "").strip().upper()
+    row = (await db_session.execute(select(BBUSeatCode).where(BBUSeatCode.code == code))).scalars().first()
+    base = _base(request)
+    if not row:
+        body = "<h1>Invalid link</h1><p style='color:#4a5b68'>This access code wasn't found.</p>"
+        return HTMLResponse(_shell("Redeem access", f"<div class='checkout'>{body}</div>"))
+    if row.status == "redeemed":
+        body = "<h1>Already redeemed</h1><p style='color:#4a5b68'>This code has already been used.</p>"
+        return HTMLResponse(_shell("Redeem access", f"<div class='checkout'>{body}</div>"))
+    n = len([u for u in (row.course_uuids or '').split(',') if u])
+    inner = (
+        f"<div class='checkout'>"
+        f"<span class='eyebrow'>You've been given access</span>"
+        f"<h1 style='font-size:2rem;margin:10px 0'>Redeem your BBU training</h1>"
+        f"<p style='color:#4a5b68'>This link unlocks <b>{n} training{'s' if n != 1 else ''}</b>. "
+        f"Sign in to your Birth &amp; Baby University account, then tap redeem — access is added instantly.</p>"
+        f"<div style='height:16px'></div>"
+        f"<button class='btn' style='width:100%' id='go'>Redeem now →</button>"
+        f"<div class='methods' id='msg'></div>"
+        f"</div>"
+        f"<script>"
+        f"const go=document.getElementById('go');"
+        f"go.onclick=async()=>{{go.textContent='Redeeming…';go.disabled=true;"
+        f"const r=await fetch('{base}/api/v1/bbu/seats/redeem',{{method:'POST',"
+        f"headers:{{'Content-Type':'application/json'}},credentials:'include',"
+        f"body:JSON.stringify({{code:'{code}'}})}});"
+        f"if(r.ok){{document.querySelector('.checkout').innerHTML="
+        f"\"<div style='text-align:center'><div style='font-size:3rem'>🎉</div>"
+        f"<h1 style='font-size:1.8rem;margin:12px 0'>You're in!</h1>"
+        f"<p style='color:#4a5b68'>Your training has been added.</p>"
+        f"<div style='height:16px'></div><a class='btn' href='{base}/'>Go to my courses →</a></div>\";}}"
+        f"else if(r.status===401){{document.getElementById('msg').innerHTML="
+        f"\"Please <a href='{base}/login?next='+encodeURIComponent(location.href)+\">sign in</a> first, then reopen this link.\";"
+        f"go.textContent='Sign in to redeem';go.disabled=false;}}"
+        f"else{{const d=await r.json().catch(()=>({{}}));go.textContent='Try again';go.disabled=false;"
+        f"document.getElementById('msg').textContent=(d.detail||'Could not redeem.');}}"
+        f"}};"
+        f"</script>"
+    )
+    return HTMLResponse(_shell("Redeem access", inner))

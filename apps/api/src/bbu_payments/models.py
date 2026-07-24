@@ -39,6 +39,10 @@ class BBUProduct(SQLModel, table=True):
     # specific cohort_id pins the purchase to one dated cohort ("September 2026").
     cohort_program: str = Field(default="", sa_column=Column(String(24)))
     cohort_id: Optional[int] = Field(default=None)
+    # reseller/bulk pack: buying this product auto-generates N single-use seat
+    # codes for the buyer (the agency owner), who gets a self-serve portal to
+    # view/share/redeem them. 0 = not a seat pack.
+    seat_count: int = Field(default=0)
 
 
 class BBUOrder(SQLModel, table=True):

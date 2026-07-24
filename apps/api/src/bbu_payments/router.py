@@ -412,6 +412,34 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     except Exception:
         import traceback
         print(f"[BBU] cohort enroll failed for order {order.id}:\n{traceback.format_exc()[-600:]}", flush=True)
+    # Reseller/bulk pack: auto-generate the buyer's seat codes + an owner-portal
+    # token so the agency owner can self-serve (view/share/redeem). Idempotent —
+    # keyed on batch_label order-{id}; a re-delivered webhook won't double-mint.
+    try:
+        if prod and int(getattr(prod, "seat_count", 0) or 0) > 0:
+            from src.bbu_seats.models import BBUSeatCode
+            from src.bbu_seats import service as seat_svc
+            label = f"order-{order.id}"
+            exists = (await db_session.execute(select(BBUSeatCode).where(
+                BBUSeatCode.batch_label == label))).scalars().first()
+            if exists:
+                token = exists.owner_token
+            else:
+                cu = [u for u in (prod.course_uuids or "").split(",") if u]
+                r = await seat_svc.generate_batch(
+                    db_session, order.org_id, int(prod.seat_count), cu,
+                    owner_email=order.email, product_id=prod.id, batch_label=label)
+                token = r["owner_token"]
+            # stash the portal token on the order so the success page can link it
+            extra = dict(order.extra or {})
+            extra["seat_owner_token"] = token
+            extra["seat_count"] = int(prod.seat_count)
+            order.extra = extra
+            db_session.add(order)
+            await db_session.commit()
+    except Exception:
+        import traceback
+        print(f"[BBU] seat generation failed for order {order.id}:\n{traceback.format_exc()[-600:]}", flush=True)
     # Book the affiliate commission. Always attempted — it's idempotent (one
     # commission per order+event), so re-delivered webhooks / success re-hits
     # don't double-book, and a prior partial fulfill can still be completed.
