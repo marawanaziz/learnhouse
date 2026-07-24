@@ -824,6 +824,55 @@ async def community_thumbnails(request: Request, db_session: AsyncSession = Depe
     return {"set": set_count, "skipped": skipped, "errors": errors[:30], "error_count": len(errors)}
 
 
+@router.post("/populate-group")
+async def populate_group(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Add members to a usergroup so gating it doesn't lock everyone out. Body:
+    {group_name, source:"credentials"|"emails", emails?:[...], create?}. source
+    'credentials' adds everyone who holds a BBU credential (real professional
+    membership). Idempotent."""
+    from src.db.usergroups import UserGroup
+    from src.db.usergroup_user import UserGroupUser
+    from src.bbu_credentials.models import BBUCredential
+    body = await request.json()
+    _check(request, body)
+    org_id = 1
+    gname = (body.get("group_name") or "").strip()
+    source = body.get("source", "emails")
+    if not gname:
+        raise HTTPException(400, "group_name required")
+    grp = (await db_session.execute(select(UserGroup).where(
+        UserGroup.org_id == org_id, UserGroup.name == gname))).scalars().first()
+    if not grp:
+        if not body.get("create", True):
+            raise HTTPException(404, "group not found")
+        grp = UserGroup(org_id=org_id, name=gname, description=f"audience:{gname}",
+                        usergroup_uuid=f"usergroup_{uuid4()}", creation_date=_now(), update_date=_now())
+        db_session.add(grp); await db_session.commit(); await db_session.refresh(grp)
+
+    user_ids = set()
+    if source == "credentials":
+        uids = (await db_session.execute(select(BBUCredential.user_id).where(
+            BBUCredential.org_id == org_id))).scalars().all()
+        user_ids = {u for u in uids if u}
+    else:
+        emails = [e.strip().lower() for e in (body.get("emails") or []) if e]
+        if emails:
+            rows = (await db_session.execute(select(User).where(User.email.in_(emails)))).scalars().all()
+            user_ids = {u.id for u in rows}
+    existing = set((await db_session.execute(select(UserGroupUser.user_id).where(
+        UserGroupUser.usergroup_id == grp.id))).scalars().all())
+    added = 0
+    for uid in user_ids:
+        if uid in existing:
+            continue
+        db_session.add(UserGroupUser(usergroup_id=grp.id or 0, user_id=uid or 0,
+                                     org_id=org_id, creation_date=_now(), update_date=_now()))
+        added += 1
+    await db_session.commit()
+    return {"group": gname, "candidates": len(user_ids), "added": added,
+            "already_members": len(existing)}
+
+
 @router.post("/gate-communities")
 async def gate_communities(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Gate community access via usergroups (same mechanism as courses). Body:
