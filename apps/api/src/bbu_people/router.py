@@ -4,6 +4,7 @@
 - GET  /bbu/people             : admin — searchable roster with rollups.
 - GET  /bbu/people/{user_id}   : admin — full customer profile (the drill-down).
 """
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, HTTPException, Depends
@@ -12,7 +13,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
 from src.security.auth import get_current_user
-from src.db.users import User
+from src.security.org_auth import is_org_admin
+from src.db.users import User, AnonymousUser
 from src.db.user_organizations import UserOrganization
 from src.db.trail_runs import TrailRun
 from src.db.trail_steps import TrailStep
@@ -23,18 +25,28 @@ from src.bbu_payments.models import BBUOrder
 from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
 from src.bbu_people.models import BBUQuizSubmission
-from src.bbu_admin.auth import authorize_admin
 
 router = APIRouter()
 ORG = 1
+ADMIN_KEY = os.environ.get("BBU_MIGRATION_KEY") or os.environ.get("BBU_AFFILIATE_ADMIN_KEY", "")
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _admin(request: Request, db: AsyncSession, body: dict = None):
-    await authorize_admin(request, db, (body or {}).get("key", ""))
+async def _guard(request: Request, db: AsyncSession, user):
+    """Admin gate for people/profile reads. Accepts the BBU admin key (header or
+    query) OR an org-admin session — the injected `user` carries the bearer token
+    the dashboard sends (imperative get_current_user would miss it)."""
+    key = request.query_params.get("key") or request.headers.get("x-bbu-admin-key", "")
+    if ADMIN_KEY and key == ADMIN_KEY:
+        return
+    if user and not isinstance(user, AnonymousUser):
+        uid = getattr(user, "id", 0) or 0
+        if uid and await is_org_admin(uid, ORG, db):
+            return
+    raise HTTPException(403, "Forbidden")
 
 
 def _fullname(u: User) -> str:
@@ -89,8 +101,9 @@ async def quiz_submit(request: Request, db_session: AsyncSession = Depends(get_d
 # ---------------------------------------------------------------- roster list
 @router.get("")
 async def people_list(request: Request, q: str = "", limit: int = 25, offset: int = 0,
-                      db_session: AsyncSession = Depends(get_db_session)):
-    await _admin(request, db_session)
+                      db_session: AsyncSession = Depends(get_db_session),
+                      user=Depends(get_current_user)):
+    await _guard(request, db_session, user)
     base = select(User).join(UserOrganization, UserOrganization.user_id == User.id).where(
         UserOrganization.org_id == ORG)
     if q.strip():
@@ -124,8 +137,9 @@ async def people_list(request: Request, q: str = "", limit: int = 25, offset: in
 # ---------------------------------------------------------------- full profile
 @router.get("/{user_id}")
 async def profile(user_id: int, request: Request,
-                  db_session: AsyncSession = Depends(get_db_session)):
-    await _admin(request, db_session)
+                  db_session: AsyncSession = Depends(get_db_session),
+                  user=Depends(get_current_user)):
+    await _guard(request, db_session, user)
     u = (await db_session.execute(select(User).where(User.id == user_id))).scalars().first()
     if not u:
         raise HTTPException(404, "User not found")
