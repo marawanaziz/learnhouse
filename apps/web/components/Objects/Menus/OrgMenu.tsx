@@ -9,7 +9,6 @@ import { getUriWithOrg } from '@services/config/config'
 import { fetchRAGChatSessions, RAGChatSession } from '@services/ai/ai'
 import { HeaderProfileBox } from '@components/Security/HeaderProfileBox'
 import MenuLinks from './OrgMenuLinks'
-import { getOrgLogoMediaDirectory } from '@services/media/media'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import { useOrg } from '@components/Contexts/OrgContext'
 import { SearchBar } from '@components/Objects/Search/SearchBar'
@@ -155,16 +154,12 @@ export const OrgMenu = (props: any) => {
             <div className="logo flex md:w-auto w-full justify-center">
               <Link href={getUriWithOrg(orgslug, '/')}>
                 <div className="flex items-center m-auto justify-center">
-                  {org?.logo_image ? (
-                    // Enlarge + crop the circular logo's top/bottom so the name
-                    // band reads bigger. object-cover clips vertically; navbar
-                    // height (h-[60px]) is unchanged.
-                    <img
-                      src={`${getOrgLogoMediaDirectory(org.org_uuid, org?.logo_image)}`}
-                      alt="Birth & Baby University"
-                      className="rounded-md"
-                      style={{ height: '50px', width: '150px', objectFit: 'cover', objectPosition: '50% 57%' }}
-                    />
+                  {org?.name ? (
+                    // BBU wordmark: render the org name as clean text (crisper
+                    // than the raster logo). colors.text adapts to the navbar bg.
+                    <span className={`font-semibold text-xl whitespace-nowrap tracking-tight ${colors.text}`}>
+                      {org?.name}
+                    </span>
                   ) : (
                     <div className="flex w-auto h-9 rounded-md items-center py-1 justify-center">
                       <LearnHouseLogo logoFilter={colors.logoFilter} />
