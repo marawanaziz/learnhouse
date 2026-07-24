@@ -200,8 +200,8 @@ export const OrgMenu = (props: any) => {
                 </TooltipProvider>
               </div>
             </AuthenticatedClientElement>
-            {/* Boards */}
-            {rf?.boards?.enabled && (
+            {/* Boards — hidden for BBU (LearnHouse feature, not used) */}
+            {false && rf?.boards?.enabled && (
               <AuthenticatedClientElement checkMethod="authentication">
                 <div className="hidden md:flex">
                   <TooltipProvider delayDuration={0}>
@@ -223,8 +223,8 @@ export const OrgMenu = (props: any) => {
                 </div>
               </AuthenticatedClientElement>
             )}
-            {/* AI Copilot */}
-            {rf?.ai?.enabled && config?.admin_toggles?.ai?.copilot_enabled !== false && (
+            {/* AI Copilot — hidden for BBU (unconfigured / untrained on BBU content) */}
+            {false && rf?.ai?.enabled && config?.admin_toggles?.ai?.copilot_enabled !== false && (
               <AuthenticatedClientElement checkMethod="authentication">
                 <div className="hidden md:flex">
                   <CopilotMenuButton

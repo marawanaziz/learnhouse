@@ -736,6 +736,137 @@ CREDENTIAL_TAGS = {
 }
 
 
+@router.get("/communities")
+async def list_communities(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """List every community with its access + image state (admin-key)."""
+    _check(request)
+    from src.db.communities.communities import Community
+    from src.db.usergroup_resources import UserGroupResource
+    from src.db.usergroups import UserGroup
+    org_id = 1
+    comms = (await db_session.execute(select(Community).where(
+        Community.org_id == org_id).order_by(Community.name))).scalars().all()
+    # course link (uuid) per community
+    course_by_id = {c.id: c for c in (await db_session.execute(
+        select(Course).where(Course.org_id == org_id))).scalars().all()}
+    # usergroup links per community_uuid
+    links = (await db_session.execute(select(UserGroupResource, UserGroup).join(
+        UserGroup, UserGroup.id == UserGroupResource.usergroup_id).where(
+        UserGroupResource.org_id == org_id))).all()
+    groups_by_res: dict = {}
+    for link, grp in links:
+        groups_by_res.setdefault(link.resource_uuid, []).append(grp.name)
+    out = []
+    for c in comms:
+        course = course_by_id.get(c.course_id) if c.course_id else None
+        out.append({
+            "id": c.id, "community_uuid": c.community_uuid, "name": c.name,
+            "public": bool(c.public), "has_image": bool(c.thumbnail_image),
+            "course_uuid": course.course_uuid if course else None,
+            "course_has_thumb": bool(course.thumbnail_image) if course else False,
+            "access_groups": groups_by_res.get(c.community_uuid, []),
+        })
+    return out
+
+
+@router.post("/community-thumbnails")
+async def community_thumbnails(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Set community images. Body: {items:[{community_uuid, image_url}], overwrite?}.
+    If image_url is omitted for a course-linked community, its linked course's
+    existing cover is reused. Fetches remote images and stores them through the
+    community thumbnail pipeline so they land where the UI expects."""
+    import io, httpx
+    from starlette.datastructures import UploadFile as StarletteUploadFile, Headers
+    from src.db.communities.communities import Community
+    from src.services.communities.thumbnails import upload_community_thumbnail
+
+    body = await request.json()
+    _check(request, body)
+    items = body.get("items") or []
+    overwrite = bool(body.get("overwrite", False))
+    org_id = 1
+    org = (await db_session.execute(select(Organization).where(Organization.id == org_id))).scalars().first()
+    org_uuid = org.org_uuid if org else ""
+    courses = {c.id: c for c in (await db_session.execute(
+        select(Course).where(Course.org_id == org_id))).scalars().all()}
+
+    set_count, skipped, errors = 0, 0, []
+    async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
+        for it in items:
+            cu = (it or {}).get("community_uuid", "")
+            url = (it or {}).get("image_url", "")
+            try:
+                comm = (await db_session.execute(select(Community).where(
+                    Community.community_uuid == cu, Community.org_id == org_id))).scalars().first()
+                if not comm:
+                    errors.append(f"{cu}: community not found"); continue
+                if comm.thumbnail_image and not overwrite:
+                    skipped += 1; continue
+                if not url:
+                    errors.append(f"{cu}: no image_url"); continue
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code != 200 or not r.content:
+                    errors.append(f"{cu}: fetch {r.status_code}"); continue
+                ctype = r.headers.get("content-type", "image/jpeg").split(";")[0]
+                ext = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
+                       "image/webp": "webp", "image/gif": "gif"}.get(ctype, "jpg")
+                uf = StarletteUploadFile(filename=f"cover.{ext}", file=io.BytesIO(r.content),
+                                         headers=Headers({"content-type": ctype}))
+                name = await upload_community_thumbnail(uf, org_uuid, comm.community_uuid)
+                comm.thumbnail_image = name
+                comm.update_date = _now()
+                db_session.add(comm)
+                await db_session.commit()
+                set_count += 1
+            except Exception as e:
+                await db_session.rollback()
+                errors.append(f"{cu}: {e}")
+    return {"set": set_count, "skipped": skipped, "errors": errors[:30], "error_count": len(errors)}
+
+
+@router.post("/gate-communities")
+async def gate_communities(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Gate community access via usergroups (same mechanism as courses). Body:
+    {items:[{community_uuid, group_name}], make_private?}. Per item: find/create the
+    named usergroup, link the community to it; optionally set public=false so only
+    members see it. Idempotent."""
+    from src.db.communities.communities import Community
+    from src.db.usergroups import UserGroup
+    from src.db.usergroup_resources import UserGroupResource
+    body = await request.json()
+    _check(request, body)
+    items = body.get("items") or []
+    make_private = bool(body.get("make_private", True))
+    org_id = 1
+    results = []
+    for it in items:
+        cu = (it or {}).get("community_uuid", "")
+        gname = (it or {}).get("group_name", "")
+        comm = (await db_session.execute(select(Community).where(
+            Community.community_uuid == cu, Community.org_id == org_id))).scalars().first()
+        if not comm or not gname:
+            results.append({"community_uuid": cu, "error": "missing community or group_name"}); continue
+        grp = (await db_session.execute(select(UserGroup).where(
+            UserGroup.org_id == org_id, UserGroup.name == gname))).scalars().first()
+        if not grp:
+            grp = UserGroup(org_id=org_id, name=gname, description=f"community:{cu}",
+                            usergroup_uuid=f"usergroup_{uuid4()}", creation_date=_now(), update_date=_now())
+            db_session.add(grp); await db_session.commit(); await db_session.refresh(grp)
+        link = (await db_session.execute(select(UserGroupResource).where(
+            UserGroupResource.usergroup_id == grp.id,
+            UserGroupResource.resource_uuid == cu))).scalars().first()
+        if not link:
+            db_session.add(UserGroupResource(usergroup_id=grp.id or 0, resource_uuid=cu,
+                                             org_id=org_id, creation_date=_now(), update_date=_now()))
+        if make_private:
+            comm.public = False
+            comm.update_date = _now()
+            db_session.add(comm)
+        await db_session.commit()
+        results.append({"community": comm.name, "group": gname, "private": make_private})
+    return {"gated": results}
+
+
 @router.post("/set-learner-menu")
 async def set_learner_menu(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Set which tabs appear in the learner top nav. Body: {items:["courses",

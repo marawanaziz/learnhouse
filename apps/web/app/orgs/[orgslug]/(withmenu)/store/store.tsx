@@ -103,6 +103,12 @@ function OfferCard({ offer, orgslug, orgUuid, position }: { offer: Offer; orgslu
   const resources = offer.included_resources ?? []
   const { track } = useLHAnalytics('learner')
 
+  // Full-bleed cover: the first included course that has a thumbnail.
+  const coverRes = resources.find(r => r.resource_type === 'course' && r.thumbnail_image)
+  const coverSrc = coverRes
+    ? getCourseThumbnailMediaDirectory(coverRes.org_uuid || orgUuid, coverRes.resource_uuid, coverRes.thumbnail_image)
+    : null
+
   return (
     <Link
       href={getUriWithOrg(orgslug, `/store/offers/${offer.offer_uuid}`)}
@@ -110,11 +116,18 @@ function OfferCard({ offer, orgslug, orgUuid, position }: { offer: Offer; orgslu
     >
       <div className="group bg-white rounded-xl nice-shadow overflow-hidden flex flex-col h-full cursor-pointer transition-all duration-200 hover:scale-[1.01]">
 
-        {/* Thumbnail area */}
+        {/* Thumbnail area — course cover fills the whole box */}
         <div className={`relative aspect-video overflow-hidden flex items-center justify-center ${
-          isSubscription ? 'bg-gradient-to-br from-indigo-50 to-purple-50' : 'bg-gray-50'
+          isSubscription ? 'bg-gradient-to-br from-indigo-50 to-purple-50' : 'bg-gray-100'
         }`}>
-          {resources.length > 0 ? (
+          {coverSrc ? (
+            <img
+              src={coverSrc}
+              alt={offer.name}
+              loading="lazy"
+              className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            />
+          ) : resources.length > 0 ? (
             <div className="p-4 w-full">
               <CourseBoxes resources={resources} orgUuid={orgUuid} />
             </div>
