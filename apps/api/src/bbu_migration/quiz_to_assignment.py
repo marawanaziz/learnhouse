@@ -1,22 +1,27 @@
 """BBU quiz -> native Assignment migration (admin-key gated).
 
-Converts inline `blockQuiz` blocks (Tiptap extension, graded client-side, no
-native submission records) into first-class native Assignment activities:
+BBU's lesson quizzes are dedicated **quiz-only** activities (a lesson whose only
+content is one inline `blockQuiz`). This converts each such lesson IN PLACE into
+a first-class native Assignment activity:
 
-  * a new TYPE_ASSIGNMENT activity is inserted into the same chapter, right
-    after its source lesson (reader order preserved by a per-chapter reindex);
+  * the SAME activity is retyped TYPE_ASSIGNMENT (its inline quiz block removed);
   * a native Assignment (PASS_FAIL, auto-graded, retries on) + one QUIZ task
-    carrying the same questions/answers is attached to it;
-  * the inline quiz block is REMOVED from the source lesson (true replacement,
-    no duplicate quiz);
-  * CATCH-UP: every learner who already completed the source lesson gets a
-    graded-passed submission + a completed TrailStep on the new activity, so
-    adding the step does not regress anyone's course completion / certificate.
+    carrying the same questions/answers is attached to that activity;
+  * because it is the same activity id, every learner's existing completion
+    (TrailStep) carries over untouched — nobody's course progress / certificate
+    regresses, and no new step is inserted into the course.
 
-Idempotent: once a source lesson's quiz block is stripped, a re-run finds no
-block there and skips it. Mounted under /api/v1/bbu/migrate.
+Optional submission backfill: for learners who already completed the lesson, a
+graded-passed AssignmentUserSubmission is written so the admin submission list
+shows them as passed (their TrailStep already exists, so it is left as-is).
 
-  POST /quiz-to-assignment  {key, course_id?, dry_run=true, backfill=true, limit?}
+Idempotent: once an activity is retyped to TYPE_ASSIGNMENT its quiz block is
+gone, so a re-run skips it. Mounted under /api/v1/bbu/migrate.
+
+  POST /quiz-to-assignment        {key, course_id?, dry_run=true, backfill=true, limit?}
+  GET  /quiz-to-assignment/verify        ?course_id=  (admin)
+  GET  /quiz-to-assignment/inspect       ?course_id=  (admin)
+  POST /quiz-to-assignment/fix-split-course  {key, course_id}  (clean up husks from the old split approach)
 """
 import os
 from datetime import datetime
@@ -28,16 +33,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
 from src.db.courses.courses import Course
-from src.db.courses.activities import (
-    Activity, ActivityTypeEnum, ActivitySubTypeEnum, ActivityLockType,
-)
+from src.db.courses.activities import Activity, ActivityTypeEnum, ActivitySubTypeEnum
 from src.db.courses.chapter_activities import ChapterActivity
 from src.db.courses.assignments import (
     Assignment, AssignmentTask, AssignmentTaskTypeEnum, GradingTypeEnum,
     AssignmentUserSubmission, AssignmentUserSubmissionStatus, AssignmentTaskSubmission,
 )
-from src.db.trails import Trail
-from src.db.trail_runs import TrailRun
 from src.db.trail_steps import TrailStep
 
 router = APIRouter()
@@ -61,7 +62,6 @@ def _now():
 
 # ------------------------------------------------------------ content helpers
 def _find_quiz_blocks(node, out):
-    """Collect blockQuiz nodes anywhere in a Tiptap doc."""
     if isinstance(node, dict):
         if node.get("type") == "blockQuiz":
             out.append(node)
@@ -73,7 +73,6 @@ def _find_quiz_blocks(node, out):
 
 
 def _strip_quiz_blocks(node):
-    """Return a deep copy of the doc with every blockQuiz node removed."""
     if isinstance(node, dict):
         return {k: _strip_quiz_blocks(v) for k, v in node.items()}
     if isinstance(node, list):
@@ -82,21 +81,35 @@ def _strip_quiz_blocks(node):
     return node
 
 
-def _to_native_quiz_contents(inline_questions):
-    """Map inline blockQuiz questions -> native QUIZ task `contents`.
+def _count_content_blocks(node):
+    """Meaningful non-quiz content blocks (to tell quiz-only from mixed lessons)."""
+    n = 0
+    if isinstance(node, dict):
+        t = node.get("type")
+        if t and t not in ("doc", "blockQuiz"):
+            txt = node.get("text")
+            if txt and str(txt).strip():
+                n += 1
+            elif t in ("image", "video", "blockVideo", "blockImage", "blockPDF",
+                       "blockEmbed", "heading", "blockquote", "codeBlock", "bulletList",
+                       "orderedList", "blockMathequation", "blockAudio", "blockFile"):
+                n += 1
+        for v in node.values():
+            n += _count_content_blocks(v)
+    elif isinstance(node, list):
+        for v in node:
+            n += _count_content_blocks(v)
+    return n
 
-    inline: {question_id, question, type, answers:[{answer_id, answer, correct}]}
-    native: {questions:[{questionText, questionUUID,
-             options:[{text, fileID:'', type:'text', assigned_right_answer, optionUUID}]}]}
-    """
+
+def _to_native_quiz_contents(inline_questions):
+    """inline blockQuiz questions -> native QUIZ task `contents`."""
     out = []
     for q in (inline_questions or []):
         opts = []
         for a in (q.get("answers") or []):
             opts.append({
-                "text": a.get("answer", ""),
-                "fileID": "",
-                "type": "text",
+                "text": a.get("answer", ""), "fileID": "", "type": "text",
                 "assigned_right_answer": bool(a.get("correct")),
                 "optionUUID": a.get("answer_id") or ("option_" + str(uuid4())),
             })
@@ -109,16 +122,11 @@ def _to_native_quiz_contents(inline_questions):
 
 
 def _perfect_submission(native_contents):
-    """Build a task_submission that answers every option with its correct value
-    (used for the catch-up backfill so already-finished learners read as 100%)."""
     subs = []
     for q in native_contents.get("questions", []):
         for o in q.get("options", []):
-            subs.append({
-                "questionUUID": q["questionUUID"],
-                "optionUUID": o["optionUUID"],
-                "answer": bool(o["assigned_right_answer"]),
-            })
+            subs.append({"questionUUID": q["questionUUID"], "optionUUID": o["optionUUID"],
+                         "answer": bool(o["assigned_right_answer"])})
     return {"submissions": subs}
 
 
@@ -145,10 +153,9 @@ async def quiz_to_assignment(request: Request, db_session: AsyncSession = Depend
     else:
         courses = (await db_session.execute(select(Course).where(Course.org_id == ORG))).scalars().all()
 
-    rep = {"dry_run": dry_run, "backfill": backfill, "courses": [],
-           "assignments_created": 0, "questions_migrated": 0,
-           "blocks_removed": 0, "backfilled_users": 0, "backfill_steps": 0,
-           "errors": []}
+    rep = {"dry_run": dry_run, "backfill": backfill, "mode": "in_place", "courses": [],
+           "assignments_created": 0, "questions_migrated": 0, "blocks_removed": 0,
+           "mixed_lessons_skipped": 0, "backfilled_submissions": 0, "errors": []}
     processed = 0
 
     for course in courses:
@@ -160,64 +167,48 @@ async def quiz_to_assignment(request: Request, db_session: AsyncSession = Depend
             _find_quiz_blocks(src.content or {}, blocks)
             if not blocks:
                 continue
+            # only convert quiz-only lessons in place; a mixed lesson (quiz +
+            # real content) would lose its content if retyped, so skip + report.
+            other = _count_content_blocks(src.content or {})
+            if other > 0:
+                rep["mixed_lessons_skipped"] += 1
+                rep["errors"].append(f"act {src.id} ({src.name}): mixed lesson ({other} content blocks) — skipped")
+                continue
             if limit is not None and processed >= limit:
                 break
             processed += 1
             try:
-                # gather all questions from all quiz blocks in this lesson
                 inline_qs = []
                 for b in blocks:
                     inline_qs.extend((b.get("attrs") or {}).get("questions") or [])
                 native = _to_native_quiz_contents(inline_qs)
                 nq = len(native["questions"])
-
-                # locate the source's chapter + link row
                 link = (await db_session.execute(select(ChapterActivity).where(
                     ChapterActivity.activity_id == src.id))).scalars().first()
-                if not link:
-                    rep["errors"].append(f"act {src.id} ({src.name}): no chapter link")
-                    continue
-                chapter_id = link.chapter_id
+                chapter_id = link.chapter_id if link else 0
 
                 if dry_run:
                     c_created += 1
                     c_q += nq
                     continue
 
-                # 1) new assignment-type activity
-                new_act = Activity(
-                    name=f"{src.name} — Quiz",
-                    activity_type=ActivityTypeEnum.TYPE_ASSIGNMENT,
-                    activity_sub_type=ActivitySubTypeEnum.SUBTYPE_ASSIGNMENT_ANY,
-                    content={}, details=None, published=src.published,
-                    lock_type=getattr(src, "lock_type", ActivityLockType.PUBLIC),
-                    org_id=course.org_id, course_id=course.id,
-                    activity_uuid=f"activity_{uuid4()}",
-                    creation_date=_now(), update_date=_now(),
-                )
-                db_session.add(new_act)
+                # 1) retype the SAME activity to an assignment, strip the quiz block
+                src.activity_type = ActivityTypeEnum.TYPE_ASSIGNMENT
+                src.activity_sub_type = ActivitySubTypeEnum.SUBTYPE_ASSIGNMENT_ANY
+                src.content = _strip_quiz_blocks(src.content or {})
+                src.update_date = _now()
+                db_session.add(src)
                 await db_session.commit()
-                await db_session.refresh(new_act)
+                rep["blocks_removed"] += len(blocks)
 
-                # 2) link into the chapter, then reindex so it sits right after src
-                db_session.add(ChapterActivity(
-                    order=(link.order or 0), chapter_id=chapter_id, activity_id=new_act.id,
-                    course_id=course.id, org_id=course.org_id,
-                    creation_date=_now(), update_date=_now(),
-                ))
-                await db_session.commit()
-                await _reindex_chapter(db_session, chapter_id, src.id, new_act.id)
-
-                # 3) Assignment + QUIZ task
+                # 2) Assignment + QUIZ task attached to the same activity id
                 assignment = Assignment(
-                    title=f"{src.name} — Quiz",
-                    description="Auto-migrated from the lesson quiz. Answer the questions to complete this activity.",
-                    due_date="", published=True,
-                    grading_type=GradingTypeEnum.PASS_FAIL,
-                    auto_grading=True, anti_copy_paste=False,
-                    show_correct_answers=True, allow_retries=True, max_retries=0,
-                    org_id=course.org_id, course_id=course.id,
-                    chapter_id=chapter_id, activity_id=new_act.id,
+                    title=src.name or "Quiz",
+                    description="Answer the questions below to complete this activity.",
+                    due_date="", published=True, grading_type=GradingTypeEnum.PASS_FAIL,
+                    auto_grading=True, anti_copy_paste=False, show_correct_answers=True,
+                    allow_retries=True, max_retries=0, org_id=course.org_id,
+                    course_id=course.id, chapter_id=chapter_id, activity_id=src.id,
                     assignment_uuid=f"assignment_{uuid4()}",
                     creation_date=_now(), update_date=_now(),
                 )
@@ -226,33 +217,22 @@ async def quiz_to_assignment(request: Request, db_session: AsyncSession = Depend
                 await db_session.refresh(assignment)
 
                 task = AssignmentTask(
-                    title="Quiz", description="", hint="",
-                    reference_file=None,
-                    assignment_type=AssignmentTaskTypeEnum.QUIZ,
-                    contents=native, max_grade_value=100,
-                    assignment_task_uuid=f"assignmenttask_{uuid4()}",
+                    title="Quiz", description="", hint="", reference_file=None,
+                    assignment_type=AssignmentTaskTypeEnum.QUIZ, contents=native,
+                    max_grade_value=100, assignment_task_uuid=f"assignmenttask_{uuid4()}",
                     assignment_id=assignment.id, org_id=course.org_id,
-                    chapter_id=chapter_id, activity_id=new_act.id, course_id=course.id,
+                    chapter_id=chapter_id, activity_id=src.id, course_id=course.id,
                     creation_date=_now(), update_date=_now(),
                 )
                 db_session.add(task)
                 await db_session.commit()
                 await db_session.refresh(task)
 
-                # 4) strip the inline quiz block from the source lesson
-                src.content = _strip_quiz_blocks(src.content or {})
-                src.update_date = _now()
-                db_session.add(src)
-                await db_session.commit()
-                rep["blocks_removed"] += len(blocks)
-
-                # 5) catch-up backfill for learners who finished the source lesson
+                # 3) optional: credit prior completers with a graded-passed
+                #    submission (their existing TrailStep already keeps them done)
                 if backfill:
-                    users, steps = await _backfill(
-                        db_session, course, chapter_id, src.id, new_act.id,
-                        assignment, task, native)
-                    c_bf += users
-                    rep["backfill_steps"] += steps
+                    c_bf += await _backfill_submissions(
+                        db_session, course, chapter_id, src.id, assignment, task, native)
 
                 c_created += 1
                 c_q += nq
@@ -263,29 +243,124 @@ async def quiz_to_assignment(request: Request, db_session: AsyncSession = Depend
         if c_created:
             rep["courses"].append({"course_id": course.id, "course": course.name,
                                    "assignments_created": c_created, "questions": c_q,
-                                   "backfilled_users": c_bf})
+                                   "backfilled_submissions": c_bf})
             rep["assignments_created"] += c_created
             rep["questions_migrated"] += c_q
-            rep["backfilled_users"] += c_bf
+            rep["backfilled_submissions"] += c_bf
         if limit is not None and processed >= limit:
             break
 
     return rep
 
 
+async def _backfill_submissions(db: AsyncSession, course: Course, chapter_id: int,
+                                activity_id: int, assignment, task, native):
+    """Credit learners who already completed this activity with a graded-passed
+    native submission (no TrailStep writes — their completion already exists)."""
+    done_steps = (await db.execute(select(TrailStep).where(
+        TrailStep.activity_id == activity_id, TrailStep.complete == True))).scalars().all()  # noqa: E712
+    perfect = _perfect_submission(native)
+    n = 0
+    for st in done_steps:
+        uid = st.user_id
+        exists = (await db.execute(select(AssignmentUserSubmission).where(
+            AssignmentUserSubmission.assignment_id == assignment.id,
+            AssignmentUserSubmission.user_id == uid))).scalars().first()
+        if exists:
+            continue
+        db.add(AssignmentUserSubmission(
+            assignmentusersubmission_uuid=f"assignmentusersubmission_{uuid4()}",
+            submission_status=AssignmentUserSubmissionStatus.GRADED,
+            grade=100, overall_feedback="Credited from prior lesson completion.",
+            attempt_number=1, user_id=uid, assignment_id=assignment.id,
+            creation_date=_now(), update_date=_now(),
+        ))
+        db.add(AssignmentTaskSubmission(
+            assignment_task_submission_uuid=f"assignmenttasksubmission_{uuid4()}",
+            task_submission=perfect, grade=100, task_submission_grade_feedback="",
+            manually_graded=False, assignment_type=AssignmentTaskTypeEnum.QUIZ,
+            user_id=uid, activity_id=activity_id, course_id=course.id,
+            chapter_id=chapter_id, assignment_task_id=task.id,
+            creation_date=_now(), update_date=_now(),
+        ))
+        n += 1
+        if n % 200 == 0:
+            await db.commit()
+    await db.commit()
+    return n
+
+
+# --------------------------------------------------- fix the old split course
+@router.post("/quiz-to-assignment/fix-split-course")
+async def fix_split_course(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Reconcile a course migrated with the earlier SPLIT approach: delete the
+    now-empty husk lessons (0 content, 0 completions) and strip the redundant
+    ' — Quiz' suffix from the split assignment + its host activity."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    _check(request, body)
+    course_id = int(body.get("course_id") or request.query_params.get("course_id") or 0)
+    if not course_id:
+        raise HTTPException(400, "course_id required")
+
+    acts = (await db_session.execute(select(Activity).where(
+        Activity.course_id == course_id))).scalars().all()
+    deleted_husks, renamed = 0, 0
+    for a in acts:
+        # rename split assignment activities: "X — Quiz" -> "X"
+        if str(a.activity_type).endswith("TYPE_ASSIGNMENT") and (a.name or "").endswith(" — Quiz"):
+            base = a.name[: -len(" — Quiz")]
+            a.name = base
+            a.update_date = _now()
+            db_session.add(a)
+            asg = (await db_session.execute(select(Assignment).where(
+                Assignment.activity_id == a.id))).scalars().first()
+            if asg:
+                asg.title = base
+                asg.update_date = _now()
+                db_session.add(asg)
+            renamed += 1
+    await db_session.commit()
+
+    for a in acts:
+        # delete empty dynamic husks with no completions
+        if not str(a.activity_type).endswith("TYPE_DYNAMIC"):
+            continue
+        if _count_content_blocks(a.content or {}) > 0:
+            continue
+        qb = []
+        _find_quiz_blocks(a.content or {}, qb)
+        if qb:
+            continue
+        steps = (await db_session.execute(select(func.count()).select_from(TrailStep).where(
+            TrailStep.activity_id == a.id, TrailStep.complete == True))).scalar() or 0  # noqa: E712
+        if steps > 0:
+            continue  # keep — someone completed it
+        # cascade removes ChapterActivity + TrailStep rows for this activity
+        await db_session.execute(select(ChapterActivity).where(ChapterActivity.activity_id == a.id))
+        links = (await db_session.execute(select(ChapterActivity).where(
+            ChapterActivity.activity_id == a.id))).scalars().all()
+        for lk in links:
+            await db_session.delete(lk)
+        await db_session.delete(a)
+        deleted_husks += 1
+    await db_session.commit()
+    return {"course_id": course_id, "renamed_assignments": renamed, "deleted_husks": deleted_husks}
+
+
+# ---------------------------------------------------------- read-only inspect
 @router.get("/quiz-to-assignment/verify")
 async def quiz_to_assignment_verify(request: Request, course_id: int,
                                     db_session: AsyncSession = Depends(get_db_session)):
-    """Read-only inspection of a course's native assignments after migration:
-    per-assignment question count, host activity, chapter order position, and
-    submission/TrailStep counts. Admin-key gated."""
     _check(request)
     course = (await db_session.execute(select(Course).where(Course.id == course_id))).scalars().first()
     if not course:
         raise HTTPException(404, "course not found")
     assignments = (await db_session.execute(select(Assignment).where(
         Assignment.course_id == course_id))).scalars().all()
-    # remaining inline quiz blocks in this course (should be 0 after migration)
     acts = (await db_session.execute(select(Activity).where(Activity.course_id == course_id))).scalars().all()
     remaining_blocks = 0
     for a in acts:
@@ -306,41 +381,16 @@ async def quiz_to_assignment_verify(request: Request, course_id: int,
         out.append({"assignment": asg.title, "activity_id": asg.activity_id,
                     "tasks": len(tasks), "questions": nq, "auto_grading": asg.auto_grading,
                     "grading_type": str(asg.grading_type), "published": asg.published,
-                    "chapter_id": link.chapter_id if link else None,
                     "order": link.order if link else None,
                     "user_submissions": subs, "completed_steps": steps})
+    out.sort(key=lambda x: (x["order"] if x["order"] is not None else 0))
     return {"course": course.name, "assignments": len(out),
             "remaining_inline_quiz_blocks": remaining_blocks, "detail": out}
-
-
-def _count_content_blocks(node, quiz_only_flag):
-    """Count non-quiz content nodes with actual substance (text/media/etc.).
-    Returns number of meaningful non-quiz top-level-ish blocks."""
-    n = 0
-    if isinstance(node, dict):
-        t = node.get("type")
-        if t and t not in ("doc", "blockQuiz"):
-            # a block counts if it has text or is a media/embed/heading block
-            txt = node.get("text")
-            if txt and str(txt).strip():
-                n += 1
-            elif t in ("image", "video", "blockVideo", "blockImage", "blockPDF",
-                       "blockEmbed", "heading", "blockquote", "codeBlock", "bulletList",
-                       "orderedList", "blockMathequation", "blockAudio", "blockFile"):
-                n += 1
-        for v in node.values():
-            n += _count_content_blocks(v, quiz_only_flag)
-    elif isinstance(node, list):
-        for v in node:
-            n += _count_content_blocks(v, quiz_only_flag)
-    return n
 
 
 @router.get("/quiz-to-assignment/inspect")
 async def quiz_inspect(request: Request, course_id: int,
                        db_session: AsyncSession = Depends(get_db_session)):
-    """List activities in a course: type, whether it holds a quiz block, and how
-    much OTHER content it has (to tell quiz-only pages from mixed lessons)."""
     _check(request)
     acts = (await db_session.execute(select(Activity).where(
         Activity.course_id == course_id))).scalars().all()
@@ -349,90 +399,19 @@ async def quiz_inspect(request: Request, course_id: int,
     for a in acts:
         blocks = []
         _find_quiz_blocks(a.content or {}, blocks)
-        other = _count_content_blocks(a.content or {}, None)
-        # when a quiz block is present, subtract nothing (other already excludes quiz)
+        other = _count_content_blocks(a.content or {})
         has_quiz = len(blocks) > 0
         is_husk = (not has_quiz and other == 0 and str(a.activity_type).endswith("TYPE_DYNAMIC"))
         if has_quiz:
-            if other == 0:
-                quiz_only += 1
-            else:
-                mixed += 1
+            quiz_only += 1 if other == 0 else 0
+            mixed += 1 if other > 0 else 0
         if is_husk:
             husks += 1
         rows.append({"activity_id": a.id, "name": a.name,
                      "type": str(a.activity_type).replace("ActivityTypeEnum.", ""),
-                     "has_quiz_block": has_quiz, "quiz_questions": sum(
-                         len((b.get('attrs') or {}).get('questions') or []) for b in blocks),
+                     "has_quiz_block": has_quiz,
+                     "quiz_questions": sum(len((b.get('attrs') or {}).get('questions') or []) for b in blocks),
                      "other_content_blocks": other})
     return {"course_id": course_id, "activities": len(acts),
             "quiz_only_lessons": quiz_only, "mixed_lessons": mixed,
             "empty_husks": husks, "rows": rows}
-
-
-async def _reindex_chapter(db: AsyncSession, chapter_id: int, src_act_id: int, new_act_id: int):
-    """Re-enumerate a chapter's ChapterActivity.order 0-based, placing new_act
-    immediately after src_act (reader sorts by this order)."""
-    rows = (await db.execute(select(ChapterActivity).where(
-        ChapterActivity.chapter_id == chapter_id).order_by(ChapterActivity.order))).scalars().all()
-    # pull the new row out, then re-insert right after the source
-    new_row = next((r for r in rows if r.activity_id == new_act_id), None)
-    ordered = [r for r in rows if r.activity_id != new_act_id]
-    seq = []
-    for r in ordered:
-        seq.append(r)
-        if r.activity_id == src_act_id and new_row is not None:
-            seq.append(new_row)
-    if new_row is not None and new_row not in seq:  # src not found — append
-        seq.append(new_row)
-    for i, r in enumerate(seq):
-        if r.order != i:
-            r.order = i
-            r.update_date = _now()
-            db.add(r)
-    await db.commit()
-
-
-async def _backfill(db: AsyncSession, course: Course, chapter_id: int,
-                    src_act_id: int, new_act_id: int, assignment, task, native):
-    """For every learner with a completed TrailStep on the source lesson, create
-    a graded-passed submission + a completed TrailStep on the new assignment."""
-    done_steps = (await db.execute(select(TrailStep).where(
-        TrailStep.activity_id == src_act_id, TrailStep.complete == True))).scalars().all()  # noqa: E712
-    perfect = _perfect_submission(native)
-    users = steps = 0
-    for st in done_steps:
-        uid = st.user_id
-        # skip if already backfilled
-        exists = (await db.execute(select(TrailStep).where(
-            TrailStep.activity_id == new_act_id, TrailStep.user_id == uid))).scalars().first()
-        if exists:
-            continue
-        # user-level submission (graded, full marks)
-        db.add(AssignmentUserSubmission(
-            assignmentusersubmission_uuid=f"assignmentusersubmission_{uuid4()}",
-            submission_status=AssignmentUserSubmissionStatus.GRADED,
-            grade=100, overall_feedback="Auto-credited from prior lesson completion.",
-            attempt_number=1, user_id=uid, assignment_id=assignment.id,
-            creation_date=_now(), update_date=_now(),
-        ))
-        db.add(AssignmentTaskSubmission(
-            assignment_task_submission_uuid=f"assignmenttasksubmission_{uuid4()}",
-            task_submission=perfect, grade=100, task_submission_grade_feedback="",
-            manually_graded=False, assignment_type=AssignmentTaskTypeEnum.QUIZ,
-            user_id=uid, activity_id=new_act_id, course_id=course.id,
-            chapter_id=chapter_id, assignment_task_id=task.id,
-            creation_date=_now(), update_date=_now(),
-        ))
-        db.add(TrailStep(
-            trailrun_id=st.trailrun_id, activity_id=new_act_id, course_id=course.id,
-            trail_id=st.trail_id, org_id=course.org_id, complete=True,
-            teacher_verified=False, grade="", user_id=uid,
-            creation_date=_now(), update_date=_now(),
-        ))
-        users += 1
-        steps += 1
-        if users % 200 == 0:
-            await db.commit()
-    await db.commit()
-    return users, steps
