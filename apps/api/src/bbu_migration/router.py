@@ -336,6 +336,60 @@ async def migrate_students(request: Request, db_session: AsyncSession = Depends(
             "errors": errors[:20], "error_count": len(errors)}
 
 
+@router.post("/contacts")
+async def migrate_contacts(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Bulk-import contacts (no course enrollment) as org users. Idempotent by
+    email; silent (no emails — SMTP isn't configured). Tagged by `source` so the
+    batch is filterable/reversible. Body: {contacts:[{email,first_name,last_name}],
+    source?, dry_run?}."""
+    body = await request.json()
+    _check(request, body)
+    source = (body.get("source") or "xperiencify_migration")[:60]
+    dry_run = str(body.get("dry_run", True)).lower() != "false"
+    contacts = body.get("contacts") or []
+    org_id = 1
+    role_id = await _learner_role_id(db_session)
+    created = existing = skipped = 0
+    errors = []
+    for c in contacts:
+        email = (c.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            skipped += 1
+            continue
+        try:
+            u = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+            if u:
+                existing += 1
+                continue
+            if dry_run:
+                created += 1
+                continue
+            username = await _unique_username(db_session, email)
+            fn = ((c.get("first_name") or "").strip() or "Member")[:100]
+            ln = ((c.get("last_name") or "").strip())[:100]
+            user = User(
+                username=username, email=email, first_name=fn, last_name=ln,
+                password=security_hash_password(secrets.token_urlsafe(24)),
+                user_uuid=f"user_{uuid4()}", email_verified=False,
+                signup_method=source, creation_date=_now(), update_date=_now(),
+            )
+            db_session.add(user)
+            await db_session.commit()
+            await db_session.refresh(user)
+            db_session.add(UserOrganization(
+                user_id=user.id or 0, org_id=org_id, role_id=role_id,
+                creation_date=_now(), update_date=_now(),
+            ))
+            await db_session.commit()
+            created += 1
+        except Exception as e:
+            await db_session.rollback()
+            errors.append(f"{email}: {type(e).__name__}: {e}")
+    return {"source": source, "dry_run": dry_run, "input": len(contacts),
+            "created": created, "existing": existing, "skipped": skipped,
+            "errors": errors[:20], "error_count": len(errors)}
+
+
 @router.post("/seed-catalog")
 async def seed_catalog(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Idempotent upsert of the full BBU store catalog. Body: {items:[{name,
