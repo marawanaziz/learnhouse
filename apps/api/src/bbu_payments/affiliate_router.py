@@ -24,8 +24,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
 from src.bbu_payments.models import (
-    BBUAffiliate, BBUCommission, BBUPayout,
+    BBUAffiliate, BBUCommission, BBUPayout, BBUReferralClick, BBUOrder, BBUProduct,
 )
+from sqlalchemy import func as _func
 from src.bbu_payments import affiliates as aff
 from src.bbu_admin.auth import authorize_admin
 from src.bbu_payments.affiliate_branding import (
@@ -282,6 +283,85 @@ async def admin(request: Request, db_session: AsyncSession = Depends(get_db_sess
             earned[c.affiliate_id] = earned.get(c.affiliate_id, 0) + c.amount_cents
     return HTMLResponse(admin_page(settings, affs, totals, earned, _base_url(request),
                                    admin_key=request.query_params.get("key", "")))
+
+
+@router.get("/admin/detail/{aff_id}")
+async def admin_detail(aff_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Full per-affiliate profile: their share links, who enrolled through them,
+    commissions, clicks and payouts."""
+    await authorize_admin(request, db_session, "")
+    a = (await db_session.execute(select(BBUAffiliate).where(BBUAffiliate.id == aff_id))).scalars().first()
+    if not a:
+        raise HTTPException(404, "Affiliate not found")
+    base = _base_url(request)
+    s = await aff.get_settings(db_session)
+    rate = a.commission_rate if a.commission_rate is not None else s.default_commission_rate
+    # who enrolled through their link (orders carrying their ref)
+    orders = (await db_session.execute(select(BBUOrder).where(
+        BBUOrder.affiliate_ref == a.ref_code).order_by(BBUOrder.id.desc()))).scalars().all()
+    prod_names = {}
+    referred = []
+    for o in orders:
+        pid = o.product_id
+        if pid and pid not in prod_names:
+            p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == pid))).scalars().first()
+            prod_names[pid] = p.name if p else f"product {pid}"
+        referred.append({"email": o.email, "product": prod_names.get(pid, ""),
+                         "amount": round((o.amount_cents or 0) / 100, 2), "status": o.status,
+                         "date": (o.paid_at or o.created_at or "")[:10]})
+    # commissions
+    comms = (await db_session.execute(select(BBUCommission).where(
+        BBUCommission.affiliate_id == aff_id).order_by(BBUCommission.id.desc()))).scalars().all()
+    commissions = [{"amount": round((c.amount_cents or 0) / 100, 2), "status": c.status,
+                    "event": c.event, "date": (c.created_at or "")[:10]} for c in comms]
+    earned = {"pending": 0, "available": 0, "paid": 0}
+    for c in comms:
+        if c.status in earned:
+            earned[c.status] += (c.amount_cents or 0)
+    # clicks + payouts
+    clicks = (await db_session.execute(select(_func.count()).select_from(BBUReferralClick).where(
+        BBUReferralClick.affiliate_id == aff_id))).scalar() or 0
+    payouts = (await db_session.execute(select(BBUPayout).where(
+        BBUPayout.affiliate_id == aff_id).order_by(BBUPayout.id.desc()))).scalars().all()
+    payout_rows = [{"amount": round((p.amount_cents or 0) / 100, 2), "status": p.status,
+                    "period": p.period, "date": (p.created_at or "")[:10]} for p in payouts]
+    return {
+        "id": a.id, "name": a.name, "email": a.email, "ref_code": a.ref_code,
+        "status": a.status, "rate": round(rate * 100), "payouts_enabled": bool(a.payouts_enabled),
+        "referral_link": f"{base}/?ref={a.ref_code}",
+        "portal_link": (f"{base}/api/v1/bbu/affiliate/portal/{a.portal_token}" if a.portal_token else ""),
+        "join_link": f"{base}/api/v1/bbu/affiliate/join",
+        "clicks": int(clicks), "converted": len(referred),
+        "earned": {k: round(v / 100, 2) for k, v in earned.items()},
+        "referred": referred, "commissions": commissions, "payouts": payout_rows,
+    }
+
+
+@router.post("/admin/create")
+async def admin_create(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Add an affiliate manually (name + email). Generates their ref code + portal
+    token so you can hand them their links immediately."""
+    body = await request.json()
+    await authorize_admin(request, db_session, body.get("key", ""))
+    email = (body.get("email") or "").strip().lower()
+    name = (body.get("name") or "").strip()
+    if not email:
+        raise HTTPException(400, "email required")
+    existing = (await db_session.execute(select(BBUAffiliate).where(
+        BBUAffiliate.email == email))).scalars().first()
+    if existing:
+        return {"ok": True, "id": existing.id, "already": True, "ref_code": existing.ref_code}
+    code = aff.gen_ref_code(name or email)
+    while (await db_session.execute(select(BBUAffiliate).where(BBUAffiliate.ref_code == code))).scalars().first():
+        code = aff.gen_ref_code(name or email)
+    rate = body.get("commission_rate")
+    a = BBUAffiliate(org_id=1, name=name, email=email, ref_code=code,
+                     status="active", commission_rate=(float(rate) if rate not in (None, "") else None),
+                     portal_token=aff.gen_token(), created_at=aff._now().isoformat())
+    db_session.add(a)
+    await db_session.commit()
+    await db_session.refresh(a)
+    return {"ok": True, "id": a.id, "ref_code": a.ref_code}
 
 
 @router.post("/admin/settings")
