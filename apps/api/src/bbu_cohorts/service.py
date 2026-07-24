@@ -402,8 +402,9 @@ async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dic
 
 async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, program: str = ""):
     """Pick the cohort a purchase should enroll into: a specific cohort_id if the
-    product pins one, otherwise the NEXT open cohort of the program (earliest
-    start date, status open/full — full still enrolls to its waitlist)."""
+    product pins one, otherwise the next UPCOMING cohort of the program that still
+    has room — capacity limiting with roll-over. If every upcoming cohort is full,
+    fall back to the earliest (the buyer waitlists the soonest one)."""
     if cohort_id:
         return (await db.execute(select(BBUCohort).where(
             BBUCohort.id == int(cohort_id), BBUCohort.org_id == org_id))).scalars().first()
@@ -414,14 +415,19 @@ async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, p
         )).scalars().all()
         today = _today()
         # Only enroll into an UPCOMING cohort (start date empty/TBD or in the
-        # future). A cohort that has already started keeps its 'open' status but
-        # should NOT absorb new buyers — that would drop them into a class in
-        # progress. If none upcoming, return None → fail-soft "no open cohort"
-        # (order still completes; admin creates the next cohort). An admin can
-        # always force a specific cohort by pinning cohort_id.
+        # future). A cohort that has already started keeps its status but should
+        # NOT absorb new buyers — that would drop them into a class in progress.
+        # An admin can always force a specific cohort by pinning cohort_id.
         upcoming = [c for c in rows if not (c.start_date or "")[:10] or (c.start_date or "")[:10] >= today]
         upcoming.sort(key=lambda c: ((c.start_date or "9999")[:10], c.id))
-        return upcoming[0] if upcoming else None
+        if not upcoming:
+            return None  # fail-soft: order completes, admin creates the next cohort
+        # Prefer the earliest upcoming cohort with a free seat (roll over to the
+        # next when one is full); if all are full, waitlist the soonest.
+        for c in upcoming:
+            if not c.capacity or (await active_count(db, c.id)) < c.capacity:
+                return c
+        return upcoming[0]
     return None
 
 
