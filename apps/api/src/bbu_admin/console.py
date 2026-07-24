@@ -184,6 +184,56 @@ async def cohorts_run_lifecycle(request: Request, db_session: AsyncSession = Dep
     return await cohort_svc.run_lifecycle(db_session, org_id=ORG, dry=bool(b.get("dry_run", False)))
 
 
+@router.post("/cohorts/{cid}/update")
+async def cohorts_update(cid: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Edit a cohort in place — capacity (the limit), dates, status, access
+    window, Zoom, community, workbook. Raising the limit (or going unlimited)
+    auto-fills the new seats: promote paid waitlisted members, then invite the
+    earliest interest-waitlist prospects for any seats still free."""
+    b = await request.json()
+    await _auth(request, db_session, b)
+    c = (await db_session.execute(select(BBUCohort).where(
+        BBUCohort.id == cid, BBUCohort.org_id == ORG))).scalars().first()
+    if not c:
+        raise HTTPException(404, "Cohort not found")
+    res = {"ok": True}
+    # status: 'closed' revokes access (same as the Close button); others set raw
+    if "status" in b:
+        ns = (b.get("status") or "").strip()
+        if ns == "closed" and c.status != "closed":
+            await cohort_svc.close(db_session, c, revoke_access=True)
+        elif ns in ("open", "full", "running"):
+            c.status = ns
+    for f in ("start_date", "end_date", "zoom_meeting_id", "workbook_url", "credential_type"):
+        if f in b:
+            setattr(c, f, b[f])
+    if "community_id" in b:
+        v = b.get("community_id")
+        c.community_id = int(v) if str(v or "").isdigit() else None
+    if "access_months" in b:
+        c.access_months = int(b.get("access_months") or 0)
+    if "capacity" in b:
+        old = c.capacity or 0
+        c.capacity = max(0, int(b.get("capacity") or 0))
+        c.updated_at = _now()
+        db_session.add(c)
+        await db_session.commit()
+        # new room? fill it from the waitlists.
+        if c.capacity == 0 or c.capacity > old:
+            before = await cohort_svc.active_count(db_session, c.id)
+            await cohort_svc.promote_waitlist(db_session, c)         # paid waitlisted members
+            after = await cohort_svc.active_count(db_session, c.id)
+            res["promoted"] = after - before
+            free = (c.capacity - after) if c.capacity else 500        # remaining open seats
+            if free > 0 and c.status in ("open", "full"):
+                invited = await cohort_svc.notify_waitlist(db_session, c.org_id, c.program, free)
+                res["invited"] = len(invited)
+    c.updated_at = _now()
+    db_session.add(c)
+    await db_session.commit()
+    return res
+
+
 @router.get("/cohort-waitlist")
 async def cohort_waitlist_list(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     await _auth(request, db_session)
@@ -633,12 +683,25 @@ function loadCohorts(){{
     document.querySelector('#t-cohorts tbody').innerHTML=(d||[]).map(c=>{{
       const dates=(c.start_date||'').slice(0,10)+(c.end_date?' → '+c.end_date.slice(0,10):'');
       const zoom=c.zoom_meeting_id?' 🎥':''; const wb=c.workbook_url?' 📓':'';
+      const STAT=['open','full','running','closed'];
+      const statSel=`<select onchange="saveCohortField(${{c.id}},'status',this.value)">`+STAT.map(s=>`<option ${{c.status===s?'selected':''}}>${{s}}</option>`).join('')+`</select>`;
+      const capIn=`<input type=number min=0 value="${{c.capacity||0}}" title="0 = unlimited" style="width:58px" onchange="saveCap(${{c.id}},this.value)">`;
       return `<tr><td><b>${{esc(c.name)}}</b>${{zoom}}${{wb}}</td><td>${{esc(c.program)}}</td><td class=muted style=font-size:.8rem>${{esc(dates||'—')}}</td>`
-      +`<td>${{c.active_members}}</td><td>${{c.capacity||'∞'}}</td><td>${{esc(c.credential_type||'—')}}</td>`
-      +`<td>${{c.prompts||0}}</td><td class=muted style=font-size:.8rem>${{esc((c.access_until||'—'))}}</td><td>${{esc(c.status)}}</td>`
+      +`<td>${{c.active_members}}</td><td>${{capIn}}</td><td>${{esc(c.credential_type||'—')}}</td>`
+      +`<td>${{c.prompts||0}}</td><td class=muted style=font-size:.8rem>${{esc((c.access_until||'—'))}}</td><td>${{statSel}}</td>`
       +`<td><button class=ghost onclick="openRoster(${{c.id}},'${{esc(c.name).replace(/'/g,"")}}')">Roster</button></td></tr>`;
     }}).join('');
   }});
+}}
+function saveCap(id,val){{
+  j('/cohorts/'+id+'/update',{{method:'POST',body:JSON.stringify({{capacity:+val||0}})}}).then(r=>{{
+    const inv=(r&&r.invited)||0; document.getElementById('lc-msg').textContent=
+      'Capacity updated'+(r&&r.promoted?(' · '+r.promoted+' waitlisted member(s) promoted'):'')+(inv?(' · '+inv+' waitlist prospect(s) invited'):'');
+    loadCohorts();}});
+}}
+function saveCohortField(id,field,val){{
+  const b={{}};b[field]=val;
+  j('/cohorts/'+id+'/update',{{method:'POST',body:JSON.stringify(b)}}).then(()=>loadCohorts());
 }}
 function createCohort(){{
   const gv=id=>document.getElementById(id).value;
