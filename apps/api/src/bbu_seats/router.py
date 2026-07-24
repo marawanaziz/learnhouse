@@ -92,7 +92,9 @@ async def generate(request: Request, db_session: AsyncSession = Depends(get_db_s
         db_session, org_id, count, course_uuids,
         owner_email=(b.get("owner_email") or ""), product_id=product_id,
         batch_label=b.get("batch_label") or "")
-    portal_url = f"{str(request.base_url).rstrip('/')}/api/v1/bbu/seats/portal?token={r['owner_token']}"
+    _domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
+    _scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
+    portal_url = f"{_scheme}://{_domain}/api/v1/bbu/seats/portal?token={r['owner_token']}"
     return {"batch_label": r["batch_label"], "count": r["count"], "course_uuids": course_uuids,
             "codes": r["codes"], "owner_token": r["owner_token"], "portal_url": portal_url}
 
@@ -194,7 +196,10 @@ from src.bbu_seats import service as seat_svc  # noqa: E402
 
 
 def _base(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    # https-aware base behind the Railway proxy (mirrors bbu_payments._base_url)
+    domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
+    scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
+    return f"{scheme}://{domain}"
 
 
 @router.get("/portal", response_class=HTMLResponse)
