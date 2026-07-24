@@ -5,7 +5,8 @@ mechanism as course-gating). Completing a cohort calls the credentials engine to
 upgrade the member's provisional credential to full.
 """
 import calendar
-from datetime import date, datetime, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from src.db.usergroups import UserGroup
 from src.db.usergroup_user import UserGroupUser
 from src.db.usergroup_resources import UserGroupResource
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
+from src.bbu_cohorts import templates
 
 
 def _now() -> str:
@@ -136,6 +138,7 @@ async def enroll(db: AsyncSession, cohort: BBUCohort, user_id: int) -> dict:
     await db.commit()
     if target == "active":
         await _add_to_group(db, cohort.usergroup_id, cohort.org_id, user_id)
+        await _zoom_register(db, cohort, user_id)
     else:
         # mark cohort full when we start waitlisting
         if cohort.status == "open":
@@ -220,6 +223,128 @@ async def close(db: AsyncSession, cohort: BBUCohort, revoke_access: bool = True)
     return {"closed": True, "access_revoked": revoked}
 
 
+def provision_defaults(cohort: BBUCohort) -> None:
+    """Seed a new cohort from its program template: workbook + weekly prompts.
+    Only fills blanks — never clobbers values an admin already set."""
+    if not (cohort.workbook_url or "").strip():
+        cohort.workbook_url = templates.workbook_for(cohort.program)
+    if not (cohort.weekly_prompts or "").strip():
+        prompts = templates.prompts_for(cohort.program)
+        cohort.weekly_prompts = json.dumps(prompts) if prompts else ""
+
+
+async def _system_author_id(db: AsyncSession, org_id: int) -> int:
+    """A user to attribute auto-posted prompts to: the lowest-id org admin."""
+    from src.db.user_organizations import UserOrganization
+    from src.security.rbac.constants import ADMIN_OR_MAINTAINER_ROLE_IDS
+    row = (await db.execute(select(UserOrganization).where(
+        UserOrganization.org_id == org_id,
+        UserOrganization.role_id.in_(list(ADMIN_OR_MAINTAINER_ROLE_IDS)),
+    ).order_by(UserOrganization.user_id))).scalars().first()
+    return row.user_id if row else 0
+
+
+async def post_due_prompts(db: AsyncSession, cohort: BBUCohort) -> int:
+    """Drip the cohort's weekly prompts into its community: post each prompt whose
+    week has arrived (start_date + (week-1)*7d <= today) and isn't yet posted.
+    Idempotent via each prompt's posted_at. No community / no start / no author →
+    no-op. Returns how many were posted this run."""
+    if not cohort.community_id or not (cohort.start_date or "").strip():
+        return 0
+    try:
+        prompts = json.loads(cohort.weekly_prompts or "[]")
+    except Exception:
+        return 0
+    if not isinstance(prompts, list) or not prompts:
+        return 0
+    try:
+        start = date.fromisoformat((cohort.start_date or "")[:10])
+    except Exception:
+        return 0
+    today = date.fromisoformat(_today())
+    author_id = await _system_author_id(db, cohort.org_id)
+    if not author_id:
+        return 0
+
+    from src.db.communities.discussions import Discussion
+    posted = 0
+    for p in prompts:
+        if p.get("posted_at"):
+            continue
+        wk = int(p.get("week", 1) or 1)
+        due = start + timedelta(days=(wk - 1) * 7)
+        if due > today:
+            continue
+        d = Discussion(
+            title=p.get("title", f"Week {wk}"),
+            content=p.get("content", ""),
+            label="announcement",
+            emoji=p.get("emoji"),
+            community_id=cohort.community_id,
+            org_id=cohort.org_id,
+            author_id=author_id,
+            discussion_uuid=f"discussion_{uuid4()}",
+            upvote_count=0, is_pinned=True, is_locked=False,
+            creation_date=_now(), update_date=_now(),
+        )
+        db.add(d)
+        p["posted_at"] = _now()
+        posted += 1
+    if posted:
+        cohort.weekly_prompts = json.dumps(prompts)
+        cohort.updated_at = _now()
+        db.add(cohort)
+        await db.commit()
+    return posted
+
+
+async def _zoom_register(db: AsyncSession, cohort: BBUCohort, user_id: int) -> None:
+    """Fail-soft: register a newly-active member to the cohort's Zoom series."""
+    if not (cohort.zoom_meeting_id or "").strip():
+        return
+    try:
+        from src.bbu_zoom import client as zoom
+        if not zoom.is_configured():
+            return
+        from src.db.users import User
+        u = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+        if not u or not getattr(u, "email", ""):
+            return
+        res = await zoom.add_registrant(
+            cohort.zoom_meeting_id, u.email,
+            getattr(u, "first_name", "") or "", getattr(u, "last_name", "") or "")
+        print(f"[BBU] zoom register cohort {cohort.id} user {user_id}: {res}", flush=True)
+    except Exception:
+        import traceback
+        print(f"[BBU] zoom register failed cohort {cohort.id}:\n{traceback.format_exc()[-400:]}", flush=True)
+
+
+async def sync_recordings(db: AsyncSession, cohort: BBUCohort) -> int:
+    """Pull the cohort meeting's cloud recordings and append any new URLs to
+    cohort.recordings. Idempotent (skips URLs already stored). Returns # added."""
+    if not (cohort.zoom_meeting_id or "").strip():
+        return 0
+    try:
+        from src.bbu_zoom import client as zoom
+        if not zoom.is_configured():
+            return 0
+        urls = await zoom.get_recording_urls(cohort.zoom_meeting_id)
+    except Exception:
+        return 0
+    if not urls:
+        return 0
+    existing = [r for r in (cohort.recordings or "").split("\n") if r]
+    have = set(existing)
+    added = [u for u in urls if u not in have]
+    if not added:
+        return 0
+    cohort.recordings = "\n".join(existing + added)
+    cohort.updated_at = _now()
+    db.add(cohort)
+    await db.commit()
+    return len(added)
+
+
 def access_until(cohort: BBUCohort) -> str:
     """The ISO date a cohort's member access is meant to lapse: (end_date, or
     start_date if no end) + access_months. '' when no anchor date is set."""
@@ -238,7 +363,7 @@ async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dic
     Completion is NEVER automated (dropping before completion = no cert — that's
     a deliberate admin act). Safe to re-run; returns what it changed."""
     today = _today()
-    started, expired = [], []
+    started, expired, prompts_posted, recordings_added = [], [], 0, 0
     cohorts = (await db.execute(select(BBUCohort).where(
         BBUCohort.org_id == org_id, BBUCohort.status != "closed"))).scalars().all()
     for c in cohorts:
@@ -257,8 +382,22 @@ async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dic
                 c.updated_at = _now()
                 db.add(c)
                 await db.commit()
+        # for any live (started, not closed) cohort: drip this week's community
+        # prompt + pull any new Zoom recordings
+        if not dry:
+            try:
+                prompts_posted += await post_due_prompts(db, c)
+            except Exception:
+                import traceback
+                print(f"[BBU] prompt drip failed for cohort {c.id}:\n{traceback.format_exc()[-400:]}", flush=True)
+            try:
+                recordings_added += await sync_recordings(db, c)
+            except Exception:
+                import traceback
+                print(f"[BBU] recording sync failed for cohort {c.id}:\n{traceback.format_exc()[-400:]}", flush=True)
     return {"ran": True, "dry": dry, "started": started, "expired": expired,
-            "started_count": len(started), "expired_count": len(expired)}
+            "started_count": len(started), "expired_count": len(expired),
+            "prompts_posted": prompts_posted, "recordings_added": recordings_added}
 
 
 async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, program: str = ""):

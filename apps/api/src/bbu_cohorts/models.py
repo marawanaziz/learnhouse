@@ -31,6 +31,12 @@ class BBUCohort(SQLModel, table=True):
     # which credential a completion upgrades: birth | postpartum | both | "" (none)
     credential_type: str = Field(default="", sa_column=Column(String(16)))
     recordings: str = Field(default="", sa_column=Column(String))        # newline-separated links
+    # JSON list of weekly discussion prompts auto-seeded from the program template;
+    # dripped one/week into the cohort community. Each: {week,title,content,emoji,posted_at}
+    weekly_prompts: str = Field(default="", sa_column=Column(String))
+    # numeric Zoom meeting/webinar ID for the cohort's recurring series (for
+    # auto-registering members + pulling recordings); zoom_link is the join URL.
+    zoom_meeting_id: str = Field(default="", sa_column=Column(String(40)))
     created_at: str = Field(default="", sa_column=Column(String(40)))
     updated_at: str = Field(default="", sa_column=Column(String(40)))
 

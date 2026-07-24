@@ -1,4 +1,5 @@
 """BBU cohorts — admin API (admin-key gated). Mounted at /api/v1/bbu/cohorts."""
+import json
 import os
 from datetime import datetime, timezone
 
@@ -25,6 +26,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _load_prompts(raw: str) -> list:
+    try:
+        v = json.loads(raw or "[]")
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
 async def _user_by_email(db: AsyncSession, email: str) -> User:
     u = (await db.execute(select(User).where(
         User.email == (email or "").strip().lower()))).scalars().first()
@@ -43,6 +52,8 @@ def _cohort_dict(c: BBUCohort, active: int = None) -> dict:
         "workbook_url": c.workbook_url, "credential_type": c.credential_type,
         "recordings": [r for r in (c.recordings or "").split("\n") if r],
         "access_until": svc.access_until(c),
+        "zoom_meeting_id": c.zoom_meeting_id,
+        "weekly_prompts": _load_prompts(c.weekly_prompts),
     }
     if active is not None:
         d["active_members"] = active
@@ -74,7 +85,10 @@ async def create_cohort(request: Request, db_session: AsyncSession = Depends(get
         access_months=int(b.get("access_months", 12 if program == "agency" else 6)),
         zoom_link=b.get("zoom_link", ""), workbook_url=b.get("workbook_url", ""),
         credential_type=(b.get("credential_type") or "").strip().lower(),
+        zoom_meeting_id=(b.get("zoom_meeting_id") or "").strip(),
         created_at=_now(), updated_at=_now())
+    # seed workbook + weekly prompts from the program template (blanks only)
+    svc.provision_defaults(c)
     db_session.add(c)
     await db_session.commit()
     await db_session.refresh(c)
@@ -116,13 +130,18 @@ async def update_cohort(cohort_id: int, request: Request, db_session: AsyncSessi
         raise HTTPException(404, "Cohort not found")
     b = await request.json()
     for f in ("name", "program", "start_date", "end_date", "status", "zoom_link",
-              "workbook_url", "credential_type", "course_uuid"):
+              "workbook_url", "credential_type", "course_uuid", "zoom_meeting_id"):
         if f in b:
             setattr(c, f, b[f])
     if "capacity" in b:
         c.capacity = int(b["capacity"] or 0)
     if "access_months" in b:
         c.access_months = int(b["access_months"] or 0)
+    if "weekly_prompts" in b:
+        # replace the whole prompt set (list of {week,title,content,emoji}); reset
+        # posted_at so re-seeded prompts drip fresh
+        pr = b["weekly_prompts"] or []
+        c.weekly_prompts = json.dumps([{**p, "posted_at": p.get("posted_at", "")} for p in pr]) if pr else ""
     if "add_recording" in b and b["add_recording"]:
         recs = [r for r in (c.recordings or "").split("\n") if r]
         recs.append(str(b["add_recording"]))
