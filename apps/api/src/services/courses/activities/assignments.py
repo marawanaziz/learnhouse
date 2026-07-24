@@ -2181,10 +2181,17 @@ async def create_assignment_submission(
                 overall_feedback=None,
                 auto_graded=True,
             )
-            # Ensure trailstep reflects completion (create_assignment_submission
-            # above already created it with complete=True, but if one already
-            # existed from a previous state we make sure it's marked done).
-            trailstep.complete = True
+            # BBU pass-to-advance: for auto-graded assignments the course step
+            # only counts complete when the learner PASSES. LearnHouse's default
+            # marks it done on submit regardless of score, but BBU certification
+            # courses require passing to advance (this replaces the old inline-
+            # quiz gating). Retries are enabled on these assignments so a
+            # failing learner can try again until they pass.
+            await db_session.refresh(assignment_user_submission)
+            total_max = sum(int(t.max_grade_value or 0) for t in assignment_tasks) or 100
+            graded_now = compute_assignment_grade(
+                int(assignment_user_submission.grade or 0), total_max, assignment.grading_type)
+            trailstep.complete = bool(graded_now.get("passed"))
             trailstep.update_date = str(datetime.now())
             db_session.add(trailstep)
             await db_session.commit()

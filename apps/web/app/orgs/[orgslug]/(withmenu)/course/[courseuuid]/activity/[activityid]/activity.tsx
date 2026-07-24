@@ -1596,6 +1596,7 @@ function AssignmentTools(props: {
   const { t } = useTranslation();
   const submission = useAssignmentSubmission() as any
   const session = useLHSession() as any;
+  const org = useOrg() as any;
   const queryClient = useQueryClient();
   const [gradeData, setGradeData] = React.useState<any>(null);
   const [isGradeModalOpen, setIsGradeModalOpen] = React.useState(false);
@@ -1614,6 +1615,9 @@ function AssignmentTools(props: {
         toast.success(t('assignments.assignment_submitted_success'))
         queryClient.invalidateQueries({ queryKey: queryKeys.assignments.submission(props.assignment?.assignment_uuid) })
         queryClient.invalidateQueries({ queryKey: queryKeys.assignments.taskSubmission(props.assignment?.assignment_uuid) })
+        // Refresh the course trail so the sequential/pass-to-advance gate and
+        // the Next button update immediately once the learner passes.
+        queryClient.invalidateQueries({ queryKey: queryKeys.trail.org(org?.id) })
       }
       else {
         toast.error(t('assignments.failed_submit_assignment'))
@@ -1636,6 +1640,7 @@ function AssignmentTools(props: {
         // editors snap back to an empty state without a hard reload.
         queryClient.invalidateQueries({ queryKey: queryKeys.assignments.submission(props.assignment?.assignment_uuid) });
         queryClient.invalidateQueries({ queryKey: queryKeys.assignments.taskSubmission(props.assignment?.assignment_uuid) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.trail.org(org?.id) });
         setGradeData(null);
         setIsGradeModalOpen(false);
         // Re-arm the auto-open on this fresh attempt so the next graded
