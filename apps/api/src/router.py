@@ -183,6 +183,8 @@ from src.bbu_community import router as bbu_community_router  # noqa: E402
 v1_router.include_router(bbu_community_router.router, prefix="/bbu/community", tags=["bbu-community"])
 from src.bbu_hsafsa import router as bbu_hsafsa_router  # noqa: E402
 v1_router.include_router(bbu_hsafsa_router.router, prefix="/bbu/hsa-fsa", tags=["bbu-hsafsa"])
+from src.bbu_personas import router as bbu_personas_router  # noqa: E402
+v1_router.include_router(bbu_personas_router.router, prefix="/bbu/personas", tags=["bbu-personas"])
 from src.bbu_credentials import router as bbu_credentials_router  # noqa: E402
 v1_router.include_router(bbu_credentials_router.router, prefix="/bbu/credentials", tags=["bbu-credentials"])
 from src.bbu_seats import router as bbu_seats_router  # noqa: E402
