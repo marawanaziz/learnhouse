@@ -447,3 +447,65 @@ async def reminders_due(request: Request, org_id: int = 1,
                             "days_to_expiry": days, "mark": mark})
                 break
     return {"count": len(due), "due": due}
+
+
+@router.get("/directory/stats")
+async def directory_stats(request: Request, org_id: int = 1,
+                          db_session: AsyncSession = Depends(get_db_session)):
+    """Diagnose why the public directory is empty: how many credentials exist,
+    how many are opted in, and how many pass the effective-status filter."""
+    _check(request)
+    rows = (await db_session.execute(select(BBUCredential).where(
+        BBUCredential.org_id == org_id))).scalars().all()
+    by_status, by_type = {}, {}
+    opted = eligible = listed = 0
+    for c in rows:
+        eff = svc.compute_effective_status(c)
+        by_status[eff] = by_status.get(eff, 0) + 1
+        by_type[c.credential_type] = by_type.get(c.credential_type, 0) + 1
+        if c.directory_opt_in:
+            opted += 1
+        if eff in ("provisional", "full"):
+            eligible += 1
+            if c.directory_opt_in:
+                listed += 1
+    return {"total_credentials": len(rows), "opted_in": opted,
+            "eligible_by_status": eligible, "currently_listed": listed,
+            "by_effective_status": by_status, "by_type": by_type}
+
+
+@router.post("/directory/bulk-opt-in")
+async def directory_bulk_opt_in(request: Request,
+                                db_session: AsyncSession = Depends(get_db_session)):
+    """Opt credentials into the public directory in bulk. `directory_opt_in`
+    defaults to False, so imported/auto-issued credentials never appeared in the
+    public directory. Body: {org_id?, only_active?, opt_in?, dry_run?}.
+    DRY-RUN by default."""
+    _check(request)
+    b = {}
+    try:
+        b = await request.json()
+    except Exception:
+        pass
+    org_id = int(b.get("org_id") or 1)
+    only_active = str(b.get("only_active", True)).lower() != "false"
+    opt_in = str(b.get("opt_in", True)).lower() != "false"
+    dry_run = str(b.get("dry_run", True)).lower() != "false"
+    rows = (await db_session.execute(select(BBUCredential).where(
+        BBUCredential.org_id == org_id))).scalars().all()
+    changed = 0
+    for c in rows:
+        if only_active and svc.compute_effective_status(c) not in ("provisional", "full"):
+            continue
+        if bool(c.directory_opt_in) == opt_in:
+            continue
+        changed += 1
+        if not dry_run:
+            c.directory_opt_in = opt_in
+            c.updated_at = svc._now()
+            db_session.add(c)
+    if not dry_run:
+        await db_session.commit()
+    return {"dry_run": dry_run, "org_id": org_id, "only_active": only_active,
+            "opt_in": opt_in, "would_change" if dry_run else "changed": changed,
+            "total_scanned": len(rows)}
