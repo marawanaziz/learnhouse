@@ -77,7 +77,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
           )}>
             {/* Organization logo */}
             <Link prefetch href={getUriWithOrg(org?.slug, '/')}>
-              <div className="w-52 h-52 rounded-3xl ring-1 ring-inset ring-white/10 bg-white flex items-center justify-center overflow-hidden">
+              <div className="w-72 h-72 rounded-3xl ring-1 ring-inset ring-white/10 bg-white flex items-center justify-center overflow-hidden">
                 {org?.logo_image ? (
                   <img
                     src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}

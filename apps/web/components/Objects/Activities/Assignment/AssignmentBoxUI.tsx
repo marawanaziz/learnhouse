@@ -1,5 +1,5 @@
 import { useAssignmentSubmission } from '@components/Contexts/Assignments/AssignmentSubmissionContext'
-import { BookPlus, BookUser, Code2, EllipsisVertical, FileUp, Forward, InfoIcon, ListTodo, MessageSquare, Save, Type } from 'lucide-react'
+import { BookPlus, BookUser, Check, Code2, EllipsisVertical, FileUp, InfoIcon, ListTodo, MessageSquare, Save, Type } from 'lucide-react'
 import React from 'react'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import { useTranslation } from 'react-i18next'
@@ -119,7 +119,8 @@ function AssignmentBoxUI({ type, view, currentPoints, currentFeedback, maxPoints
 
                 {/* Right side with buttons and actions */}
                 <div className='flex flex-wrap gap-2 items-center'>
-                    {showSavingDisclaimer &&
+                    {/* Teachers still get the manual "don't forget to save" nudge */}
+                    {showSavingDisclaimer && view !== 'student' &&
                         <div className='flex space-x-2 items-center font-semibold px-3 py-1 outline-dashed outline-red-200 text-red-400 sm:mr-5 rounded-full w-full sm:w-auto mb-2 sm:mb-0'>
                             <InfoIcon size={14} />
                             <p className='text-xs'>{t('activities.dont_forget_to_save')}</p>
@@ -136,14 +137,20 @@ function AssignmentBoxUI({ type, view, currentPoints, currentFeedback, maxPoints
                         </div>
                     }
 
-                    {/* Student button - only show if authenticated and not yet submitted/graded */}
+                    {/* Student: answers auto-save (team request Jul 2026) — a passive
+                        status chip replaces the old manual "Save your progress" button. */}
                     {view === 'student' && isAuthenticated && canStudentSave &&
-                        <div
-                            onClick={() => submitFC && submitFC()}
-                            className='flex px-2 py-1 cursor-pointer rounded-md space-x-2 items-center justify-center mx-auto w-full sm:w-auto bg-linear-to-bl text-emerald-700 bg-emerald-300/20 hover:bg-emerald-300/10 hover:outline-offset-4 active:outline-offset-1 linear transition-all outline-offset-2 outline-dashed outline-emerald-500/60'>
-                            <Forward size={14} />
-                            <p className='text-xs font-semibold'>{t('activities.save_your_progress')}</p>
-                        </div>
+                        (showSavingDisclaimer ? (
+                            <div className='flex px-3 py-1 space-x-2 items-center justify-center mx-auto w-full sm:w-auto rounded-full text-blue-500'>
+                                <Save size={14} className='animate-pulse' />
+                                <p className='text-xs font-semibold'>Saving…</p>
+                            </div>
+                        ) : (
+                            <div className='flex px-3 py-1 space-x-2 items-center justify-center mx-auto w-full sm:w-auto rounded-full text-emerald-600'>
+                                <Check size={14} />
+                                <p className='text-xs font-semibold'>Progress saved automatically</p>
+                            </div>
+                        ))
                     }
 
                     {/* Grading controls — shared between 'grading' and 'custom-grading' views */}

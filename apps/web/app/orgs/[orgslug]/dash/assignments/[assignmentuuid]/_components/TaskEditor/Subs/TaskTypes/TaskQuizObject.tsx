@@ -283,6 +283,20 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
 
     /* STUDENT VIEW CODE */
 
+    // Auto-save (team request Jul 2026): a short moment after the student
+    // changes an answer, persist it automatically — no manual "Save progress"
+    // click required. Debounced so rapid toggles collapse into one save.
+    const autoSaveTimer = React.useRef<any>(null);
+    useEffect(() => {
+        if (view !== 'student') return;
+        const hasChanges = JSON.stringify(initialUserSubmissions.submissions) !== JSON.stringify(userSubmissions.submissions);
+        if (!hasChanges) return;
+        if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+        autoSaveTimer.current = setTimeout(() => { submitFC(); }, 800);
+        return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userSubmissions]);
+
     /* GRADING VIEW CODE */
     const [userSubmissionObject, setUserSubmissionObject] = useState<any>(null);
     async function getAssignmentTaskSubmissionFromIdentifiedUserUI() {
