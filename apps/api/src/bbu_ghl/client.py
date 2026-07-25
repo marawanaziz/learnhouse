@@ -60,8 +60,10 @@ class GHLClient:
     # ---------------------------------------------------------------- contacts
     async def upsert_contact(self, email: str, first_name: str = "",
                              last_name: str = "", phone: str = "",
-                             fields: Optional[dict] = None) -> Optional[str]:
-        """Upsert by email. `fields` maps bbu__* field keys -> values."""
+                             fields: Optional[dict] = None,
+                             tags: Optional[list] = None) -> Optional[str]:
+        """Upsert by email. `fields` maps bbu__* field keys -> values; `tags`
+        are added (workflow triggers)."""
         body: dict = {"locationId": LOCATION_ID, "email": email}
         if first_name:
             body["firstName"] = first_name
@@ -74,10 +76,37 @@ class GHLClient:
                 {"key": k, "field_value": v} for k, v in fields.items()
                 if v is not None
             ]
+        if tags:
+            body["tags"] = tags
         st, d = await self._req("POST", "/contacts/upsert", json=body)
         if st not in (200, 201):
             raise RuntimeError(f"upsert_contact {st}: {str(d)[:200]}")
         return (d.get("contact") or {}).get("id")
+
+    # ------------------------------------------------------- custom fields
+    async def list_custom_fields(self) -> list:
+        st, d = await self._req("GET", f"/locations/{LOCATION_ID}/customFields")
+        if st not in (200, 201):
+            raise RuntimeError(f"list_custom_fields {st}: {str(d)[:200]}")
+        return d.get("customFields") or d.get("custom_fields") or []
+
+    async def ensure_text_field(self, name: str) -> str:
+        """Ensure a contact TEXT custom field exists; return the key to use in
+        upsert `customFields`. Idempotent — reuses an existing field by name."""
+        for f in await self.list_custom_fields():
+            if (f.get("name") or "").strip().lower() == name.strip().lower():
+                # GHL upsert matches on the short unique key (fieldKey minus the
+                # "contact." prefix); fall back to fieldKey/id as available.
+                fk = f.get("fieldKey") or f.get("key") or ""
+                return fk.split(".", 1)[-1] if fk else (f.get("id") or "")
+        st, d = await self._req("POST", f"/locations/{LOCATION_ID}/customFields", json={
+            "name": name, "dataType": "TEXT", "model": "contact",
+        })
+        if st not in (200, 201):
+            raise RuntimeError(f"create_custom_field {st}: {str(d)[:200]}")
+        f = d.get("customField") or d
+        fk = f.get("fieldKey") or f.get("key") or ""
+        return fk.split(".", 1)[-1] if fk else (f.get("id") or "")
 
     # ----------------------------------------------------- enrollment records
     async def create_enrollment(self, properties: dict) -> Optional[str]:
