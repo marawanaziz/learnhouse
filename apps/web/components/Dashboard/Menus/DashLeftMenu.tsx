@@ -43,6 +43,7 @@ import {
   IdentificationCard,
   Ticket,
   Handshake,
+  Flag,
 } from '@phosphor-icons/react'
 import { DiscordIcon } from '@components/Objects/Icons/DiscordIcon'
 import CommandPaletteTrigger from '@components/Dashboard/CommandPalette/CommandPaletteTrigger'
@@ -443,6 +444,15 @@ function DashLeftMenu() {
               label="Affiliates"
               isCollapsed={isCollapsed}
               active={isActivePath('/dash/affiliates')}
+            />
+
+            {/* BBU community moderation — flagged/reported posts queue */}
+            <MenuLink
+              href="/dash/flagged"
+              icon={<Flag size={20} weight="fill" />}
+              label="Flagged Posts"
+              isCollapsed={isCollapsed}
+              active={isActivePath('/dash/flagged')}
             />
 
             {showLibrary && (

@@ -5,8 +5,9 @@ import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 
 dayjs.extend(relativeTime)
-import { Edit, Trash2, MoreVertical } from 'lucide-react'
+import { Edit, Trash2, MoreVertical, Flag } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { getAPIUrl } from '@services/config/config'
 import UserAvatar from '@components/Objects/UserAvatar'
 import { useRouter } from 'next/navigation'
 import { getUriWithOrg } from '@services/config/config'
@@ -147,6 +148,28 @@ export function DiscussionDetail({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+          )}
+          {!isAuthor && session?.data?.user && (
+            <button
+              aria-label="Report post"
+              title="Report this post"
+              onClick={async () => {
+                if (!window.confirm('Report this post to the moderators?')) return
+                try {
+                  const res = await fetch(`${getAPIUrl()}bbu/community/report`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                    credentials: 'include',
+                    body: JSON.stringify({ discussion_id: discussion.id, reason: 'reported' }),
+                  })
+                  if (res.ok) toast.success('Reported — thanks, our team will review it.')
+                  else toast.error('Could not report. Please try again.')
+                } catch { toast.error('Could not report. Please try again.') }
+              }}
+              className="flex-shrink-0 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <Flag size={18} />
+            </button>
           )}
         </div>
 
