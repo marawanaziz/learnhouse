@@ -179,6 +179,8 @@ v1_router.include_router(bbu_cohorts_router.router, prefix="/bbu/cohorts", tags=
 
 from src.bbu_people import router as bbu_people_router  # noqa: E402
 v1_router.include_router(bbu_people_router.router, prefix="/bbu/people", tags=["bbu-people"])
+from src.bbu_community import router as bbu_community_router  # noqa: E402
+v1_router.include_router(bbu_community_router.router, prefix="/bbu/community", tags=["bbu-community"])
 from src.bbu_credentials import router as bbu_credentials_router  # noqa: E402
 v1_router.include_router(bbu_credentials_router.router, prefix="/bbu/credentials", tags=["bbu-credentials"])
 from src.bbu_seats import router as bbu_seats_router  # noqa: E402
