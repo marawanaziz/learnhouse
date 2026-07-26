@@ -372,8 +372,10 @@ async def credentials_roster(request: Request, q: str = "", status: str = "",
             "credential_id": c.id, "user_id": c.user_id,
             "name": name or "(no name)", "email": email,
             "type": c.credential_type,
-            "track": "Cross-certification" if (c.source or "") == "cross_cert" else (
-                "Manual" if (c.source or "") == "manual" else "First-year training"),
+            "track": {"cross_cert": "Cross-certification", "manual": "Manual",
+                      "training": "First-year training",
+                      "accredible": "Imported (Accredible)"}.get(
+                          (c.source or "").strip(), (c.source or "unknown")),
             "status": eff,
             "issued": (c.full_effective_at or c.issued_at or "")[:10],
             "expires": exp_raw[:10],
@@ -666,7 +668,7 @@ button.ghost:hover{{background:#dbecf8}}
         <input id=rq placeholder="search name or email" style="width:220px" onkeyup="if(event.key==='Enter')loadRoster()">
         <select id=rstatus><option value="">any status</option><option value=full>full</option><option value=provisional>provisional</option><option value=lapsed>lapsed</option><option value=expired>expired</option></select>
         <select id=rtype><option value="">any type</option><option value=birth>birth</option><option value=postpartum>postpartum</option></select>
-        <select id=rsource><option value="">any track</option><option value=training>First-year training</option><option value=cross_cert>Cross-certification</option><option value=manual>Manual</option></select>
+        <select id=rsource><option value="">any track</option><option value=accredible>Imported (Accredible)</option><option value=training>First-year training</option><option value=cross_cert>Cross-certification</option><option value=manual>Manual</option></select>
         <select id=rexp><option value=0>any expiry</option><option value=30>expiring ≤30 days</option><option value=60>expiring ≤60 days</option><option value=90>expiring ≤90 days</option><option value=180>expiring ≤180 days</option></select>
         <button onclick=loadRoster()>Filter</button>
         <button class=ghost onclick=exportRoster()>⬇ Export CSV</button>
