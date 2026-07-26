@@ -772,6 +772,7 @@ button.ghost:hover{{background:#dbecf8}}
   <div class="tab" data-t="credentials">Credentials</div>
   <div class="tab" data-t="seats">Seat codes</div>
   <div class="tab" data-t="store">Store</div>
+  <div class="tab" data-t="sponsors">Sponsored access</div>
   <div class="tab" data-t="circlehist">Circle history</div>
 </div>
 <div class="wrap" style="padding-top:22px;padding-bottom:50px">
@@ -892,6 +893,47 @@ button.ghost:hover{{background:#dbecf8}}
     </div>
   </div>
 
+
+  <div class="panel" id=p-sponsors>
+    <div class=card><h2>Sponsored access &mdash; free enrollment, no Stripe</h2>
+      <p class=muted style="margin-top:-.6rem">For people whose seat someone else paid for: grant recipients, CFD families, scholarships, staff. They are enrolled directly &mdash; no checkout, no card, no $0 payment page. Everyone added here lands in that sponsor's report, together with the matching Circle history.</p>
+      <div class=row style="flex-wrap:wrap;gap:.4rem">
+        <input id=sp-name placeholder="Sponsor name (e.g. BCBS Illinois)" style="width:230px">
+        <select id=sp-kind><option value=grant>grant</option><option value=partner>partner org</option><option value=scholarship>scholarship</option><option value=clinic>clinic / hospital</option><option value=internal>staff / internal</option></select>
+        <input id=sp-seats type=number placeholder="seat cap (0 = unlimited)" style="width:170px">
+        <input id=sp-legacy placeholder="old Circle codes (e.g. BCBSIL,BCBS)" style="width:230px">
+        <button onclick=createSponsor()>Create</button>
+      </div>
+      <div class=row style="margin-top:.4rem"><select id=sp-courses multiple size=4 style="min-width:420px"></select>
+        <span class=muted style="max-width:280px">Hold &#8984;/Ctrl to pick every course this sponsor covers.</span></div>
+      <div class=muted id=sp-msg></div>
+    </div>
+    <div class=card><h2>Sponsors</h2>
+      <table id=t-sponsors><thead><tr><th>Sponsor</th><th>Type</th><th>Courses</th><th>Seats</th><th>Share link</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class=card><h2>Add people</h2>
+      <div class=row><select id=sp-target></select></div>
+      <p class=muted style="margin-bottom:.3rem">Paste emails &mdash; commas, semicolons or one per line. Accounts are created automatically; recipients just get a set-password email.</p>
+      <textarea id=sp-emails placeholder="jane@example.com&#10;sam@example.com" style="width:100%;height:110px"></textarea>
+      <div class=row style="margin-top:.5rem">
+        <button onclick="bulkEnroll(true)">Preview</button>
+        <button onclick="bulkEnroll(false)">Enrol them</button>
+        <input id=sp-codecount type=number placeholder="# codes" style="width:110px">
+        <button class=ghost onclick=makeCodes()>Generate codes instead</button>
+      </div>
+      <div class=muted id=sp-enroll-msg></div>
+      <textarea id=sp-codes style="width:100%;height:0;border:0;opacity:0;position:absolute"></textarea>
+    </div>
+    <div class=card><h2>Funder report</h2>
+      <p class=muted style="margin-top:-.6rem">Everyone a sponsor covered &mdash; new enrollments plus the Circle-era redemptions from its old codes, deduplicated by person. This is the file a funder gets.</p>
+      <div class=row><select id=sp-report-target></select><button onclick=loadSponsorReport()>Run</button><button class=ghost onclick=exportSponsorReport()>&#11015; Export CSV</button></div>
+      <div id=sp-report-sum class=row style="gap:.5rem;flex-wrap:wrap;margin:.5rem 0"></div>
+      <div style="max-height:420px;overflow:auto">
+        <table id=t-spreport><thead><tr><th>Name</th><th>Email</th><th>Date</th><th>Granted via</th><th>Source</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
   <div class="panel" id=p-circlehist>
     <div class=card><h2>Coupon history from Circle</h2>
       <p class=muted style="margin-top:-.6rem">Every coupon redemption from the old Circle community, archived here before it was shut down &mdash; who redeemed which code, for which course, and when. This is the record for funder and grant reporting. It is history only: nothing here grants access or issues a certificate.</p>
@@ -926,6 +968,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
   if(t.dataset.t==='credentials')loadCredRoster();
   if(t.dataset.t==='circlehist')loadCircleHist();
+  if(t.dataset.t==='sponsors')loadSponsors();
 }});
 // Stripe sync — the platform's products/coupons must exist in Stripe to redeem
 function loadStripeSync(){{
@@ -953,6 +996,86 @@ function runStripeSync(reset){{
       (errs.length?` — ${{errs.length}} error(s): ${{errs.map(e=>esc(e.code||e.product)+': '+esc(e.error)).join(' | ')}}`:'');
     loadStripeSync(); loadCoupons&&loadCoupons();
   }});
+}}
+// Sponsored access — free enrollment with no Stripe in the path
+const SPAPI='/api/v1/bbu/sponsors';
+let SPONSORS=[];
+const spj=(u,o)=>fetch(SPAPI+u,Object.assign({{credentials:'include',headers:{{'Content-Type':'application/json'}}}},o||{{}})).then(r=>r.json());
+function loadSponsors(){{
+  if(!document.getElementById('sp-courses').options.length){{
+    j('/courses').then(cs=>{{document.getElementById('sp-courses').innerHTML=(cs||[]).map(c=>
+      `<option value="${{esc(c.course_uuid||c.uuid)}}">${{esc(c.name||c.title)}}</option>`).join('');}});
+  }}
+  spj('').then(d=>{{
+    SPONSORS=Array.isArray(d)?d:[];
+    const opts=SPONSORS.map(s=>`<option value="${{s.id}}">${{esc(s.name)}}</option>`).join('');
+    document.getElementById('sp-target').innerHTML=opts;
+    document.getElementById('sp-report-target').innerHTML=opts;
+    document.querySelector('#t-sponsors tbody').innerHTML=SPONSORS.map(s=>{{
+      const seats=s.seat_limit?`${{s.seats_used}} / ${{s.seat_limit}}`:`${{s.seats_used}} (no cap)`;
+      const link=s.join_enabled&&s.join_token
+        ? `<code style="font-size:.72rem">${{location.origin}}${{SPAPI}}/join/${{esc(s.join_token)}}</code>`
+        : '<span class=muted>off</span>';
+      return `<tr><td><b>${{esc(s.name)}}</b>${{s.legacy_codes?`<br><span class=muted style="font-size:.75rem">Circle: ${{esc(s.legacy_codes)}}</span>`:''}}</td>`+
+        `<td>${{esc(s.kind)}}</td><td>${{s.courses}}</td><td>${{seats}}</td><td>${{link}}</td>`+
+        `<td><button class=ghost onclick="copyJoin('${{esc(s.join_token)}}')">Copy link</button></td></tr>`;
+    }}).join('')||'<tr><td colspan=6 class=muted>No sponsors yet.</td></tr>';
+  }});
+}}
+function copyJoin(t){{ if(!t)return; navigator.clipboard.writeText(location.origin+SPAPI+'/join/'+t);
+  document.getElementById('sp-msg').textContent='Share link copied.'; }}
+function createSponsor(){{
+  const courses=[...document.getElementById('sp-courses').selectedOptions].map(o=>o.value).join(',');
+  const name=document.getElementById('sp-name').value.trim();
+  if(!name||!courses){{document.getElementById('sp-msg').textContent='Name and at least one course are required.';return;}}
+  spj('',{{method:'POST',body:JSON.stringify({{name,kind:document.getElementById('sp-kind').value,
+    course_uuids:courses, seat_limit:parseInt(document.getElementById('sp-seats').value||'0',10),
+    legacy_codes:document.getElementById('sp-legacy').value.trim(), join_enabled:true}})}}).then(r=>{{
+      document.getElementById('sp-msg').textContent=r.ok?'Created ✓':(r.detail||'Error');
+      if(r.ok){{document.getElementById('sp-name').value='';loadSponsors();}}
+    }});
+}}
+function bulkEnroll(dry){{
+  const id=document.getElementById('sp-target').value;
+  const text=document.getElementById('sp-emails').value.trim();
+  if(!id||!text)return;
+  document.getElementById('sp-enroll-msg').textContent=dry?'Checking…':'Enrolling…';
+  spj('/'+id+'/bulk-enroll',{{method:'POST',body:JSON.stringify({{text,dry_run:!!dry}})}}).then(r=>{{
+    if(r.detail){{document.getElementById('sp-enroll-msg').textContent=r.detail;return;}}
+    const c=r.counts||{{}};
+    document.getElementById('sp-enroll-msg').textContent=
+      (dry?'Preview — ':'Done — ')+Object.entries(c).map(([k,v])=>`${{v}} ${{k.replace(/_/g,' ')}}`).join(', ');
+    if(!dry)loadSponsors();
+  }});
+}}
+function makeCodes(){{
+  const id=document.getElementById('sp-target').value;
+  const n=parseInt(document.getElementById('sp-codecount').value||'0',10);
+  if(!id||!n)return;
+  spj('/'+id+'/codes',{{method:'POST',body:JSON.stringify({{count:n}})}}).then(r=>{{
+    if(r.detail){{document.getElementById('sp-enroll-msg').textContent=r.detail;return;}}
+    const ta=document.getElementById('sp-codes'); ta.value=(r.codes||[]).join('  ');
+    ta.select(); try{{document.execCommand('copy')}}catch(e){{}}
+    document.getElementById('sp-enroll-msg').innerHTML=`Generated ${{r.count}} codes (copied):<br><code>${{esc((r.codes||[]).join('  '))}}</code>`;
+  }});
+}}
+function loadSponsorReport(){{
+  const id=document.getElementById('sp-report-target').value; if(!id)return;
+  spj('/'+id+'/report').then(d=>{{
+    if(d.detail){{document.getElementById('sp-report-sum').textContent=d.detail;return;}}
+    document.getElementById('sp-report-sum').innerHTML=
+      `<span class=badge>${{d.unique_people}} people served</span>`+
+      `<span class=badge>${{d.from_platform}} on this platform</span>`+
+      `<span class=badge>${{d.from_circle}} from Circle</span>`;
+    document.querySelector('#t-spreport tbody').innerHTML=(d.rows||[]).map(r=>
+      `<tr><td>${{esc(r.name)}}</td><td>${{esc(r.email)}}</td><td>${{esc(r.date)}}</td>`+
+      `<td>${{esc(r.via)}}</td><td>${{esc(r.source)}}</td></tr>`).join('')
+      ||'<tr><td colspan=5 class=muted>Nobody yet.</td></tr>';
+  }});
+}}
+function exportSponsorReport(){{
+  const id=document.getElementById('sp-report-target').value; if(!id)return;
+  window.open(SPAPI+'/'+id+'/report?fmt=csv','_blank');
 }}
 // Circle coupon history (archived before Circle was shut down)
 let CHPAGE=1, CHCODES=0;

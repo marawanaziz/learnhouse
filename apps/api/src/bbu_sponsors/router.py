@@ -157,6 +157,52 @@ async def make_codes(sid: int, request: Request,
     return {"sponsor": s.name, "count": len(codes), "codes": codes}
 
 
+@router.post("/{sid}/remove")
+async def remove_enrollment(sid: int, request: Request,
+                            db_session: AsyncSession = Depends(get_db_session)):
+    """Body: {email, revoke_access?}. Take someone off a sponsor.
+
+    A grant report goes to a funder, so a row added by mistake has to be
+    removable. Attribution is dropped by default; `revoke_access` also pulls
+    them out of the covered courses' access groups.
+    """
+    b = await request.json()
+    await authorize_admin(request, db_session, b.get("key", ""))
+    s = (await db_session.execute(select(BBUSponsor).where(
+        BBUSponsor.id == sid, BBUSponsor.org_id == ORG))).scalars().first()
+    if not s:
+        raise HTTPException(404, "Sponsor not found")
+    email = (b.get("email") or "").strip().lower()
+    rows = (await db_session.execute(select(BBUSponsoredEnrollment).where(
+        BBUSponsoredEnrollment.sponsor_id == sid,
+        BBUSponsoredEnrollment.email == email))).scalars().all()
+    if not rows:
+        raise HTTPException(404, "Not enrolled under this sponsor")
+
+    revoked = 0
+    if b.get("revoke_access"):
+        from src.db.usergroups import UserGroup, UserGroupUser
+        user = (await db_session.execute(select(User).where(
+            User.email == email))).scalars().first()
+        if user:
+            for cu in svc.course_list(s.course_uuids):
+                grp = (await db_session.execute(select(UserGroup).where(
+                    UserGroup.org_id == ORG,
+                    UserGroup.description == cu))).scalars().first()
+                if not grp:
+                    continue
+                link = (await db_session.execute(select(UserGroupUser).where(
+                    UserGroupUser.usergroup_id == grp.id,
+                    UserGroupUser.user_id == user.id))).scalars().first()
+                if link:
+                    await db_session.delete(link)
+                    revoked += 1
+    for r in rows:
+        await db_session.delete(r)
+    await db_session.commit()
+    return {"removed": len(rows), "courses_revoked": revoked, "email": email}
+
+
 @router.get("/{sid}/report")
 async def sponsor_report(sid: int, request: Request, fmt: str = "json",
                          db_session: AsyncSession = Depends(get_db_session)):
