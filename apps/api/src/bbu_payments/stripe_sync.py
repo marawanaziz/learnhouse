@@ -102,7 +102,7 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
     probe = next((c.stripe_coupon_id for c in coupons if c.stripe_coupon_id), "")
     if probe and not reset:
         try:
-            stripe.Coupon.retrieve(probe)
+            stripe.Coupon.retrieve(probe, stripe_version=coupon_svc.COUPON_API_VERSION)
         except Exception:
             stale = True
     reset = reset or stale
@@ -138,11 +138,13 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
         # it and rebuild the pair rather than leaving it live.
         if want and c.stripe_coupon_id:
             try:
-                live = stripe.Coupon.retrieve(c.stripe_coupon_id)
+                live = stripe.Coupon.retrieve(c.stripe_coupon_id,
+                                              stripe_version=coupon_svc.COUPON_API_VERSION)
                 have = set(coupon_svc._scope_of(live))
                 if have != set(want):
                     try:
-                        stripe.Coupon.delete(c.stripe_coupon_id)
+                        stripe.Coupon.delete(c.stripe_coupon_id,
+                                             stripe_version=coupon_svc.COUPON_API_VERSION)
                     except Exception:
                         pass
                     c.stripe_coupon_id = ""

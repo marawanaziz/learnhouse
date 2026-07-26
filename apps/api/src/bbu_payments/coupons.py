@@ -14,11 +14,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.bbu_payments.models import BBUCoupon
 
-# The Stripe account's default API version (2026-06-24.dahlia) restructured the
-# promotion_codes create shape and rejects the classic top-level `coupon` param.
-# Pin ONLY the promotion-code calls to a stable version where `coupon` works;
-# everything else (Coupon.create, Checkout) stays on the account default.
+# The Stripe account's default API version (2026-06-24.dahlia) restructured
+# several shapes: promotion_codes rejects the classic top-level `coupon` param,
+# and Coupon.create silently DROPS `applies_to` — the coupon is created, comes
+# back unrestricted, and since applies_to is immutable it is permanently valid on
+# every product. That turned course-scoped 100%-off codes into
+# discount-anything codes. Pin both to a stable version where they behave;
+# Checkout stays on the account default.
 PROMO_API_VERSION = "2023-10-16"
+COUPON_API_VERSION = "2023-10-16"
 
 
 def _now() -> str:
@@ -76,7 +80,7 @@ def ensure_stripe_objects(coupon: BBUCoupon,
                 params["redeem_by"] = int(dt.timestamp())
             except Exception:
                 pass
-        c = stripe.Coupon.create(**params)
+        c = stripe.Coupon.create(stripe_version=COUPON_API_VERSION, **params)
         # Read back the scope. applies_to is immutable after creation, so if
         # Stripe didn't record it the coupon is permanently unrestricted — a
         # 100%-off code valid on every course. Fail loudly rather than leave that
@@ -85,7 +89,7 @@ def ensure_stripe_objects(coupon: BBUCoupon,
             got = _scope_of(c)
             if not got:
                 try:
-                    stripe.Coupon.delete(c["id"])
+                    stripe.Coupon.delete(c["id"], stripe_version=COUPON_API_VERSION)
                 except Exception:
                     pass
                 raise RuntimeError(
