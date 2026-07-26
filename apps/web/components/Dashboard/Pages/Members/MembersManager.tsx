@@ -89,7 +89,10 @@ function MembersManager() {
   // ---- all courses (for the picker) ----
   const { data: allCourses } = useQuery({
     queryKey: ['members', 'all-courses', org?.slug],
-    queryFn: () => apiFetch(`${getAPIUrl()}courses/org_slug/${org.slug}/page/1/limit/100`, token),
+    // include_unpublished=true is REQUIRED here: BBU courses are non-public and
+    // usergroup-gated, so without it even an admin gets an empty list back and
+    // the "Link courses" picker renders with nothing to select.
+    queryFn: () => apiFetch(`${getAPIUrl()}courses/org_slug/${org.slug}/page/1/limit/100?include_unpublished=true`, token),
     enabled: enabled && !!org?.slug,
   })
   const courses: any[] = Array.isArray(allCourses) ? allCourses : (allCourses?.items || [])
