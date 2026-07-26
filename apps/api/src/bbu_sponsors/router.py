@@ -181,7 +181,8 @@ async def remove_enrollment(sid: int, request: Request,
 
     revoked = 0
     if b.get("revoke_access"):
-        from src.db.usergroups import UserGroup, UserGroupUser
+        from src.db.usergroups import UserGroup
+        from src.db.usergroup_user import UserGroupUser
         user = (await db_session.execute(select(User).where(
             User.email == email))).scalars().first()
         if user:
