@@ -84,11 +84,16 @@ def ensure_stripe_objects(coupon: BBUCoupon,
         try:
             found = stripe.PromotionCode.list(code=wanted, limit=1,
                                               stripe_version=PROMO_API_VERSION)
-            hit = (found.get("data") or [None])[0]
+            # ListObject exposes .data; it is not a plain dict, so .get("data")
+            # raises and would silently send us down the create path -> the
+            # "already exists" failure this branch exists to avoid.
+            data = list(getattr(found, "data", None) or [])
+            hit = data[0] if data else None
         except Exception:
             hit = None
         if hit:
-            hit_coupon = (hit.get("coupon") or {}).get("id")
+            hit_c = hit["coupon"]
+            hit_coupon = hit_c["id"] if not isinstance(hit_c, str) else hit_c
             if hit_coupon == coupon.stripe_coupon_id:
                 coupon.stripe_promo_id = hit["id"]
                 return
