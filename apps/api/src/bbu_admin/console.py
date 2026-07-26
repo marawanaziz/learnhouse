@@ -332,6 +332,7 @@ async def credentials_user(request: Request, email: str, db_session: AsyncSessio
 async def credentials_roster(request: Request, q: str = "", status: str = "",
                              ctype: str = "", source: str = "",
                              expiring_days: int = 0, fmt: str = "json",
+                             page: int = 1, per_page: int = 50,
                              db_session: AsyncSession = Depends(get_db_session)):
     """THE credential registry the admin team manages from: every credential
     holder with status, expiry, days-to-expiry and CEUs. Filterable by status,
@@ -395,6 +396,7 @@ async def credentials_roster(request: Request, q: str = "", status: str = "",
             w.writerow(r)
         return Response(buf.getvalue(), media_type="text/csv", headers={
             "Content-Disposition": "attachment; filename=bbu-credentials.csv"})
+    # Summary always reflects the FULL filtered set, not the current page.
     summary = {"total": len(out)}
     for r in out:
         summary[r["status"]] = summary.get(r["status"], 0) + 1
@@ -402,7 +404,15 @@ async def credentials_roster(request: Request, q: str = "", status: str = "",
     exp90 = len([r for r in out if r["days_to_expiry"] is not None and 0 <= r["days_to_expiry"] <= 90])
     summary["expiring_30d"] = exp30
     summary["expiring_90d"] = exp90
-    return {"summary": summary, "rows": out}
+    total = len(out)
+    per_page = max(1, min(500, per_page))
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    start = (page - 1) * per_page
+    return {"summary": summary,
+            "page": page, "per_page": per_page, "pages": pages, "total": total,
+            "showing": [start + 1 if total else 0, min(start + per_page, total)],
+            "rows": out[start:start + per_page]}
 
 
 @router.post("/credentials/action")
@@ -670,12 +680,14 @@ button.ghost:hover{{background:#dbecf8}}
         <select id=rtype><option value="">any type</option><option value=birth>birth</option><option value=postpartum>postpartum</option></select>
         <select id=rsource><option value="">any track</option><option value=accredible>Imported (Accredible)</option><option value=training>First-year training</option><option value=cross_cert>Cross-certification</option><option value=manual>Manual</option></select>
         <select id=rexp><option value=0>any expiry</option><option value=30>expiring ≤30 days</option><option value=60>expiring ≤60 days</option><option value=90>expiring ≤90 days</option><option value=180>expiring ≤180 days</option></select>
-        <button onclick=loadRoster()>Filter</button>
-        <button class=ghost onclick=exportRoster()>⬇ Export CSV</button>
+        <button onclick="RPAGE=1;loadRoster()">Filter</button>
+        <select id=rper onchange="RPAGE=1;loadRoster()"><option value=50>50 / page</option><option value=100>100 / page</option><option value=250>250 / page</option><option value=500>500 / page</option></select>
+        <button class=ghost onclick=exportRoster()>⬇ Export CSV (all matching)</button>
       </div>
-      <div style="max-height:460px;overflow:auto;margin-top:.6rem">
+      <div style="max-height:520px;overflow:auto;margin-top:.6rem">
         <table id=t-roster><thead><tr><th>Member</th><th>Credential</th><th>Track</th><th>Status</th><th>Valid through</th><th>Days left</th></tr></thead><tbody></tbody></table>
       </div>
+      <div class=row id=rpager style="justify-content:space-between;align-items:center;margin-top:.6rem"></div>
     </div>
     <div class=card><h2>Actions</h2>
       <div class=row>
@@ -896,8 +908,11 @@ function rosterQS(){{
   const ex=document.getElementById('rexp').value; if(ex&&ex!=='0')p.set('expiring_days',ex);
   return p.toString();
 }}
+let RPAGE=1;
+function goPage(n){{RPAGE=n;loadRoster();document.querySelector('#t-roster').scrollIntoView({{block:'nearest'}});}}
 function loadRoster(){{
-  j('/credentials/roster?'+rosterQS()).then(d=>{{
+  const per=document.getElementById('rper').value||50;
+  j('/credentials/roster?'+rosterQS()+'&page='+RPAGE+'&per_page='+per).then(d=>{{
     const s=d.summary||{{}};
     const chip=(l,v,c)=>`<span style="background:${{c}};border-radius:999px;padding:.25rem .7rem;font-size:.8rem;font-weight:700">${{l}}: ${{v||0}}</span>`;
     document.getElementById('cr-summary').innerHTML=
@@ -913,6 +928,18 @@ function loadRoster(){{
         +`<td>${{esc(r.expires||'—')}}</td>`
         +`<td style="color:${{col}};font-weight:700">${{dl===null?'—':(dl<0?Math.abs(dl)+'d ago':dl+'d')}}</td></tr>`;
     }}).join('')||'<tr><td colspan=6 class=muted>No credentials match those filters.</td></tr>';
+    const pg=document.getElementById('rpager');
+    if(!d.total){{pg.innerHTML='';return;}}
+    const btn=(lbl,n,dis)=>`<button class=ghost ${{dis?'disabled style="opacity:.4;cursor:default"':''}} ${{dis?'':'onclick=goPage('+n+')'}}>${{lbl}}</button>`;
+    let nums='';
+    const span=2, from=Math.max(1,d.page-span), to=Math.min(d.pages,d.page+span);
+    if(from>1) nums+=btn('1',1,false)+(from>2?'<span class=muted style="padding:0 .3rem">…</span>':'');
+    for(let i=from;i<=to;i++) nums+= i===d.page
+      ? `<button style="background:${{'#113d5d'}};color:#fff;font-weight:700">${{i}}</button>`
+      : btn(String(i),i,false);
+    if(to<d.pages) nums+=(to<d.pages-1?'<span class=muted style="padding:0 .3rem">…</span>':'')+btn(String(d.pages),d.pages,false);
+    pg.innerHTML=`<span class=muted>Showing <b>${{d.showing[0]}}–${{d.showing[1]}}</b> of <b>${{d.total}}</b></span>`
+      +`<span style="display:flex;gap:.25rem;align-items:center">${{btn('‹ Prev',d.page-1,d.page<=1)}}${{nums}}${{btn('Next ›',d.page+1,d.page>=d.pages)}}</span>`;
   }});
 }}
 function exportRoster(){{
