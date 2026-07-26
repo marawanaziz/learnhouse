@@ -330,22 +330,23 @@ async def send_campaign(request: Request, db_session: AsyncSession = Depends(get
     if not tmpl_name:
         raise HTTPException(400, "template_name required")
 
+    # Templates live in the repo (same HTML pushed to GHL). Reading them back out
+    # of GHL needs a scope this token doesn't have, and sending is a direct
+    # Conversations call anyway, so the local copy is the source of truth.
+    tpath = os.path.join(os.path.dirname(__file__), "templates.json")
+    with open(tpath) as f:
+        TEMPLATES = json.load(f)
+    tmpl = next((t for t in TEMPLATES
+                 if tmpl_name.lower() in t["name"].lower()), None)
+    if not tmpl:
+        raise HTTPException(404, f"template '{tmpl_name}' not found. Available: "
+                                 + ", ".join(t["name"] for t in TEMPLATES)[:400])
+    subject = tmpl["subject"]
+    html = tmpl["html"]
+    if not audience or audience == "password_setup":
+        audience = tmpl.get("audience", "password_setup")
+
     async with GHLClient() as ghl:
-        # locate the stored template
-        st, d = await ghl._req("GET", f"/emails/builder?locationId={LOCATION_ID}&limit=200")
-        items = (d or {}).get("builders") or []
-        tmpl = next((t for t in items
-                     if tmpl_name.lower() in ((t.get("name") or "")).lower()), None)
-        if not tmpl:
-            raise HTTPException(404, f"template '{tmpl_name}' not found in GHL")
-        subject = tmpl.get("subject") or tmpl.get("name") or "Birth & Baby University"
-        html = tmpl.get("html") or ""
-        if not html:
-            st2, d2 = await ghl._req(
-                "GET", f"/emails/builder/{LOCATION_ID}/{tmpl.get('id')}")
-            html = (d2 or {}).get("html") or ""
-        if not html:
-            raise HTTPException(422, "template has no HTML body")
 
         # build the audience with per-contact merge context
         targets = []
