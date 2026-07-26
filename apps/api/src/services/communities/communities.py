@@ -252,9 +252,18 @@ async def get_communities_by_course(
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
+    from src.db.communities.community_courses import CommunityCourse
+    ids = {c.community_id for c in (await db_session.execute(
+        select(CommunityCourse).where(CommunityCourse.course_id == course.id)
+    )).scalars().all()}
     rows = (await db_session.execute(
         select(Community).where(Community.course_id == course.id).order_by(Community.id)
     )).scalars().all()
+    ids -= {r.id for r in rows}
+    if ids:
+        rows = list(rows) + list((await db_session.execute(
+            select(Community).where(Community.id.in_(ids)).order_by(Community.id)
+        )).scalars().all())
 
     out: list[CommunityRead] = []
     for community in rows:
@@ -375,11 +384,21 @@ async def link_community_to_course(
             detail="Course must belong to the same organization as the community",
         )
 
-    # NOTE: a course may be linked to MULTIPLE communities (e.g. the same class
-    # shared by a families cohort and a professionals cohort). The DB has no
-    # unique constraint here — this is intentionally a many-to-one relation, so
-    # there is no "already linked" rejection.
-    community.course_id = course.id
+    # A course may belong to MANY communities, and a community may carry MANY
+    # courses. The join table is the real relation; community.course_id is kept
+    # in sync for the first link so older screens reading it still work.
+    from src.db.communities.community_courses import CommunityCourse
+    already = (await db_session.execute(
+        select(CommunityCourse).where(
+            CommunityCourse.community_id == community.id,
+            CommunityCourse.course_id == course.id)
+    )).scalars().first()
+    if not already:
+        db_session.add(CommunityCourse(
+            org_id=community.org_id, community_id=community.id or 0,
+            course_id=course.id or 0, creation_date=str(datetime.now())))
+    if not community.course_id:
+        community.course_id = course.id
     community.update_date = str(datetime.now())
 
     db_session.add(community)
@@ -410,6 +429,11 @@ async def unlink_community_from_course(
     # RBAC check
     await check_resource_access(request, db_session, current_user, community_uuid, AccessAction.UPDATE)
 
+    # clear the join rows too, or the course would still show as linked
+    from src.db.communities.community_courses import CommunityCourse
+    for row in (await db_session.execute(select(CommunityCourse).where(
+            CommunityCourse.community_id == community.id))).scalars().all():
+        await db_session.delete(row)
     community.course_id = None
     community.update_date = str(datetime.now())
 
@@ -519,3 +543,29 @@ async def get_community_user_rights(
         rights["permissions"]["delete"] = True
 
     return rights
+
+
+async def get_courses_by_community(
+    community_uuid: str,
+    db_session: AsyncSession,
+) -> list:
+    """Every course this community carries — join table plus the legacy
+    single-course column, deduplicated."""
+    from src.db.communities.community_courses import CommunityCourse
+
+    community = (await db_session.execute(
+        select(Community).where(Community.community_uuid == community_uuid)
+    )).scalars().first()
+    if not community:
+        raise HTTPException(status_code=404, detail="Community not found")
+
+    ids = {r.course_id for r in (await db_session.execute(
+        select(CommunityCourse).where(CommunityCourse.community_id == community.id)
+    )).scalars().all()}
+    if community.course_id:
+        ids.add(community.course_id)
+    if not ids:
+        return []
+    return list((await db_session.execute(
+        select(Course).where(Course.id.in_(ids)).order_by(Course.name)
+    )).scalars().all())

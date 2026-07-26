@@ -174,6 +174,8 @@ from src.bbu_migration import router as bbu_migration_router  # noqa: E402
 v1_router.include_router(bbu_migration_router.router, prefix="/bbu/migrate", tags=["bbu-migration"])
 from src.bbu_migration import quiz_to_assignment as bbu_quiz_migration  # noqa: E402
 v1_router.include_router(bbu_quiz_migration.router, prefix="/bbu/migrate", tags=["bbu-migration"])
+from src.bbu_migration import groupings as bbu_groupings  # noqa: E402
+v1_router.include_router(bbu_groupings.router, prefix="/bbu/migrate", tags=["bbu-migration"])
 from src.bbu_migration import circle_coupons as bbu_circle_coupons  # noqa: E402
 v1_router.include_router(bbu_circle_coupons.router, prefix="/bbu/migrate", tags=["bbu-migration"])
 from src.bbu_cohorts import router as bbu_cohorts_router  # noqa: E402

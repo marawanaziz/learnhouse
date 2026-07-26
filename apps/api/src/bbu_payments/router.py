@@ -77,6 +77,29 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
 
 
 
+async def _visible_products(request: Request, db: AsyncSession, rows: list,
+                            audience: str = "", org_id: int = 1) -> list:
+    """Apply the audience filter for whoever is asking.
+
+    Best-effort on identity: the storefront is reachable signed-out, and failing
+    to resolve a user must fall back to the public catalogue rather than 500 or
+    show an empty shop.
+    """
+    from src.bbu_payments import audiences as aud
+    uid = 0
+    try:
+        from src.security.auth import get_current_user
+        from src.security.org_auth import resolve_acting_user_id
+        uid = resolve_acting_user_id(await get_current_user(request, db)) or 0
+    except Exception:
+        uid = 0
+    try:
+        return await aud.filter_products(db, rows, user_id=uid, org_id=org_id,
+                                         audience=audience)
+    except Exception:
+        return rows
+
+
 @router.get("/cert-template/{name}")
 async def cert_template(name: str):
     """Serve a BBU certificate template PNG (same-origin so html2canvas can
@@ -92,8 +115,10 @@ async def cert_template(name: str):
 
 
 @router.get("/products")
-async def products(db_session: AsyncSession = Depends(get_db_session)):
+async def products(request: Request, audience: str = "",
+                   db_session: AsyncSession = Depends(get_db_session)):
     rows = await _list_products(db_session)
+    rows = await _visible_products(request, db_session, rows, audience)
     return [
         {
             "id": p.id, "name": p.name, "kind": p.kind,
@@ -131,8 +156,10 @@ async def _apply_ref(request: Request, response, db_session: AsyncSession):
 
 
 @router.get("/store", response_class=HTMLResponse)
-async def store(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+async def store(request: Request, audience: str = "",
+                db_session: AsyncSession = Depends(get_db_session)):
     rows = await _list_products(db_session)
+    rows = await _visible_products(request, db_session, rows, audience)
     resp = HTMLResponse(store_page(rows, _base_url(request)))
     await _apply_ref(request, resp, db_session)
     return resp

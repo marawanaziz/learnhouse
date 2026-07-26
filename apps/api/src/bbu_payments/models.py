@@ -43,6 +43,9 @@ class BBUProduct(SQLModel, table=True):
     # codes for the buyer (the agency owner), who gets a self-serve portal to
     # view/share/redeem them. 0 = not a seat pack.
     seat_count: int = Field(default=0)
+    # comma-separated BBUAudience slugs that may see this product. Empty =
+    # visible to everyone, so tagging is opt-in and nothing vanishes silently.
+    audiences: str = Field(default="", sa_column=Column(String))
     # Persistent Stripe Product. Checkout line items reference this instead of
     # minting a throwaway product from inline product_data — without it a
     # course-scoped Stripe coupon can never match, and Stripe rejects it with
@@ -240,3 +243,34 @@ class BBUCircleRedemption(SQLModel, table=True):
     redemption_status: str = Field(default="", sa_column=Column(String(32)))
     source: str = Field(default="circle", sa_column=Column(String(16)))
     imported_at: str = Field(default="", sa_column=Column(String(40)))
+
+
+class BBUAudience(SQLModel, table=True):
+    """Who a set of courses is *for* — the axis Anna organises the catalogue on.
+
+    Distinct from access. A usergroup answers "may this person open this course";
+    an audience answers "should this person be shown it at all". A perinatal
+    professional and an expecting family can both buy the same class, but showing
+    each of them the other's catalogue is noise — professionals see trainings,
+    families see family classes, Project Bold sees its own labelled versions.
+
+    Membership is a usergroup, so it is managed in the existing Members screen
+    rather than a second parallel place. A product carrying no audience tag stays
+    visible to everyone, so tagging is opt-in and nothing disappears by accident.
+    """
+    __tablename__ = "bbu_audience"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    slug: str = Field(default="", sa_column=Column(String(40), index=True))
+    name: str = Field(default="", sa_column=Column(String(120)))
+    # usergroup whose members belong to this audience (0 = nobody yet)
+    usergroup_id: int = Field(default=0)
+    # what a signed-out visitor sees; exactly one audience should carry this
+    is_public_default: bool = Field(default=False)
+    # offered under "also interested in…" to audiences that aren't this one —
+    # Anna's "are you interested in offering classes for your clients?" section
+    cross_sell: bool = Field(default=False)
+    sort_order: int = Field(default=0)
+    active: bool = Field(default=True)
