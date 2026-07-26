@@ -129,10 +129,31 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
 
     scope_debug = []
     coup_made, coup_skipped, coup_expired, coup_errors = 0, 0, [], []
+    repaired = []
     for c in coupons:
+        want = _scope_for(c, prod_by_id)
+        # Repair scope drift. A Stripe coupon's applies_to is immutable, so a
+        # coupon created without its restriction stays unrestricted forever —
+        # the dangerous case being a 100%-off code valid on every course. Detect
+        # it and rebuild the pair rather than leaving it live.
+        if want and c.stripe_coupon_id:
+            try:
+                live = stripe.Coupon.retrieve(c.stripe_coupon_id)
+                have = set((live.get("applies_to") or {}).get("products") or [])
+                if have != set(want):
+                    try:
+                        stripe.Coupon.delete(c.stripe_coupon_id)
+                    except Exception:
+                        pass
+                    c.stripe_coupon_id = ""
+                    c.stripe_promo_id = ""
+                    repaired.append(c.code)
+            except Exception:
+                c.stripe_coupon_id = ""
+                c.stripe_promo_id = ""
         if len(scope_debug) < 3 and (c.applies_to or "all").lower() != "all":
             scope_debug.append({"code": c.code, "applies_to": c.applies_to,
-                                "resolved": _scope_for(c, prod_by_id),
+                                "resolved": want,
                                 "prod_by_id_size": len(prod_by_id)})
         if c.active and _is_expired(c):
             c.active = False          # Circle called it active; its end date says otherwise
@@ -143,7 +164,7 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
             continue
         try:
             before = c.stripe_coupon_id
-            coupon_svc.ensure_stripe_objects(c, _scope_for(c, prod_by_id))
+            coupon_svc.ensure_stripe_objects(c, want)
             if c.stripe_coupon_id and not before:
                 coup_made += 1
             db.add(c)
@@ -156,6 +177,7 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
         "reset": reset,
         "auto_reset_stale_ids": stale,
         "scope_debug": scope_debug,
+        "repaired_scope": repaired,
         "products": {"total": len(products), "created": prod_made,
                      "errors": prod_errors[:10]},
         "coupons": {"total": len(coupons), "created": coup_made,
