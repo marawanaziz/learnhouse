@@ -14,13 +14,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.bbu_payments.models import BBUCoupon
 
-# The Stripe account's default API version (2026-06-24.dahlia) restructured
-# several shapes: promotion_codes rejects the classic top-level `coupon` param,
-# and Coupon.create silently DROPS `applies_to` — the coupon is created, comes
-# back unrestricted, and since applies_to is immutable it is permanently valid on
-# every product. That turned course-scoped 100%-off codes into
-# discount-anything codes. Pin both to a stable version where they behave;
-# Checkout stays on the account default.
+# The Stripe account's default API version (2026-06-24.dahlia) restructured the
+# promotion_codes create shape and rejects the classic top-level `coupon` param.
+# Pin the coupon/promotion-code calls to a stable version; Checkout stays on the
+# account default.
+#
+# Note on `applies_to`: it is accepted on create but omitted from every normal
+# coupon response, so it reads back as None and looks like "unrestricted" unless
+# you pass expand=["applies_to"] (see _scope_of). It is stored correctly.
 PROMO_API_VERSION = "2023-10-16"
 COUPON_API_VERSION = "2023-10-16"
 

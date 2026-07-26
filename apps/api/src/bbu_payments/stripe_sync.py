@@ -127,7 +127,6 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
 
     prod_by_id = {p.id: p.stripe_product_id for p in products if p.id}
 
-    scope_debug = []
     coup_made, coup_skipped, coup_expired, coup_errors = 0, 0, [], []
     repaired = []
     for c in coupons:
@@ -151,10 +150,6 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
             except Exception:
                 c.stripe_coupon_id = ""
                 c.stripe_promo_id = ""
-        if len(scope_debug) < 3 and (c.applies_to or "all").lower() != "all":
-            scope_debug.append({"code": c.code, "applies_to": c.applies_to,
-                                "resolved": want,
-                                "prod_by_id_size": len(prod_by_id)})
         if c.active and _is_expired(c):
             c.active = False          # Circle called it active; its end date says otherwise
             coup_expired.append(c.code)
@@ -176,7 +171,6 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
         "stripe_mode": _mode(),
         "reset": reset,
         "auto_reset_stale_ids": stale,
-        "scope_debug": scope_debug,
         "repaired_scope": repaired,
         "products": {"total": len(products), "created": prod_made,
                      "errors": prod_errors[:10]},
