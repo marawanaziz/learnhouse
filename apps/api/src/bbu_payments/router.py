@@ -89,8 +89,7 @@ async def _visible_products(request: Request, db: AsyncSession, rows: list,
     from src.bbu_payments import audiences as aud
     uid = 0
     try:
-        from src.security.auth import get_current_user
-        from src.security.org_auth import resolve_acting_user_id
+        from src.security.auth import get_current_user, resolve_acting_user_id
         uid = resolve_acting_user_id(await get_current_user(request, db)) or 0
     except Exception:
         uid = 0
@@ -270,8 +269,7 @@ async def complete_account(request: Request,
     Authorised by the session the purchase just minted, so this is only ever
     "set my own password" — no token to forge, no email to guess.
     """
-    from src.security.auth import get_current_user
-    from src.security.org_auth import resolve_acting_user_id
+    from src.security.auth import get_current_user, resolve_acting_user_id
     from src.security.security import security_hash_password
     from src.db.users import User as _U
 
