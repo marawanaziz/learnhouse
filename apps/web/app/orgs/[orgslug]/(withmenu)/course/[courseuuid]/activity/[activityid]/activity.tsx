@@ -1709,16 +1709,15 @@ function AssignmentTools(props: {
         confirmationMessage={t('assignments.submit_assignment_confirm')}
         dialogTitle={t('assignments.submit_assignment_title')}
         dialogTrigger={
-          <div className="bg-cyan-800 rounded-md px-4 nice-shadow flex flex-col p-2.5 text-white hover:cursor-pointer transition delay-150 duration-300 ease-in-out">
-            <span className="text-[10px] font-bold mb-1 uppercase">
+          /* One big, obvious action (team request Jul 2026): answers already
+             auto-save, so the student needs a single clear "Save & Continue". */
+          <div className="bg-[#113d5d] hover:bg-[#0d3350] hover:scale-[1.02] rounded-xl px-8 py-4 nice-shadow flex items-center gap-2.5 text-white hover:cursor-pointer transition-all duration-200">
+            <BookOpenCheck size={22} />
+            <span className="text-base font-bold">
               {isRetryAttempt
                 ? t('assignments.attempt_count', { current: attemptNumber })
-                : t('common.status')}
+                : 'Save & Continue'}
             </span>
-            <div className="flex items-center space-x-2">
-              <BookOpenCheck size={17} />
-              <span className="text-xs font-bold">{t('assignments.submit_for_grading')}</span>
-            </div>
           </div>
         }
         functionToExecute={submitForGradingUI}

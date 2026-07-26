@@ -148,6 +148,19 @@ async def resolve_report(report_id: int, request: Request,
         BBUPostReport.id == report_id))).scalars().first()
     if not r:
         raise HTTPException(404, "Report not found")
+    # "delete" removes the offending post outright, then closes the report.
+    if action == "delete" and r.discussion_id:
+        d = (await db_session.execute(select(Discussion).where(
+            Discussion.id == r.discussion_id))).scalars().first()
+        if d:
+            await db_session.delete(d)
+            await db_session.commit()
+        r.status = "actioned"
+        r.resolved_at = _now()
+        r.resolved_by = await _acting_uid(user)
+        db_session.add(r)
+        await db_session.commit()
+        return {"ok": True, "status": "actioned", "post_deleted": True}
     r.status = "actioned" if action == "actioned" else "dismissed"
     r.resolved_at = _now()
     r.resolved_by = await _acting_uid(user)
@@ -169,7 +182,8 @@ async def admin_page(request: Request, db_session: AsyncSession = Depends(get_db
         f"<td style='padding:10px 8px'>{r['reason']}<br><span style='color:#6b6f79;font-size:.82rem'>{r['details'][:140]}</span></td>"
         f"<td style='padding:10px 8px;font-size:.82rem'>{r['reporter']}<br>{r['date']}</td>"
         f"<td style='padding:10px 8px;white-space:nowrap'>"
-        f"<button onclick=\"res({r['id']},'actioned')\" style='border:1px solid #f0c9c9;background:#fdf3f3;color:#a12a2a;border-radius:999px;padding:5px 11px;font-size:.78rem;cursor:pointer;font-weight:700'>Remove/Action</button> "
+        f"<button onclick=\"del({r['id']})\" style='border:1px solid #e0a3a3;background:#a12a2a;color:#fff;border-radius:999px;padding:5px 11px;font-size:.78rem;cursor:pointer;font-weight:700'>Delete post</button> "
+        f"<button onclick=\"res({r['id']},'actioned')\" style='border:1px solid #f0c9c9;background:#fdf3f3;color:#a12a2a;border-radius:999px;padding:5px 11px;font-size:.78rem;cursor:pointer;font-weight:700'>Mark actioned</button> "
         f"<button onclick=\"res({r['id']},'dismissed')\" style='border:1px solid #cfe0ec;background:#f4f9fd;color:#113d5d;border-radius:999px;padding:5px 11px;font-size:.78rem;cursor:pointer;font-weight:700'>Dismiss</button></td>"
         f"</tr>"
         for r in data["reports"]
@@ -192,6 +206,10 @@ async function res(id,action){{
   var u='/api/v1/bbu/community/reports/'+id+'/resolve'+(KEY?('?key='+encodeURIComponent(KEY)):'');
   var r=await fetch(u,{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'include',body:JSON.stringify({{action:action}})}});
   if(r.ok)location.reload();else alert('Error');
+}}
+async function del(id){{
+  if(!confirm('Delete this post permanently? This cannot be undone.'))return;
+  await res(id,'delete');
 }}
 </script></body></html>"""
     return HTMLResponse(html)

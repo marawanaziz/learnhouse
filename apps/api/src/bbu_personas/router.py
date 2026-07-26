@@ -150,15 +150,20 @@ async def _ensure_persona_user(db: AsyncSession, persona: dict) -> User:
     return u
 
 
-async def _target_community(db: AsyncSession) -> Community:
-    q = select(Community).where(Community.org_id == ORG)
-    comms = (await db.execute(q)).scalars().all()
+async def _all_communities(db: AsyncSession, match: str = "") -> list:
+    """Communities the personas post into. Default: every community in the org
+    (Anna asked for personas in all the different groups). `match` narrows by
+    name substring."""
+    comms = (await db.execute(select(Community).where(Community.org_id == ORG))).scalars().all()
+    if match:
+        comms = [c for c in comms if match.lower() in (c.name or "").lower()]
     if not comms:
         raise HTTPException(404, "No community to post into")
-    if TARGET_COMMUNITY:
-        for c in comms:
-            if TARGET_COMMUNITY.lower() in (c.name or "").lower():
-                return c
+    return comms
+
+
+async def _target_community(db: AsyncSession) -> Community:
+    comms = await _all_communities(db, TARGET_COMMUNITY)
     return comms[0]
 
 
@@ -178,24 +183,39 @@ async def run(request: Request, db_session: AsyncSession = Depends(get_db_sessio
     PERSONAS_LIVE=true), otherwise returns it for review (dry-run)."""
     _guard(request)
     live = request.query_params.get("live") in ("1", "true") or os.environ.get("PERSONAS_LIVE") == "true"
+    match = request.query_params.get("community", "") or TARGET_COMMUNITY
+    # weekly=1 posts only on the configured weekday (Anna: 1 post/week for the
+    # mentorship group), so the same daily cron can drive both cadences.
+    weekly = request.query_params.get("weekly") in ("1", "true")
+    weekday = int(request.query_params.get("weekday", "1"))  # Mon=0
+    if weekly and date.today().weekday() != weekday:
+        return {"skipped": "not the weekly post day", "weekday": weekday}
+
     personas = _personas()
-    persona = _persona_of_the_day(personas)
-    post = await _generate(persona)
-    result = {"dry_run": not live, "persona": f"{persona['name']} — {persona['role']}",
-              "title": post["title"], "body": post["body"]}
-    if not live:
-        return result
-    community = await _target_community(db_session)
-    author = await _ensure_persona_user(db_session, persona)
-    disc = Discussion(
-        community_id=community.id, org_id=ORG, author_id=author.id or 0,
-        title=post["title"][:200], content=post["body"], label="general",
-        discussion_uuid=f"discussion_{uuid4()}", upvote_count=0, edit_count=0,
-        creation_date=str(datetime.now()), update_date=str(datetime.now()),
-    )
-    db_session.add(disc)
-    await db_session.commit()
-    await db_session.refresh(disc)
-    result["posted"] = {"community": community.name, "author": f"{persona['name']} · AI persona",
-                        "discussion_uuid": disc.discussion_uuid}
-    return result
+    communities = await _all_communities(db_session, match)
+    results = []
+    for i, community in enumerate(communities):
+        # rotate a different persona per community so they don't all sound alike
+        persona = personas[(date.today().toordinal() + i) % len(personas)]
+        try:
+            post = await _generate(persona)
+        except HTTPException as e:
+            results.append({"community": community.name, "error": str(e.detail)[:120]})
+            continue
+        row = {"community": community.name,
+               "persona": f"{persona['name']} — {persona['role']}",
+               "title": post["title"], "body": post["body"]}
+        if live:
+            author = await _ensure_persona_user(db_session, persona)
+            disc = Discussion(
+                community_id=community.id, org_id=ORG, author_id=author.id or 0,
+                title=post["title"][:200], content=post["body"], label="general",
+                discussion_uuid=f"discussion_{uuid4()}", upvote_count=0, edit_count=0,
+                creation_date=str(datetime.now()), update_date=str(datetime.now()),
+            )
+            db_session.add(disc)
+            await db_session.commit()
+            await db_session.refresh(disc)
+            row["discussion_uuid"] = disc.discussion_uuid
+        results.append(row)
+    return {"dry_run": not live, "communities": len(communities), "posts": results}
