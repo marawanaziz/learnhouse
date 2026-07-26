@@ -48,6 +48,25 @@ def ensure_product(p: BBUProduct) -> str:
     return p.stripe_product_id
 
 
+def _is_expired(coupon: BBUCoupon) -> bool:
+    """True when the coupon's expiry has already passed.
+
+    Circle marked codes "active" independently of their end date, so the import
+    carried over codes that expired months ago. Stripe refuses to create them at
+    all ("redeem_by ... is in the past"), and rightly — they cannot be redeemed.
+    Treat them as inactive here instead of retrying a guaranteed failure forever.
+    """
+    if not coupon.expires_at:
+        return False
+    try:
+        dt = datetime.fromisoformat(coupon.expires_at.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt <= datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
 def _scope_for(coupon: BBUCoupon, prod_by_id: dict) -> list:
     """BBUCoupon.applies_to ("all" | "3,4,12") -> Stripe Product ids."""
     raw = (coupon.applies_to or "all").strip()
@@ -108,8 +127,12 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
 
     prod_by_id = {p.id: p.stripe_product_id for p in products if p.id}
 
-    coup_made, coup_skipped, coup_errors = 0, 0, []
+    coup_made, coup_skipped, coup_expired, coup_errors = 0, 0, [], []
     for c in coupons:
+        if c.active and _is_expired(c):
+            c.active = False          # Circle called it active; its end date says otherwise
+            coup_expired.append(c.code)
+            db.add(c)
         if not c.active and not include_inactive:
             coup_skipped += 1
             continue
@@ -130,7 +153,9 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
         "products": {"total": len(products), "created": prod_made,
                      "errors": prod_errors[:10]},
         "coupons": {"total": len(coupons), "created": coup_made,
-                    "skipped_inactive": coup_skipped, "errors": coup_errors[:10]},
+                    "skipped_inactive": coup_skipped,
+                    "marked_expired": coup_expired,
+                    "errors": coup_errors[:10]},
         "synced_at": datetime.now(timezone.utc).isoformat(),
     }
 
