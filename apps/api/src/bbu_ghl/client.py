@@ -83,6 +83,28 @@ class GHLClient:
             raise RuntimeError(f"upsert_contact {st}: {str(d)[:200]}")
         return (d.get("contact") or {}).get("id")
 
+    # ----------------------------------------------------------- sending
+    async def find_contact(self, email: str) -> Optional[dict]:
+        st, d = await self._req(
+            "GET", f"/contacts/search/duplicate?locationId={LOCATION_ID}&email={email}")
+        if st != 200:
+            return None
+        return (d or {}).get("contact")
+
+    async def send_email(self, contact_id: str, subject: str, html: str,
+                         plain: str = "") -> dict:
+        """Send an email to one contact via the Conversations API. This is a real
+        send — GHL queues it immediately. Used instead of a GHL workflow because
+        workflows cannot be created over the API."""
+        body = {"type": "Email", "contactId": contact_id,
+                "subject": subject, "html": html}
+        if plain:
+            body["message"] = plain
+        st, d = await self._req("POST", "/conversations/messages", json=body)
+        if st not in (200, 201):
+            raise RuntimeError(f"send_email {st}: {str(d)[:200]}")
+        return d
+
     # ------------------------------------------------------- custom fields
     async def list_custom_fields(self) -> list:
         st, d = await self._req("GET", f"/locations/{LOCATION_ID}/customFields")

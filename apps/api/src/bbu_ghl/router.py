@@ -293,3 +293,107 @@ async def renewal_sync(request: Request, db_session: AsyncSession = Depends(get_
                 errors.append(f"{u.email}: {type(e).__name__}: {e}")
     return {"dry_run": False, "matched": len(plan), "pushed": pushed,
             "by_stage": buckets, "errors": errors[:15], "error_count": len(errors)}
+
+
+# ===========================================================================
+# Direct campaign sender.
+# GHL workflows cannot be created over the API (POST /workflows/ -> 404), so we
+# send through the Conversations API instead. Merge fields are rendered HERE
+# (per contact, from LearnHouse data) because a direct send does not run GHL's
+# template substitution.
+# ===========================================================================
+def _render(html: str, ctx: dict) -> str:
+    out = html
+    for k, v in ctx.items():
+        out = out.replace("{{contact.%s}}" % k, v or "")
+    return out
+
+
+@router.post("/send-campaign")
+async def send_campaign(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Send one of the BBU GHL templates to a live audience, rendering each
+    contact's real merge values. Body:
+      {template_name, audience: 'password_setup'|'affiliates'|'renewal:<tag>',
+       test_email?, limit?, dry_run?}
+    DRY-RUN by default. `test_email` sends to exactly one address."""
+    _check(request)
+    if not is_configured():
+        raise HTTPException(503, "GHL not configured")
+    body = await request.json()
+    dry_run = str(body.get("dry_run", True)).lower() != "false"
+    tmpl_name = (body.get("template_name") or "").strip()
+    audience = (body.get("audience") or "password_setup").strip()
+    test_email = (body.get("test_email") or "").strip().lower()
+    limit = int(body.get("limit") or 0)
+    base = (os.environ.get("BBU_PUBLIC_BASE_URL")
+            or "https://app-production-500b.up.railway.app").rstrip("/")
+    if not tmpl_name:
+        raise HTTPException(400, "template_name required")
+
+    async with GHLClient() as ghl:
+        # locate the stored template
+        st, d = await ghl._req("GET", f"/emails/builder?locationId={LOCATION_ID}&limit=200")
+        items = (d or {}).get("builders") or []
+        tmpl = next((t for t in items
+                     if tmpl_name.lower() in ((t.get("name") or "")).lower()), None)
+        if not tmpl:
+            raise HTTPException(404, f"template '{tmpl_name}' not found in GHL")
+        subject = tmpl.get("subject") or tmpl.get("name") or "Birth & Baby University"
+        html = tmpl.get("html") or ""
+        if not html:
+            st2, d2 = await ghl._req(
+                "GET", f"/emails/builder/{LOCATION_ID}/{tmpl.get('id')}")
+            html = (d2 or {}).get("html") or ""
+        if not html:
+            raise HTTPException(422, "template has no HTML body")
+
+        # build the audience with per-contact merge context
+        targets = []
+        if test_email:
+            u = (await db_session.execute(select(User).where(User.email == test_email))).scalars().first()
+            targets.append((test_email, (u.first_name if u else ""), {}))
+        elif audience == "affiliates":
+            from src.bbu_payments.models import BBUAffiliate
+            rows = (await db_session.execute(select(BBUAffiliate).where(
+                BBUAffiliate.org_id == 1))).scalars().all()
+            for a in rows:
+                if not (a.email or "").strip():
+                    continue
+                targets.append((a.email.strip().lower(), (a.name or "").split(" ")[0], {
+                    "bbu_affiliate_portal_url": f"{base}/api/v1/bbu/affiliate/portal?token={getattr(a,'portal_token','')}",
+                    "bbu_affiliate_referral_url": f"{base}/?ref={a.ref_code}",
+                }))
+        else:  # password_setup — reuse the reset URLs already pushed to GHL
+            q = (select(User).join(UserOrganization, UserOrganization.user_id == User.id)
+                 .where(UserOrganization.org_id == 1))
+            users = (await db_session.execute(q)).scalars().all()
+            for u in users:
+                targets.append((u.email, u.first_name or "", {}))
+        if limit:
+            targets = targets[:limit]
+
+        if dry_run:
+            return {"dry_run": True, "template": tmpl.get("name"), "subject": subject,
+                    "audience": audience, "recipients": len(targets),
+                    "sample": [e for e, _, _ in targets[:5]]}
+
+        sent, errors = 0, []
+        for email, first, ctx in targets:
+            try:
+                contact = await ghl.find_contact(email)
+                if not contact:
+                    errors.append(f"{email}: no GHL contact")
+                    continue
+                merged = dict(ctx)
+                # pull any field already stored on the GHL contact (e.g. reset URL)
+                for cf in (contact.get("customFields") or []):
+                    k = (cf.get("key") or "").replace("contact.", "")
+                    if k:
+                        merged.setdefault(k, cf.get("value") or cf.get("field_value") or "")
+                merged.setdefault("first_name", first)
+                await ghl.send_email(contact["id"], subject, _render(html, merged))
+                sent += 1
+            except Exception as e:
+                errors.append(f"{email}: {type(e).__name__}: {e}")
+        return {"dry_run": False, "template": tmpl.get("name"), "recipients": len(targets),
+                "sent": sent, "errors": errors[:20], "error_count": len(errors)}
