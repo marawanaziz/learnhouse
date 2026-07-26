@@ -117,6 +117,43 @@ async def coupons_create(request: Request, db_session: AsyncSession = Depends(ge
     return {"ok": True}
 
 
+@router.post("/coupons/{cid}/update")
+async def coupons_update(cid: int, request: Request,
+                         db_session: AsyncSession = Depends(get_db_session)):
+    """Edit a coupon. Changing scope or value clears the cached Stripe ids so the
+    next sync rebuilds the pair — a Stripe coupon's applies_to and amount are
+    immutable, so an edit that only touched our row would leave Stripe wrong."""
+    b = await request.json()
+    await _auth(request, db_session, b)
+    c = (await db_session.execute(select(BBUCoupon).where(
+        BBUCoupon.id == cid, BBUCoupon.org_id == ORG))).scalars().first()
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+
+    rebuild = False
+    if "applies_to" in b:
+        new = (b.get("applies_to") or "all").strip()
+        rebuild = rebuild or new != (c.applies_to or "all")
+        c.applies_to = new
+    if "amount_off" in b:
+        v = round(float(b.get("amount_off") or 0) * 100)
+        rebuild = rebuild or v != c.amount_off_cents
+        c.amount_off_cents, c.kind = v, "amount"
+    if "percent_off" in b:
+        v = int(b.get("percent_off") or 0)
+        rebuild = rebuild or v != c.percent_off
+        c.percent_off, c.kind = v, "percent"
+    if "expires_at" in b:
+        c.expires_at = (b.get("expires_at") or "")
+    if "active" in b:
+        c.active = bool(b["active"])
+    if rebuild:
+        c.stripe_coupon_id, c.stripe_promo_id = "", ""
+    db_session.add(c)
+    await db_session.commit()
+    return {"ok": True, "rebuild_needed": rebuild, "code": c.code}
+
+
 @router.get("/coupons/redemptions")
 async def coupons_redemptions(request: Request, code: str = "", fmt: str = "json",
                               db_session: AsyncSession = Depends(get_db_session)):
