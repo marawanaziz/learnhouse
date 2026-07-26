@@ -74,6 +74,20 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
     coupons = (await db.execute(select(BBUCoupon).where(
         BBUCoupon.org_id == org_id))).scalars().all()
 
+    # Stripe ids are per-account and per-mode, and nothing in the id says which.
+    # Rather than trust a human to remember `reset` after the test->live swap,
+    # probe one cached id: if the active key can't see it, the ids belong to
+    # another account/mode and every one of them is dead. Re-create instead of
+    # silently serving codes that will be rejected at checkout.
+    stale = False
+    probe = next((c.stripe_coupon_id for c in coupons if c.stripe_coupon_id), "")
+    if probe and not reset:
+        try:
+            stripe.Coupon.retrieve(probe)
+        except Exception:
+            stale = True
+    reset = reset or stale
+
     if reset:
         for p in products:
             p.stripe_product_id = ""
@@ -112,6 +126,7 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
     return {
         "stripe_mode": _mode(),
         "reset": reset,
+        "auto_reset_stale_ids": stale,
         "products": {"total": len(products), "created": prod_made,
                      "errors": prod_errors[:10]},
         "coupons": {"total": len(coupons), "created": coup_made,
