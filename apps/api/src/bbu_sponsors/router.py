@@ -234,12 +234,13 @@ async def join_page(token: str, request: Request,
         BBUSponsor.join_token == token, BBUSponsor.org_id == ORG))).scalars().first()
     if not s or not s.join_enabled or not s.active:
         return HTMLResponse(_shell("Link not active",
-            "<p>This invitation link isn't active. Please check with whoever sent it.</p>"),
+            "<p>This invitation link isn't active. Please check with whoever sent it.</p>",
+            payment=False),
             status_code=404)
     if not await svc.has_capacity(db_session, s):
         return HTMLResponse(_shell("All seats claimed",
             f"<p>Every sponsored seat from {s.name} has been claimed. "
-            "Please contact them if you think this is a mistake.</p>"))
+            "Please contact them if you think this is a mistake.</p>", payment=False))
     body = f"""
       <p style="font-size:1.05rem">Your access is sponsored by <b>{s.name}</b> —
       there's nothing to pay.</p>
@@ -252,7 +253,7 @@ async def join_page(token: str, request: Request,
       </form>
       <p class=muted style="margin-top:1rem;font-size:.85rem">
         We'll email you a link to set your password.</p>"""
-    return HTMLResponse(_shell("Claim your sponsored access", body))
+    return HTMLResponse(_shell("Claim your sponsored access", body, payment=False))
 
 
 @router.post("/join/{token}", response_class=HTMLResponse)
@@ -274,4 +275,4 @@ async def join_submit(token: str, request: Request,
         msg = "<p>You've already claimed this — just sign in with this email.</p>"
     else:
         msg = f"<p>We couldn't complete that: {res.get('reason', 'unknown error')}</p>"
-    return HTMLResponse(_shell("Sponsored access", msg))
+    return HTMLResponse(_shell("Sponsored access", msg, payment=False))

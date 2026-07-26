@@ -56,7 +56,12 @@ label{{font-family:'League Spartan',sans-serif;font-weight:600;font-size:.8rem;l
 """
 
 
-def _shell(title, inner):
+def _shell(title, inner, payment=True):
+    """Branded page wrapper. `payment=False` drops the Stripe footer — on a
+    sponsored-access page it directly contradicts the page ("nothing to pay")
+    and makes a free grant seat look like it's about to ask for a card."""
+    foot = ("© Birth &amp; Baby University · Secure checkout by Stripe" if payment
+            else "© Birth &amp; Baby University")
     return (
         f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -64,7 +69,7 @@ def _shell(title, inner):
         f"<style>{_BASE_CSS}</style></head><body>"
         f"<div class='nav'><div class='wrap'><img src='{LOGO}' alt='Birth & Baby University'></div></div>"
         f"{inner}"
-        f"<div class='foot'>© Birth &amp; Baby University · Secure checkout by Stripe</div>"
+        f"<div class='foot'>{foot}</div>"
         f"</body></html>"
     )
 
