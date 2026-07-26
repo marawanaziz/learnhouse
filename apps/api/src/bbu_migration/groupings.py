@@ -184,7 +184,26 @@ async def clone_bold(request: Request, db_session: AsyncSession = Depends(get_db
     names = body.get("courses") or BOLD_SOURCES
 
     from src.services.courses.courses import clone_course
-    from src.security.auth import get_current_user
+    from src.db.users import User, PublicUser
+    from src.db.user_organizations import UserOrganization
+    from src.security.org_auth import ADMIN_OR_MAINTAINER_ROLE_IDS
+
+    # clone_course is RBAC-gated on a real session user, and this endpoint
+    # authenticates with the admin key instead. Act as an actual org admin
+    # rather than weakening the check — an anonymous caller is correctly
+    # refused ("Resource is not public or not published") because the courses
+    # being copied are access-gated.
+    admin_row = None
+    memberships = (await db_session.execute(select(UserOrganization).where(
+        UserOrganization.org_id == ORG,
+        UserOrganization.role_id.in_(list(ADMIN_OR_MAINTAINER_ROLE_IDS))
+    ))).scalars().all()
+    if memberships:
+        admin_row = (await db_session.execute(select(User).where(
+            User.id == memberships[0].user_id))).scalars().first()
+    if not admin_row:
+        raise HTTPException(500, "No org admin found to perform the clone")
+    acting = PublicUser.model_validate(admin_row.model_dump())
 
     results = []
     for src_name in names:
@@ -202,8 +221,7 @@ async def clone_bold(request: Request, db_session: AsyncSession = Depends(get_db
             results.append({"source": src_name, "status": "would clone", "name": target})
             continue
         try:
-            user = await get_current_user(request, db_session)
-            cloned = await clone_course(request, course.course_uuid, user, db_session)
+            cloned = await clone_course(request, course.course_uuid, acting, db_session)
             row = (await db_session.execute(select(Course).where(
                 Course.course_uuid == cloned.course_uuid))).scalars().first()
             if row:
