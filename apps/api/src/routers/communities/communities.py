@@ -13,6 +13,7 @@ from src.services.communities.communities import (
     get_community,
     get_communities_by_org,
     get_community_by_course,
+    get_communities_by_course,
     update_community,
     delete_community,
     link_community_to_course,
@@ -167,6 +168,28 @@ async def api_get_community_by_course(
     Get the community linked to a specific course.
     """
     return await get_community_by_course(request, course_uuid, current_user, db_session)
+
+
+@router.get(
+    "/course/{course_uuid}/all",
+    summary="Get all communities for a course",
+    description="Retrieve every community linked to a specific course. A course may be shared by multiple communities.",
+    responses={
+        200: {"description": "Communities linked to the course (possibly empty)."},
+        401: {"description": "Authentication required"},
+        404: {"description": "Course not found"},
+    },
+)
+async def api_get_communities_by_course(
+    request: Request,
+    course_uuid: str,
+    current_user: PublicUser = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
+) -> list[CommunityRead]:
+    """
+    Get all communities linked to a specific course.
+    """
+    return await get_communities_by_course(request, course_uuid, current_user, db_session)
 
 
 @router.put(

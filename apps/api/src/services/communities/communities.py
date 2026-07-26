@@ -216,8 +216,12 @@ async def get_community_by_course(
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    # Find community linked to this course
-    community_statement = select(Community).where(Community.course_id == course.id)
+    # A course can have several linked communities; this legacy single-result
+    # endpoint returns the oldest one deterministically. Use
+    # get_communities_by_course for the full set.
+    community_statement = (
+        select(Community).where(Community.course_id == course.id).order_by(Community.id)
+    )
     community = (await db_session.execute(community_statement)).scalars().first()
 
     if not community:
@@ -229,6 +233,40 @@ async def get_community_by_course(
     )
 
     return CommunityRead.model_validate(community.model_dump())
+
+
+async def get_communities_by_course(
+    request: Request,
+    course_uuid: str,
+    current_user: PublicUser,
+    db_session: AsyncSession,
+) -> list[CommunityRead]:
+    """
+    Get ALL communities linked to a course. A course may be shared by several
+    communities (e.g. a families cohort and a professionals cohort). Communities
+    the user cannot read are filtered out rather than raising.
+    """
+    course_statement = select(Course).where(Course.course_uuid == course_uuid)
+    course = (await db_session.execute(course_statement)).scalars().first()
+
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    rows = (await db_session.execute(
+        select(Community).where(Community.course_id == course.id).order_by(Community.id)
+    )).scalars().all()
+
+    out: list[CommunityRead] = []
+    for community in rows:
+        try:
+            await check_resource_access(
+                request, db_session, current_user, community.community_uuid,
+                AccessAction.READ,
+            )
+        except HTTPException:
+            continue
+        out.append(CommunityRead.model_validate(community.model_dump()))
+    return out
 
 
 async def update_community(
@@ -337,19 +375,10 @@ async def link_community_to_course(
             detail="Course must belong to the same organization as the community",
         )
 
-    # Check if another community is already linked to this course
-    existing_statement = select(Community).where(
-        Community.course_id == course.id,
-        Community.id != community.id
-    )
-    existing = (await db_session.execute(existing_statement)).scalars().first()
-
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="This course already has a linked community",
-        )
-
+    # NOTE: a course may be linked to MULTIPLE communities (e.g. the same class
+    # shared by a families cohort and a professionals cohort). The DB has no
+    # unique constraint here — this is intentionally a many-to-one relation, so
+    # there is no "already linked" rejection.
     community.course_id = course.id
     community.update_date = str(datetime.now())
 
