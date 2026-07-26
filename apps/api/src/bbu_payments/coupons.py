@@ -60,9 +60,44 @@ def ensure_stripe_objects(coupon: BBUCoupon,
             except Exception:
                 pass
         c = stripe.Coupon.create(**params)
+        # Read back the scope. applies_to is immutable after creation, so if
+        # Stripe didn't record it the coupon is permanently unrestricted — a
+        # 100%-off code valid on every course. Fail loudly rather than leave that
+        # sitting in the account looking healthy.
+        if applies_to_products:
+            got = (c.get("applies_to") or {}).get("products") or []
+            if not got:
+                try:
+                    stripe.Coupon.delete(c["id"])
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Stripe did not apply the product scope for {coupon.code} "
+                    f"(requested {len(applies_to_products)} products)")
         coupon.stripe_coupon_id = c["id"]
     if not coupon.stripe_promo_id:
-        promo: dict = {"coupon": coupon.stripe_coupon_id, "code": (coupon.code or "").upper()}
+        wanted = (coupon.code or "").upper()
+        # A promotion code string must be unique among ACTIVE codes. After a
+        # reset our cached ids are gone but Stripe's objects remain, so creating
+        # blindly fails with "already exists". Adopt a matching live code when it
+        # points at this same coupon; retire it when it points somewhere stale.
+        try:
+            found = stripe.PromotionCode.list(code=wanted, limit=1,
+                                              stripe_version=PROMO_API_VERSION)
+            hit = (found.get("data") or [None])[0]
+        except Exception:
+            hit = None
+        if hit:
+            hit_coupon = (hit.get("coupon") or {}).get("id")
+            if hit_coupon == coupon.stripe_coupon_id:
+                coupon.stripe_promo_id = hit["id"]
+                return
+            try:
+                stripe.PromotionCode.modify(hit["id"], active=False,
+                                            stripe_version=PROMO_API_VERSION)
+            except Exception:
+                pass
+        promo: dict = {"coupon": coupon.stripe_coupon_id, "code": wanted}
         if coupon.min_amount_cents:
             promo["restrictions"] = {
                 "minimum_amount": int(coupon.min_amount_cents),
