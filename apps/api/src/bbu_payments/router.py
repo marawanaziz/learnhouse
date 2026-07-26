@@ -238,11 +238,16 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
             from src.routers.auth import set_auth_cookies
             buyer = (await db_session.execute(
                 select(_U).where(_U.id == order.user_id))).scalars().first()
-            if buyer:
+            if buyer and buyer.email:
+                # `sub` is resolved as an EMAIL downstream:
+                #   security_get_user(..., email=token_data.username)
+                # Passing the generated username mints a token that decodes
+                # fine and then matches no user, so the buyer silently stays
+                # anonymous. Login only works because people sign in by email.
                 set_auth_cookies(
                     resp,
-                    create_access_token(data={"sub": buyer.username}),
-                    create_refresh_token(data={"sub": buyer.username}),
+                    create_access_token(data={"sub": buyer.email}),
+                    create_refresh_token(data={"sub": buyer.email}),
                     request,
                 )
     except Exception:
