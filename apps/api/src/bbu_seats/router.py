@@ -183,6 +183,27 @@ async def redeem(request: Request, db_session: AsyncSession = Depends(get_db_ses
     row.redeemed_at = _now()
     db_session.add(row)
     await db_session.commit()
+    # If this batch belongs to a sponsor, record the attribution too, so a
+    # code redemption shows up in that funder's report alongside people added
+    # in bulk or via the shared link. Best-effort: never fail a valid redeem.
+    try:
+        from src.bbu_sponsors.router import sponsor_id_from_batch
+        from src.bbu_sponsors.models import BBUSponsoredEnrollment
+        sp_id = sponsor_id_from_batch(row.batch_label or "")
+        if sp_id:
+            dupe = (await db_session.execute(select(BBUSponsoredEnrollment).where(
+                BBUSponsoredEnrollment.sponsor_id == sp_id,
+                BBUSponsoredEnrollment.email == (target.email or "").lower()))).scalars().first()
+            if not dupe:
+                db_session.add(BBUSponsoredEnrollment(
+                    org_id=row.org_id, sponsor_id=sp_id, user_id=target.id,
+                    email=(target.email or "").lower(),
+                    name=f"{target.first_name} {target.last_name}".strip(),
+                    course_uuids=",".join(course_uuids), method="code",
+                    code=row.code, enrolled_at=_now()))
+                await db_session.commit()
+    except Exception:
+        pass
     return {"redeemed": True, "granted_courses": len(course_uuids),
             "email": target.email}
 

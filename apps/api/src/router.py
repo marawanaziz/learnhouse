@@ -191,6 +191,8 @@ from src.bbu_credentials import router as bbu_credentials_router  # noqa: E402
 v1_router.include_router(bbu_credentials_router.router, prefix="/bbu/credentials", tags=["bbu-credentials"])
 from src.bbu_seats import router as bbu_seats_router  # noqa: E402
 v1_router.include_router(bbu_seats_router.router, prefix="/bbu/seats", tags=["bbu-seats"])
+from src.bbu_sponsors import router as bbu_sponsors_router  # noqa: E402
+v1_router.include_router(bbu_sponsors_router.router, prefix="/bbu/sponsors", tags=["bbu-sponsors"])
 from src.bbu_admin import console as bbu_admin_console  # noqa: E402
 v1_router.include_router(bbu_admin_console.router, prefix="/bbu/admin", tags=["bbu-admin"])
 v1_router.include_router(
