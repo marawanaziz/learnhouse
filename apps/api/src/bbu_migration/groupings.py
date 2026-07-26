@@ -234,7 +234,8 @@ async def clone_bold(request: Request, db_session: AsyncSession = Depends(get_db
                             "course_uuid": cloned.course_uuid})
         except Exception as e:
             results.append({"source": src_name, "status": f"error: {str(e)[:160]}"})
-    return {"dry_run": dry, "results": results}
+    return {"dry_run": dry, "acting_as": getattr(acting, "email", "?"),
+            "acting_id": getattr(acting, "id", 0), "results": results}
 
 
 @router.post("/groupings/communities")
