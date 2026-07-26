@@ -36,6 +36,7 @@ from src.bbu_payments.models import BBUProduct, BBUOrder
 from src.bbu_cohorts.models import BBUCohort
 from src.bbu_payments.branding import store_page, checkout_page, success_page
 from src.bbu_payments import affiliates as aff
+from src.bbu_payments import coupons as _coupon_svc
 
 REF_COOKIE = "bbu_ref"
 
@@ -170,6 +171,20 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
     p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == product_id))).scalars().first()
     if not p:
         raise HTTPException(404, "Product not found")
+
+    # ?coupon= drives the webinar offer pages: the discount rides the URL so the
+    # attendee never types a code. An unusable code fails loudly here rather than
+    # quietly rendering list price and charging it.
+    coupon_code = (request.query_params.get("coupon") or "").strip()
+    discount_cents = 0
+    if coupon_code:
+        c = await _coupon_svc.find_by_code(db_session, p.org_id, coupon_code)
+        ok, reason = (_coupon_svc.validate_for(c, p.id, p.price_cents) if c
+                      else (False, "that code doesn't exist"))
+        if not ok:
+            raise HTTPException(400, f"This discount link isn't valid — {reason}")
+        discount_cents = _coupon_svc.compute_discount_cents(c, p.price_cents)
+
     # cohort products: if every upcoming cohort is full, render the waitlist form
     sold_out, program = False, ""
     prog = getattr(p, "cohort_program", "") or ""
@@ -184,7 +199,9 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
         else:
             program = prog
             sold_out = not await cohort_svc.has_open_seat(db_session, p.org_id, prog)
-    resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request), sold_out=sold_out, program=program))
+    resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request), sold_out=sold_out,
+                                      program=program, coupon_code=coupon_code,
+                                      discount_cents=discount_cents))
     await _apply_ref(request, resp, db_session)
     return resp
 
@@ -297,13 +314,38 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
         price_data["product_data"] = {"name": p.name,
                                       "description": (p.description or "")[:300]}
 
+    # Webinar offer links carry the discount in the URL — nobody types a code.
+    # Stripe refuses `discounts` and `allow_promotion_codes` on the SAME session,
+    # but the choice is per session: a link-borne coupon pre-applies the discount,
+    # and everyone else still gets the promo box.
+    discount_cents, discounts = 0, None
+    code = (body.get("coupon") or "").strip()
+    if code:
+        c = await _coupon_svc.find_by_code(db_session, p.org_id, code)
+        ok, reason = (_coupon_svc.validate_for(c, p.id, p.price_cents) if c
+                      else (False, "that code doesn't exist"))
+        # Never silently bill list price to someone who followed a discount link.
+        if not ok:
+            raise HTTPException(400, f"This discount link isn't valid — {reason}")
+        try:
+            scope = _sync._scope_for(c, {p.id: p.stripe_product_id})
+            _coupon_svc.ensure_stripe_objects(c, scope)
+            db_session.add(c)
+        except Exception as e:
+            raise HTTPException(400, f"Could not apply that discount: {str(e)[:120]}")
+        if not c.stripe_promo_id:
+            raise HTTPException(400, "That discount isn't available right now.")
+        discount_cents = _coupon_svc.compute_discount_cents(c, p.price_cents)
+        discounts = [{"promotion_code": c.stripe_promo_id}]
+
     session = stripe.checkout.Session.create(
         mode="payment",
         customer_email=email or None,
         line_items=[{"price_data": price_data, "quantity": 1}],
-        # buyers type BBU promo codes on Stripe's page; Stripe enforces expiry,
-        # caps, minimum spend and course scope
-        allow_promotion_codes=True,
+        **({"discounts": discounts} if discounts
+           # buyers type BBU promo codes on Stripe's page; Stripe enforces expiry,
+           # caps, minimum spend and course scope
+           else {"allow_promotion_codes": True}),
         # Checkout Sessions auto-enable every eligible payment method configured
         # on the Stripe account (cards incl. HSA/FSA, Klarna, wallets) when
         # payment_method_types is omitted — no per-session flag needed.
@@ -315,7 +357,8 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
 
     order = BBUOrder(
         org_id=p.org_id, product_id=p.id, stripe_session_id=session.id,
-        email=email, amount_cents=p.price_cents, currency=p.currency,
+        email=email, amount_cents=max(0, p.price_cents - discount_cents),
+        currency=p.currency,
         status="pending", course_uuids=p.course_uuids, affiliate_ref=ref,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
