@@ -680,12 +680,12 @@ button.ghost:hover{{background:#dbecf8}}
         <select id=rtype><option value="">any type</option><option value=birth>birth</option><option value=postpartum>postpartum</option></select>
         <select id=rsource><option value="">any track</option><option value=accredible>Imported (Accredible)</option><option value=training>First-year training</option><option value=cross_cert>Cross-certification</option><option value=manual>Manual</option></select>
         <select id=rexp><option value=0>any expiry</option><option value=30>expiring ≤30 days</option><option value=60>expiring ≤60 days</option><option value=90>expiring ≤90 days</option><option value=180>expiring ≤180 days</option></select>
-        <button onclick="RPAGE=1;loadRoster()">Filter</button>
-        <select id=rper onchange="RPAGE=1;loadRoster()"><option value=50>50 / page</option><option value=100>100 / page</option><option value=250>250 / page</option><option value=500>500 / page</option></select>
+        <button onclick="RPAGE=1;loadCredRoster()">Filter</button>
+        <select id=rper onchange="RPAGE=1;loadCredRoster()"><option value=50>50 / page</option><option value=100>100 / page</option><option value=250>250 / page</option><option value=500>500 / page</option></select>
         <button class=ghost onclick=exportRoster()>⬇ Export CSV (all matching)</button>
       </div>
       <div style="max-height:520px;overflow:auto;margin-top:.6rem">
-        <table id=t-roster><thead><tr><th>Member</th><th>Credential</th><th>Track</th><th>Status</th><th>Valid through</th><th>Days left</th></tr></thead><tbody></tbody></table>
+        <table id=t-credroster><thead><tr><th>Member</th><th>Credential</th><th>Track</th><th>Status</th><th>Valid through</th><th>Days left</th></tr></thead><tbody></tbody></table>
       </div>
       <div class=row id=rpager style="justify-content:space-between;align-items:center;margin-top:.6rem"></div>
     </div>
@@ -733,7 +733,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); document.getElementById('p-'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
-  if(t.dataset.t==='credentials')loadRoster();
+  if(t.dataset.t==='credentials')loadCredRoster();
 }});
 // Store merchandising
 const CATS=['','Birth Classes','Postpartum Classes','Spanish Classes','Professional Training','Mentorship','Bundles','eBooks'];
@@ -909,8 +909,8 @@ function rosterQS(){{
   return p.toString();
 }}
 let RPAGE=1;
-function goPage(n){{RPAGE=n;loadRoster();document.querySelector('#t-roster').scrollIntoView({{block:'nearest'}});}}
-function loadRoster(){{
+function goPage(n){{RPAGE=n;loadCredRoster();document.querySelector('#t-credroster').scrollIntoView({{block:'nearest'}});}}
+function loadCredRoster(){{
   const per=document.getElementById('rper').value||50;
   j('/credentials/roster?'+rosterQS()+'&page='+RPAGE+'&per_page='+per).then(d=>{{
     const s=d.summary||{{}};
@@ -919,7 +919,7 @@ function loadRoster(){{
       chip('Total',s.total,'#eaf2f9')+chip('Full',s.full,'#dff5e6')+chip('Provisional',s.provisional,'#fff2d6')
       +chip('Lapsed',s.lapsed,'#fde8e8')+chip('Expired',s.expired,'#fde8e8')
       +chip('Expiring ≤30d',s.expiring_30d,'#ffe0b2')+chip('Expiring ≤90d',s.expiring_90d,'#f1e4ff');
-    document.querySelector('#t-roster tbody').innerHTML=(d.rows||[]).map(r=>{{
+    document.querySelector('#t-credroster tbody').innerHTML=(d.rows||[]).map(r=>{{
       const dl=r.days_to_expiry;
       const col=dl===null?'#6b6f79':(dl<0?'#b3261e':(dl<=30?'#b26a00':(dl<=90?'#7a5b12':'#1c7a41')));
       const badge=`<span style="padding:.15rem .55rem;border-radius:999px;font-size:.75rem;font-weight:700;background:${{r.status==='full'?'#dff5e6':(r.status==='provisional'?'#fff2d6':'#fde8e8')}}">${{esc(r.status)}}</span>`;
