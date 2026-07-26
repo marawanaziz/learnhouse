@@ -156,6 +156,18 @@ async def import_circle_coupons(request: Request,
     redemptions = body.get("redemptions") or []
     now = str(datetime.now())
 
+    # `reset` clears the archive first so the import can be re-run from scratch
+    # against a corrected export. Only ever touches source="circle" rows.
+    wiped = 0
+    if body.get("reset") and not dry:
+        old = (await db_session.execute(select(BBUCircleRedemption).where(
+            BBUCircleRedemption.org_id == ORG,
+            BBUCircleRedemption.source == "circle"))).scalars().all()
+        for r in old:
+            await db_session.delete(r)
+        wiped = len(old)
+        await db_session.flush()
+
     by_key, keys = await _product_index(db_session)
 
     # ---------------------------------------------------------------- coupons
@@ -248,6 +260,7 @@ async def import_circle_coupons(request: Request,
 
     return JSONResponse({
         "dry_run": dry,
+        "wiped_before_import": wiped,
         "coupons": {"created": created, "updated": updated,
                     "held_inactive_for_review": len(held), "held": held[:40]},
         "redemptions": {"imported": added, "skipped_duplicates": dupes},
