@@ -25,13 +25,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def ensure_stripe_objects(coupon: BBUCoupon) -> None:
+def ensure_stripe_objects(coupon: BBUCoupon,
+                          applies_to_products: list | None = None) -> None:
     """Create the Stripe Coupon + Promotion Code once; cache their ids on the row.
-    No-op when Stripe isn't configured or the ids already exist."""
+    No-op when Stripe isn't configured or the ids already exist.
+
+    `applies_to_products` are Stripe Product ids the code is restricted to,
+    mirroring BBUCoupon.applies_to. Pass None/[] for an unrestricted ("all") code.
+    Stripe enforces this itself and refuses the code on a cart containing nothing
+    it covers, so scope survives even though the buyer types the code on Stripe's
+    page where we can't intervene. This only works because checkout line items
+    reference a persistent BBUProduct.stripe_product_id — with inline product_data
+    Stripe mints a new product per session and a scoped coupon matches nothing.
+    """
     if not stripe.api_key:
         return
     if not coupon.stripe_coupon_id:
         params: dict = {"name": coupon.code, "duration": "once"}
+        if applies_to_products:
+            params["applies_to"] = {"products": list(applies_to_products)}
         if coupon.kind == "percent":
             params["percent_off"] = max(1, min(100, int(coupon.percent_off or 0)))
         else:

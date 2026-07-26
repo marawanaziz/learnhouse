@@ -221,15 +221,23 @@ async def checkout(
     success_url = (f"{origin}/api/v1/payments/{org_id}/checkout-success"
                    f"?session_id={{CHECKOUT_SESSION_ID}}&next={quote(next_url, safe='')}")
 
+    # Reference the persistent Stripe Product so course-scoped coupons can match
+    # (inline product_data mints a throwaway product Stripe's applies_to can't see).
+    from src.bbu_payments import stripe_sync as _sync
+
     def _line(prod):
-        return {
-            "price_data": {
-                "currency": prod.currency,
-                "product_data": {"name": prod.name, "description": (prod.description or "")[:300]},
-                "unit_amount": prod.price_cents,
-            },
-            "quantity": 1,
-        }
+        try:
+            _sync.ensure_product(prod)
+            db_session.add(prod)
+        except Exception:
+            pass
+        pd = {"currency": prod.currency, "unit_amount": prod.price_cents}
+        if prod.stripe_product_id:
+            pd["product"] = prod.stripe_product_id
+        else:
+            pd["product_data"] = {"name": prod.name,
+                                  "description": (prod.description or "")[:300]}
+        return {"price_data": pd, "quantity": 1}
     line_items = [_line(p)] + [_line(bp) for bp in bump_products]
 
     # Merge course access across the primary product + any bumps (dedup, ordered).

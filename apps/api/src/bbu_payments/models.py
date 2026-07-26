@@ -43,6 +43,11 @@ class BBUProduct(SQLModel, table=True):
     # codes for the buyer (the agency owner), who gets a self-serve portal to
     # view/share/redeem them. 0 = not a seat pack.
     seat_count: int = Field(default=0)
+    # Persistent Stripe Product. Checkout line items reference this instead of
+    # minting a throwaway product from inline product_data — without it a
+    # course-scoped Stripe coupon can never match, and Stripe rejects it with
+    # "does not apply to anything in this order".
+    stripe_product_id: str = Field(default="", sa_column=Column(String(64)))
 
 
 class BBUOrder(SQLModel, table=True):

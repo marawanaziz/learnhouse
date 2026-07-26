@@ -254,17 +254,29 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
     ref = (body.get("ref") or request.cookies.get(REF_COOKIE) or "").strip()
 
     base = _base_url(request)
+    # Reference the persistent Stripe Product, not inline product_data: a
+    # course-scoped coupon can only match a stable product id. Created on demand
+    # if the catalogue sync hasn't run yet.
+    from src.bbu_payments import stripe_sync as _sync
+    try:
+        _sync.ensure_product(p)
+        db_session.add(p)
+    except Exception:
+        pass
+    price_data = {"currency": p.currency, "unit_amount": p.price_cents}
+    if p.stripe_product_id:
+        price_data["product"] = p.stripe_product_id
+    else:
+        price_data["product_data"] = {"name": p.name,
+                                      "description": (p.description or "")[:300]}
+
     session = stripe.checkout.Session.create(
         mode="payment",
         customer_email=email or None,
-        line_items=[{
-            "price_data": {
-                "currency": p.currency,
-                "product_data": {"name": p.name, "description": (p.description or "")[:300]},
-                "unit_amount": p.price_cents,
-            },
-            "quantity": 1,
-        }],
+        line_items=[{"price_data": price_data, "quantity": 1}],
+        # buyers type BBU promo codes on Stripe's page; Stripe enforces expiry,
+        # caps, minimum spend and course scope
+        allow_promotion_codes=True,
         # Checkout Sessions auto-enable every eligible payment method configured
         # on the Stripe account (cards incl. HSA/FSA, Klarna, wallets) when
         # payment_method_types is omitted — no per-session flag needed.

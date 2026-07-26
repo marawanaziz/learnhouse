@@ -381,6 +381,31 @@ async def credentials_user(request: Request, email: str, db_session: AsyncSessio
     }
 
 
+@router.get("/stripe-sync")
+async def stripe_sync_status(request: Request,
+                             db_session: AsyncSession = Depends(get_db_session)):
+    """How much of the catalogue/coupon set actually exists in Stripe."""
+    await _auth(request, db_session)
+    from src.bbu_payments import stripe_sync as sync_svc
+    return await sync_svc.status(db_session, ORG)
+
+
+@router.post("/stripe-sync")
+async def stripe_sync_run(request: Request,
+                          db_session: AsyncSession = Depends(get_db_session)):
+    """Push products + active coupons into Stripe. Body: {reset, include_inactive}.
+
+    `reset` clears cached Stripe ids first — required once after switching from
+    the test key to the live key, since ids don't carry across accounts/modes.
+    """
+    body = await request.json() if await request.body() else {}
+    await _auth(request, db_session, body)
+    from src.bbu_payments import stripe_sync as sync_svc
+    return await sync_svc.sync_all(db_session, ORG,
+                                   reset=bool(body.get("reset")),
+                                   include_inactive=bool(body.get("include_inactive")))
+
+
 @router.get("/circle-history")
 async def circle_history(request: Request, q: str = "", code: str = "",
                          fmt: str = "json", page: int = 1, per_page: int = 50,
@@ -745,6 +770,15 @@ button.ghost:hover{{background:#dbecf8}}
         <button onclick=createCoupon()>Create</button>
       </div><div class=muted id=c-msg></div>
     </div>
+    <div class=card><h2>Stripe sync</h2>
+      <p class=muted style="margin-top:-.6rem">Buyers type codes on Stripe's checkout page, so every code has to exist in Stripe. Stripe enforces expiry, usage caps and which courses a code covers. <b>Re-run this once after switching from the test key to the live key</b> &mdash; Stripe ids don't carry across accounts.</p>
+      <div id=ss-out class=row style="gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
+      <div class=row>
+        <button onclick=runStripeSync(false)>Sync to Stripe</button>
+        <button class=ghost onclick=runStripeSync(true)>Re-create all (after key swap)</button>
+      </div>
+      <div class=muted id=ss-msg></div>
+    </div>
     <div class=card><h2>Coupons</h2><table id=t-coupons><thead><tr><th>Code</th><th>Value</th><th>Min</th><th>Used</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody></tbody></table></div>
   </div>
 
@@ -876,6 +910,33 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   if(t.dataset.t==='credentials')loadCredRoster();
   if(t.dataset.t==='circlehist')loadCircleHist();
 }});
+// Stripe sync — the platform's products/coupons must exist in Stripe to redeem
+function loadStripeSync(){{
+  j('/stripe-sync').then(d=>{{
+    if(!d||d.detail){{document.getElementById('ss-out').innerHTML='<span class=muted>Could not load.</span>';return;}}
+    const warn = d.stripe_mode!=='live' ? ' style="background:#fde8e8;color:#8a1c1c"' : '';
+    document.getElementById('ss-out').innerHTML=
+      `<span class=badge${{warn}}>Stripe: ${{esc(d.stripe_mode)}} mode</span>`+
+      `<span class=badge>${{d.products_in_stripe}}/${{d.products_total}} products</span>`+
+      `<span class=badge>${{d.coupons_in_stripe}}/${{d.coupons_active}} active coupons</span>`+
+      `<span class=badge>${{d.scoped_coupons}} course-scoped</span>`;
+    document.getElementById('ss-msg').textContent = (d.not_yet_in_stripe||[]).length
+      ? 'Not in Stripe yet: '+d.not_yet_in_stripe.join(', ') : '';
+  }});
+}}
+function runStripeSync(reset){{
+  if(reset && !confirm('Re-create every Stripe coupon and product from scratch?\\n\\nDo this after switching the Stripe key (test to live). Old ids are discarded.'))return;
+  document.getElementById('ss-msg').textContent='Syncing…';
+  j('/stripe-sync',{{method:'POST',body:JSON.stringify({{reset:!!reset}})}}).then(d=>{{
+    if(d.error){{document.getElementById('ss-msg').textContent=d.error;return;}}
+    const errs=[...(d.products.errors||[]),...(d.coupons.errors||[])];
+    document.getElementById('ss-msg').textContent =
+      `Done (${{d.stripe_mode}} mode) — ${{d.products.created}} products, ${{d.coupons.created}} coupons created`+
+      (d.coupons.skipped_inactive?`, ${{d.coupons.skipped_inactive}} inactive skipped`:'')+
+      (errs.length?` — ${{errs.length}} error(s): ${{errs.map(e=>esc(e.code||e.product)+': '+esc(e.error)).join(' | ')}}`:'');
+    loadStripeSync(); loadCoupons&&loadCoupons();
+  }});
+}}
 // Circle coupon history (archived before Circle was shut down)
 let CHPAGE=1, CHCODES=0;
 function chQS(){{
@@ -1153,5 +1214,5 @@ function genSeats(){{
     if(r.codes){{document.getElementById('s-msg').innerHTML='Generated '+r.count+' codes:<br><code>'+r.codes.join('  ')+'</code>';loadSeats();}}
     else document.getElementById('s-msg').textContent=r.detail||'Error';}});
 }}
-loadCoupons();
+loadCoupons(); loadStripeSync();
 </script></body></html>"""
