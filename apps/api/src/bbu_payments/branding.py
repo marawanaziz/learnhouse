@@ -73,6 +73,25 @@ def _price(cents, cur="usd"):
     return f"${cents/100:,.0f}" if cents % 100 == 0 else f"${cents/100:,.2f}"
 
 
+def _price_block(p, discount_cents=0, coupon_code=""):
+    """Price line for the checkout page. With a URL coupon applied we show the
+    original struck through next to the amount actually charged, so the buyer
+    can see the discount landed before they ever reach Stripe."""
+    if discount_cents and discount_cents > 0:
+        net = max(0, p.price_cents - discount_cents)
+        return (
+            "<div class='price' style='margin:18px 0;display:flex;align-items:baseline;gap:12px'>"
+            f"<span style='font-size:.55em;color:#8a97a3;text-decoration:line-through'>"
+            f"{_price(p.price_cents, p.currency)}</span>"
+            f"<span>{_price(net, p.currency)}</span></div>"
+            "<div style='display:inline-block;background:#EBF7FF;border:1px solid rgba(0,178,255,.35);"
+            "border-radius:999px;padding:6px 16px;font-size:.8rem;font-weight:700;color:#113D5D;"
+            f"letter-spacing:.08em;text-transform:uppercase'>Discount applied &mdash; save "
+            f"{_price(discount_cents, p.currency)}</div>"
+        )
+    return f"<div class='price' style='margin:18px 0'>{_price(p.price_cents, p.currency)}</div>"
+
+
 def store_page(products, base):
     cards = ""
     if not products:
@@ -145,7 +164,7 @@ def waitlist_page(p, base, program):
     return _shell(f"Waitlist · {p.name}", inner)
 
 
-def checkout_page(p, pub_key, base, sold_out=False, program=""):
+def checkout_page(p, pub_key, base, sold_out=False, program="", coupon_code="", discount_cents=0):
     if sold_out:
         return waitlist_page(p, base, program)
     is_ebook = getattr(p, "kind", "") == "ebook"
@@ -157,7 +176,7 @@ def checkout_page(p, pub_key, base, sold_out=False, program=""):
         f"<span class='eyebrow'>{eyebrow}</span>"
         f"<h1 style='font-size:2rem;margin:12px 0 6px'>{p.name}</h1>"
         f"<p style='color:#4a5b68;margin-bottom:8px'>{(p.description or '')[:200]}</p>"
-        f"<div class='price' style='margin:18px 0'>{_price(p.price_cents, p.currency)}</div>"
+        f"{_price_block(p, discount_cents, coupon_code)}"
         f"<label for='email'>{email_label}</label>"
         f"<input id='email' type='email' placeholder='you@example.com' required>"
         f"<div style='height:22px'></div>"
@@ -172,7 +191,7 @@ def checkout_page(p, pub_key, base, sold_out=False, program=""):
         f"btn.textContent='Redirecting…';btn.disabled=true;"
         f"const ref=(document.cookie.match(/(?:^|; )bbu_ref=([^;]+)/)||[])[1]||'';"
         f"const r=await fetch('{base}/api/v1/bbu/checkout',{{method:'POST',"
-        f"headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{product_id:{p.id},email,ref:decodeURIComponent(ref)}})}});"
+        f"headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{product_id:{p.id},email,ref:decodeURIComponent(ref),coupon:'{coupon_code}'}})}});"
         f"const d=await r.json();"
         f"if(d.url){{window.location=d.url}}else if(d.waitlist){{window.location='{base}/api/v1/bbu/buy/{p.id}'}}else{{btn.textContent='Error — try again';btn.disabled=false;}}"
         f"}};"

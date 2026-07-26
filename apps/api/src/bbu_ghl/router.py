@@ -161,3 +161,135 @@ async def password_setup_blast(request: Request, db_session: AsyncSession = Depe
     return {"dry_run": False, "targets": len(users), "pushed": pushed,
             "ghl_field_key": field_key, "tag": tag, "reset_link_ttl_days": ttl // 86400,
             "errors": errors[:20], "error_count": len(errors)}
+
+
+# ===========================================================================
+# Email enablement: push the merge-field data GHL workflows need.
+# Each blast writes contact fields + a trigger tag; the GHL workflow listens
+# on the tag and sends the matching template.
+# ===========================================================================
+@router.post("/affiliate-blast")
+async def affiliate_blast(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Push each affiliate's portal + referral link into GHL and tag them so the
+    affiliate welcome/newsletter workflow can send. Body: {tag?, dry_run?, limit?}.
+    DRY-RUN by default."""
+    _check(request)
+    if not is_configured():
+        raise HTTPException(503, "GHL not configured")
+    from src.bbu_payments.models import BBUAffiliate
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    dry_run = str(body.get("dry_run", True)).lower() != "false"
+    tag = body.get("tag") or "bbu-affiliate-welcome"
+    limit = int(body.get("limit") or 0)
+    base = (body.get("base_url") or os.environ.get("BBU_PUBLIC_BASE_URL")
+            or "https://app-production-500b.up.railway.app").rstrip("/")
+
+    rows = (await db_session.execute(select(BBUAffiliate).where(
+        BBUAffiliate.org_id == 1))).scalars().all()
+    rows = [a for a in rows if (a.email or "").strip()]
+    if limit:
+        rows = rows[:limit]
+    if dry_run:
+        return {"dry_run": True, "targets": len(rows), "tag": tag,
+                "sample": [a.email for a in rows[:5]]}
+
+    pushed, errors = 0, []
+    async with GHLClient() as ghl:
+        portal_key = await ghl.ensure_text_field("BBU Affiliate Portal URL")
+        ref_key = await ghl.ensure_text_field("BBU Affiliate Referral URL")
+        for a in rows:
+            try:
+                portal = f"{base}/api/v1/bbu/affiliate/portal?token={a.portal_token}" if getattr(a, "portal_token", "") else f"{base}/api/v1/bbu/affiliate/portal"
+                ref = f"{base}/?ref={a.ref_code}"
+                nm = (a.name or "").strip().split(" ", 1)
+                await ghl.upsert_contact(
+                    email=a.email.strip().lower(),
+                    first_name=(nm[0] if nm and nm[0] else ""),
+                    last_name=(nm[1] if len(nm) > 1 else ""),
+                    fields={portal_key: portal, ref_key: ref}, tags=[tag])
+                pushed += 1
+            except Exception as e:
+                errors.append(f"{a.email}: {type(e).__name__}: {e}")
+    return {"dry_run": False, "targets": len(rows), "pushed": pushed, "tag": tag,
+            "fields": {"portal": portal_key, "referral": ref_key},
+            "errors": errors[:15], "error_count": len(errors)}
+
+
+# Anna's renewal cadence (Jul 2026): 6mo before, 3mo before, monthly, weekly in
+# the final month; after expiry at ~1 month, ~3 months, ~1 year.
+RENEWAL_STAGES = [
+    ("bbu-renewal-6mo",          165,  195),
+    ("bbu-renewal-3mo",           75,  105),
+    ("bbu-renewal-monthly",       31,   74),
+    ("bbu-renewal-weekly",         0,   30),
+    ("bbu-renewal-expired-1mo",  -45,   -1),
+    ("bbu-renewal-expired-3mo", -135,  -46),
+    ("bbu-renewal-expired-1yr", -395, -320),
+]
+
+
+@router.post("/renewal-sync")
+async def renewal_sync(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Tag credential holders into the right renewal-cadence bucket and push the
+    merge fields the renewal emails use (type, expiry, renew link). Designed to
+    run daily. Body: {dry_run?}. DRY-RUN by default."""
+    _check(request)
+    if not is_configured():
+        raise HTTPException(503, "GHL not configured")
+    from src.bbu_credentials.models import BBUCredential
+    from src.bbu_credentials import service as cred_svc
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    dry_run = str(body.get("dry_run", True)).lower() != "false"
+    base = (body.get("base_url") or os.environ.get("BBU_PUBLIC_BASE_URL")
+            or "https://app-production-500b.up.railway.app").rstrip("/")
+
+    creds = (await db_session.execute(select(BBUCredential).where(
+        BBUCredential.org_id == 1))).scalars().all()
+    now = cred_svc._now_dt()
+    buckets: dict = {}
+    plan = []
+    for c in creds:
+        exp_raw = (c.full_expires_at if c.status == "full" else c.provisional_expires_at) or ""
+        exp = cred_svc._parse(exp_raw)
+        if not exp:
+            continue
+        days = (exp - now).days
+        stage = next((t for t, lo, hi in RENEWAL_STAGES if lo <= days <= hi), None)
+        if not stage:
+            continue
+        u = (await db_session.execute(select(User).where(User.id == c.user_id))).scalars().first()
+        if not u or not (u.email or "").strip():
+            continue
+        buckets[stage] = buckets.get(stage, 0) + 1
+        plan.append((u, c, stage, exp_raw[:10], days))
+
+    if dry_run:
+        return {"dry_run": True, "matched": len(plan), "by_stage": buckets}
+
+    pushed, errors = 0, []
+    async with GHLClient() as ghl:
+        f_type = await ghl.ensure_text_field("BBU Credential Type")
+        f_exp = await ghl.ensure_text_field("BBU Credential Expires")
+        f_renew = await ghl.ensure_text_field("BBU Renew URL")
+        for u, c, stage, exp_s, days in plan:
+            try:
+                await ghl.upsert_contact(
+                    email=u.email.strip().lower(),
+                    first_name=u.first_name or "", last_name=u.last_name or "",
+                    fields={f_type: (c.credential_type or "").title(),
+                            f_exp: exp_s,
+                            f_renew: f"{base}/store"},
+                    tags=[stage])
+                pushed += 1
+            except Exception as e:
+                errors.append(f"{u.email}: {type(e).__name__}: {e}")
+    return {"dry_run": False, "matched": len(plan), "pushed": pushed,
+            "by_stage": buckets, "errors": errors[:15], "error_count": len(errors)}
