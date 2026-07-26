@@ -201,3 +201,37 @@ class BBUPayout(SQLModel, table=True):
     status: str = Field(default="pending", sa_column=Column(String(16)))  # pending|paid|failed
     period: str = Field(default="", sa_column=Column(String(24)))
     created_at: str = Field(default="", sa_column=Column(String(40)))
+
+
+class BBUCircleRedemption(SQLModel, table=True):
+    """A coupon redemption imported from Circle — a read-only historical archive.
+
+    Circle is being shut down and its coupon → who-redeemed-it history is the
+    system of record for grant reporting (notably the BCBS grant, where BBU has
+    to show which people were served under which funder code). Circle exposes
+    none of this over its public API, so it is captured here verbatim.
+
+    These rows are NOT orders. They never grant course access, issue a
+    certificate, touch Stripe, or feed affiliate commissions — the learners'
+    actual enrollments were migrated separately. This table exists so the
+    history survives Circle's shutdown and stays queryable/exportable.
+    """
+    __tablename__ = "bbu_circle_redemption"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    code: str = Field(default="", sa_column=Column(String(64), index=True))
+    terms: str = Field(default="", sa_column=Column(String(120)))
+    member_name: str = Field(default="", sa_column=Column(String(200)))
+    member_email: str = Field(default="", sa_column=Column(String(320), index=True))
+    # the Circle paywall name, kept verbatim, plus our best-effort mapping to a
+    # current BBUProduct (null when Circle sold something we no longer list)
+    paywall_name: str = Field(default="", sa_column=Column(String(300)))
+    product_id: Optional[int] = Field(default=None)
+    redeemed_on: str = Field(default="", sa_column=Column(String(10), index=True))
+    amount: str = Field(default="", sa_column=Column(String(24)))
+    charge_status: str = Field(default="", sa_column=Column(String(32)))
+    redemption_status: str = Field(default="", sa_column=Column(String(32)))
+    source: str = Field(default="circle", sa_column=Column(String(16)))
+    imported_at: str = Field(default="", sa_column=Column(String(40)))
