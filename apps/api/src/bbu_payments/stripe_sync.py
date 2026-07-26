@@ -138,9 +138,7 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
         # it and rebuild the pair rather than leaving it live.
         if want and c.stripe_coupon_id:
             try:
-                live = stripe.Coupon.retrieve(c.stripe_coupon_id,
-                                              stripe_version=coupon_svc.COUPON_API_VERSION)
-                have = set(coupon_svc._scope_of(live))
+                have = set(coupon_svc._scope_of(c.stripe_coupon_id))
                 if have != set(want):
                     try:
                         stripe.Coupon.delete(c.stripe_coupon_id,

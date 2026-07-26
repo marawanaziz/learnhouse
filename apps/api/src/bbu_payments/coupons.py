@@ -29,16 +29,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _scope_of(stripe_coupon) -> list:
+def _scope_of(coupon_id: str) -> list:
     """Product ids a Stripe coupon is restricted to, or [] if unrestricted.
 
-    Stripe returns StripeObject, which does NOT implement .get() — calling it
-    raises AttributeError('get'). Read by key with an `in` guard instead.
+    `applies_to` is NOT returned on a normal coupon response — not by create,
+    not by retrieve. It only appears with `expand=["applies_to"]`. Reading it
+    off a plain response always yields None, which looks exactly like "this
+    coupon is unrestricted" and is how a correctly-scoped catalogue can appear
+    catastrophically unscoped. Always expand.
     """
     try:
-        if "applies_to" not in stripe_coupon:
-            return []
-        ap = stripe_coupon["applies_to"]
+        c = stripe.Coupon.retrieve(coupon_id, expand=["applies_to"],
+                                   stripe_version=COUPON_API_VERSION)
+        ap = c["applies_to"] if "applies_to" in c else None
         if not ap or "products" not in ap:
             return []
         return list(ap["products"] or [])
@@ -86,7 +89,7 @@ def ensure_stripe_objects(coupon: BBUCoupon,
         # 100%-off code valid on every course. Fail loudly rather than leave that
         # sitting in the account looking healthy.
         if applies_to_products:
-            got = _scope_of(c)
+            got = _scope_of(c["id"])
             if not got:
                 try:
                     stripe.Coupon.delete(c["id"], stripe_version=COUPON_API_VERSION)
