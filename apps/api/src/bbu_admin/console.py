@@ -56,12 +56,29 @@ async def _user(db: AsyncSession, email: str) -> User:
 async def coupons_list(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     await _auth(request, db_session)
     rows = (await db_session.execute(select(BBUCoupon).where(BBUCoupon.org_id == ORG))).scalars().all()
+    prods = (await db_session.execute(select(BBUProduct).where(
+        BBUProduct.org_id == ORG))).scalars().all()
+    pname = {p.id: p.name for p in prods}
+
+    def _covers(c):
+        raw = (c.applies_to or "all").strip()
+        if not raw or raw.lower() == "all":
+            return "All products"
+        names = [pname.get(int(x)) for x in raw.split(",") if x.strip().isdigit()]
+        return ", ".join(n for n in names if n) or raw
+
     return [{
         "id": c.id, "code": c.code, "kind": c.kind,
         "value": (f"{c.percent_off}%" if c.kind == "percent" else f"${(c.amount_off_cents or 0)/100:.2f}"),
         "min": round((c.min_amount_cents or 0) / 100, 2),
         "max_redemptions": c.max_redemptions, "times_redeemed": c.times_redeemed,
         "expires_at": (c.expires_at or "")[:10], "active": bool(c.active),
+        # what the code covers, and whether Stripe actually knows about it —
+        # a code live in the platform but absent from Stripe cannot be redeemed
+        "applies_to": c.applies_to or "all",
+        "covers": _covers(c),
+        "in_stripe": bool(c.stripe_promo_id),
+        "stripe_coupon_id": c.stripe_coupon_id or "",
     } for c in rows]
 
 
