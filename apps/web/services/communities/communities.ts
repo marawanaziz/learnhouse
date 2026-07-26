@@ -112,6 +112,20 @@ export async function getCommunityByCourse(
   return res
 }
 
+/** All communities linked to a course — a course can be shared by several. */
+export async function getCommunitiesByCourse(
+  course_uuid: string,
+  next: any,
+  access_token?: string
+) {
+  const result: any = await fetch(
+    `${getAPIUrl()}communities/course/${course_uuid}/all`,
+    RequestBodyWithAuthHeader('GET', null, next, access_token)
+  )
+  const res = await errorHandling(result)
+  return res
+}
+
 export async function createCommunity(
   org_id: number,
   data: CommunityCreate,

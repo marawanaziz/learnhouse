@@ -8,7 +8,7 @@ import relativeTime from 'dayjs/plugin/relativeTime'
 dayjs.extend(relativeTime)
 import { MessageCircle, ArrowRight, ChevronUp } from 'lucide-react'
 import { getUriWithOrg } from '@services/config/config'
-import { Community, getCommunityByCourse } from '@services/communities/communities'
+import { Community, getCommunitiesByCourse } from '@services/communities/communities'
 import { DiscussionWithAuthor, getDiscussions } from '@services/communities/discussions'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import { useQuery } from '@tanstack/react-query'
@@ -24,34 +24,55 @@ export function CourseCommunitySection({ courseUuid, orgslug }: CourseCommunityS
   const session = useLHSession() as any
   const accessToken = session?.data?.tokens?.access_token
 
-  // TanStack Query for community data — cached across navigations within the same course
-  const { data: community } = useQuery<Community | null>({
-    queryKey: queryKeys.community.byCourse(courseUuid),
-    queryFn: () => getCommunityByCourse(courseUuid, null, accessToken),
+  // A course can be shared by SEVERAL communities (e.g. a families cohort and a
+  // professionals cohort), so fetch them all and render one card per community.
+  const { data: communities } = useQuery<Community[]>({
+    queryKey: queryKeys.community.allByCourse(courseUuid),
+    queryFn: () => getCommunitiesByCourse(courseUuid, null, accessToken),
     enabled: !!courseUuid && !!accessToken,
     staleTime: 60_000,
   })
 
-  // TanStack Query for discussions — only fetch when community is loaded
-  const communityUuid = community?.community_uuid
-  const { data: discussions } = useQuery<DiscussionWithAuthor[]>({
-    queryKey: queryKeys.community.discussions(communityUuid ?? '', 'recent', 1),
-    queryFn: () => getDiscussions(communityUuid!, 'recent', 1, 3, null, accessToken),
-    enabled: !!communityUuid && !!accessToken,
-    staleTime: 60_000,
-  })
-
-  if (!community) {
+  if (!communities || communities.length === 0) {
     return null
   }
-
-  const communityId = community.community_uuid.replace('community_', '')
 
   return (
     <div className="w-full my-5">
       <h2 className="py-5 text-xl md:text-2xl font-bold text-gray-900">
         {t('communities.course_section.title')}
       </h2>
+      <div className="flex flex-col gap-4">
+        {communities.map((community) => (
+          <CommunityCard
+            key={community.community_uuid}
+            community={community}
+            orgslug={orgslug}
+            accessToken={accessToken}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CommunityCard({ community, orgslug, accessToken }: {
+  community: Community
+  orgslug: string
+  accessToken?: string
+}) {
+  const { t } = useTranslation()
+  const communityUuid = community.community_uuid
+  const { data: discussions } = useQuery<DiscussionWithAuthor[]>({
+    queryKey: queryKeys.community.discussions(communityUuid, 'recent', 1),
+    queryFn: () => getDiscussions(communityUuid, 'recent', 1, 3, null, accessToken),
+    enabled: !!communityUuid && !!accessToken,
+    staleTime: 60_000,
+  })
+
+  const communityId = community.community_uuid.replace('community_', '')
+
+  return (
       <div className="bg-white shadow-md shadow-gray-300/25 outline outline-1 outline-neutral-200/40 rounded-lg overflow-hidden">
         {/* Header */}
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
@@ -119,7 +140,6 @@ export function CourseCommunitySection({ courseUuid, orgslug }: CourseCommunityS
           )}
         </div>
       </div>
-    </div>
   )
 }
 

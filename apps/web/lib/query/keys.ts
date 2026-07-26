@@ -41,6 +41,7 @@ export const queryKeys = {
     rights: (uuid: string) => ['community', uuid, 'rights'] as const,
     discussions: (uuid: string, sort: string, page: number) => ['community', uuid, 'discussions', sort, page] as const,
     byCourse: (courseUuid: string) => ['community', 'byCourse', courseUuid] as const,
+    allByCourse: (courseUuid: string) => ['community', 'allByCourse', courseUuid] as const,
   },
   discussion: {
     detail: (uuid: string) => ['discussion', uuid] as const,
