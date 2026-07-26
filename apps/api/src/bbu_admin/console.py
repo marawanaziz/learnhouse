@@ -439,6 +439,18 @@ async def offers_merch(pid: int, request: Request, db_session: AsyncSession = De
         BBUProduct.id == pid, BBUProduct.org_id == ORG))).scalars().first()
     if not p:
         raise HTTPException(404, "Offer not found")
+    if "price" in b:
+        # Price is entered in DOLLARS in the admin UI; stored as cents. Applies
+        # to the next checkout — existing orders keep the price they were sold at.
+        try:
+            dollars = float(b.get("price"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "price must be a number (dollars)")
+        if dollars < 0:
+            raise HTTPException(400, "price cannot be negative")
+        p.price_cents = int(round(dollars * 100))
+    if "name" in b and str(b.get("name") or "").strip():
+        p.name = str(b["name"]).strip()[:200]
     if "category" in b:
         p.category = (b.get("category") or "")
     if "bump_ids" in b:
@@ -638,7 +650,8 @@ function renderStore(){{
     const n=o.bump_ids.length;
     const listed=`<label style="cursor:pointer"><input type=checkbox ${{o.public?'checked':''}} onchange="saveListed(${{o.id}},this.checked)"> ${{o.public?'live':'hidden'}}</label>`;
     const seats=`<input type=number min=0 value="${{o.seat_count||0}}" title="0 = not a seat pack; N = buying it mints N shareable seats" style="width:56px" onchange="saveSeats(${{o.id}},this.value)">`;
-    return `<tr><td><b>${{esc(o.name)}}</b></td><td>$${{o.price}}</td>`
+    const price=`<span style="color:#6b6f79">$</span><input type=number min=0 step="0.01" value="${{o.price}}" title="Price in dollars. Saves on change; applies to the next checkout." style="width:84px;font-weight:700" onchange="savePrice(${{o.id}},this.value,this)">`;
+    return `<tr><td><b>${{esc(o.name)}}</b></td><td>${{price}}</td>`
       +`<td>${{listed}}</td>`
       +`<td><select onchange="saveCat(${{o.id}},this.value)">${{opts}}</select></td>`
       +`<td>${{seats}}</td>`
@@ -656,6 +669,15 @@ function saveCohort(id,val){{
   else if(val.startsWith('id:')) body.cohort_id=parseInt(val.slice(3),10);
   o.cohort_program=body.cohort_program; o.cohort_id=body.cohort_id||null;
   j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify(body)}});
+}}
+function savePrice(id,val,el){{
+  const v=parseFloat(val);
+  if(!(v>=0)){{alert('Enter a valid price');return}}
+  const o=STORE.find(x=>x.id===id); if(o)o.price=v;
+  const prev=el.style.background; el.style.background='#fff8dd';
+  j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{price:v}})}})
+    .then(()=>{{el.style.background='#e6f7ec';setTimeout(()=>{{el.style.background=prev}},1200)}})
+    .catch(()=>{{el.style.background='#fdeaea';alert('Could not save price')}});
 }}
 function saveListed(id,on){{const o=STORE.find(x=>x.id===id);if(o)o.public=on;
   j('/offers/'+id+'/merchandising',{{method:'POST',body:JSON.stringify({{public:on}})}}).then(()=>renderStore());}}
