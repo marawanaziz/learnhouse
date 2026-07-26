@@ -19,7 +19,7 @@ from src.db.users import User
 from src.db.courses.courses import Course
 from src.db.communities.communities import Community
 from src.bbu_admin.auth import authorize_admin
-from src.bbu_payments.models import BBUCoupon, BBUProduct
+from src.bbu_payments.models import BBUCoupon, BBUProduct, BBUOrder
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_cohorts.models import BBUCohort, BBUCohortWaitlist
 from src.bbu_cohorts import service as cohort_svc
@@ -88,6 +88,59 @@ async def coupons_create(request: Request, db_session: AsyncSession = Depends(ge
     db_session.add(c)
     await db_session.commit()
     return {"ok": True}
+
+
+@router.get("/coupons/redemptions")
+async def coupons_redemptions(request: Request, code: str = "", fmt: str = "json",
+                              db_session: AsyncSession = Depends(get_db_session)):
+    """Who redeemed which coupon — name, email, date, amount, discount.
+    Anna needs this for BCBS grant reporting. `code` filters to one coupon;
+    fmt=csv exports. Redemptions are recorded on the order's `extra` blob at
+    checkout (extra.coupon_code / extra.coupon_discount_cents)."""
+    await _auth(request, db_session)
+    orders = (await db_session.execute(select(BBUOrder).where(
+        BBUOrder.org_id == ORG, BBUOrder.status == "paid"))).scalars().all()
+    prods = {p.id: p.name for p in (await db_session.execute(
+        select(BBUProduct).where(BBUProduct.org_id == ORG))).scalars().all()}
+    rows = []
+    for o in orders:
+        ex = o.extra or {}
+        cc = (ex.get("coupon_code") or "").strip()
+        if not cc:
+            continue
+        if code and cc.lower() != code.strip().lower():
+            continue
+        u = None
+        if o.user_id:
+            u = (await db_session.execute(select(User).where(User.id == o.user_id))).scalars().first()
+        if not u and o.email:
+            u = (await db_session.execute(select(User).where(User.email == o.email))).scalars().first()
+        name = f"{getattr(u,'first_name','') or ''} {getattr(u,'last_name','') or ''}".strip() if u else ""
+        rows.append({
+            "coupon": cc,
+            "name": name or "(no account)",
+            "email": o.email or (getattr(u, "email", "") or ""),
+            "product": prods.get(o.product_id, f"product {o.product_id}"),
+            "paid": round((o.amount_cents or 0) / 100, 2),
+            "discount": round(int(ex.get("coupon_discount_cents") or 0) / 100, 2),
+            "date": (o.paid_at or o.created_at or "")[:10],
+        })
+    rows.sort(key=lambda r: (r["coupon"].lower(), r["date"]))
+    if fmt == "csv":
+        import io, csv
+        from fastapi.responses import Response
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=["coupon", "name", "email", "product",
+                                            "paid", "discount", "date"])
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+        return Response(buf.getvalue(), media_type="text/csv", headers={
+            "Content-Disposition": "attachment; filename=bbu-coupon-redemptions.csv"})
+    by_coupon = {}
+    for r in rows:
+        by_coupon[r["coupon"]] = by_coupon.get(r["coupon"], 0) + 1
+    return {"total_redemptions": len(rows), "by_coupon": by_coupon, "rows": rows}
 
 
 @router.post("/coupons/{cid}/toggle")
