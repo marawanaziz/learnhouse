@@ -97,9 +97,19 @@ async def coupons_create(request: Request, db_session: AsyncSession = Depends(ge
         amount_off_cents=round(float(b.get("amount_off", 0) or 0) * 100),
         min_amount_cents=round(float(b.get("min_amount", 0) or 0) * 100),
         max_redemptions=int(b.get("max_redemptions", 0) or 0),
+        # "all" or "7" or "1,2" — a $300-off code left unscoped is valid on every
+        # product, so scope has to be settable at creation, not only by the sync.
+        applies_to=(b.get("applies_to") or "all").strip(),
         expires_at=(b.get("expires_at") or ""), active=True, created_at=_now())
     try:
-        coupon_svc.ensure_stripe_objects(c)
+        from src.bbu_payments import stripe_sync as _sync
+        prods = (await db_session.execute(select(BBUProduct).where(
+            BBUProduct.org_id == ORG))).scalars().all()
+        for pr in prods:
+            _sync.ensure_product(pr)
+            db_session.add(pr)
+        coupon_svc.ensure_stripe_objects(
+            c, _sync._scope_for(c, {pr.id: pr.stripe_product_id for pr in prods}))
     except Exception as e:
         raise HTTPException(502, f"Stripe error: {e}")
     db_session.add(c)
