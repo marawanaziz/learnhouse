@@ -89,10 +89,14 @@ def _price_block(p, discount_cents=0, coupon_code=""):
             f"<span style='font-size:.55em;color:#8a97a3;text-decoration:line-through'>"
             f"{_price(p.price_cents, p.currency)}</span>"
             f"<span>{_price(net, p.currency)}</span></div>"
-            "<div style='display:inline-block;background:#EBF7FF;border:1px solid rgba(0,178,255,.35);"
+            # Wrapped in a block so the next element starts on its own line —
+            # the pill is inline-block and the email <label> that follows is
+            # inline, so they ran together on one line.
+            "<div style='margin-bottom:20px'>"
+            "<span style='display:inline-block;background:#EBF7FF;border:1px solid rgba(0,178,255,.35);"
             "border-radius:999px;padding:6px 16px;font-size:.8rem;font-weight:700;color:#113D5D;"
             f"letter-spacing:.08em;text-transform:uppercase'>Discount applied &mdash; save "
-            f"{_price(discount_cents, p.currency)}</div>"
+            f"{_price(discount_cents, p.currency)}</span></div>"
         )
     return f"<div class='price' style='margin:18px 0'>{_price(p.price_cents, p.currency)}</div>"
 
