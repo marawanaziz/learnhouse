@@ -41,7 +41,9 @@ const CommunityEditCourse: React.FC = () => {
 
   const { data: coursesData, isLoading: isLoadingCourses } = useQuery({
     queryKey: queryKeys.courses.list(org?.slug ?? ''),
-    queryFn: () => getOrgCourses(org.slug, null, accessToken),
+    // include_unpublished=true: BBU courses are non-public + usergroup-gated, so
+    // without it this admin picker comes back empty and nothing can be linked.
+    queryFn: () => getOrgCourses(org.slug, null, accessToken, true),
     enabled: !!(org?.slug && accessToken),
     staleTime: 60_000,
   })

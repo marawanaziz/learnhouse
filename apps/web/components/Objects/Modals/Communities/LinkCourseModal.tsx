@@ -48,7 +48,9 @@ export function LinkCourseModal({
 
       setIsLoadingCourses(true)
       try {
-        const result = await getOrgCourses(orgSlug, null, accessToken)
+        // include_unpublished=true: BBU courses are non-public + usergroup-gated,
+        // so without it this admin picker returns an empty list.
+        const result = await getOrgCourses(orgSlug, null, accessToken, true)
         setCourses(result || [])
       } catch (_error) {
         // silent — empty list handles it
