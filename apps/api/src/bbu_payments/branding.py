@@ -218,9 +218,23 @@ def success_page(order, base):
                f"We've also emailed this link to you.</p>")
     else:
         headline = "You're in!"
-        status_line = "Your enrollment is confirmed." if paid \
+        status_line = "Your enrollment is confirmed — you're signed in and ready to start." if paid \
             else "Payment received — finalizing your enrollment."
-        cta = f"<a class='btn' href='{base}/courses'>Go to my courses →</a>"
+        # Deep-link to the course they actually bought. "/courses" made a buyer
+        # hunt for it, and a bundle buyer landed on a list with no indication of
+        # what was theirs.
+        first = ""
+        try:
+            first = [u for u in (order.course_uuids or "").split(",") if u][0] if order else ""
+        except Exception:
+            first = ""
+        target = f"{base}/course/{first}" if first else f"{base}/courses"
+        label = "Start your course →" if first else "Go to my courses →"
+        cta = (f"<a class='btn' href='{target}'>{label}</a>"
+               f"<p style='margin-top:14px;color:#6b6f79;font-size:.85rem'>"
+               f"We've emailed your receipt. To set a password for next time, use "
+               f"<a href='{base}/forgot' style='color:inherit'>forgot password</a> "
+               f"with this email.</p>")
     # Reseller/bulk pack: link the buyer straight to their self-serve seat portal.
     seat_token = ((getattr(order, "extra", None) or {}).get("seat_owner_token")) if order else None
     if seat_token:

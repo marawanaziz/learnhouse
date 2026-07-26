@@ -223,7 +223,33 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
         order = (await db_session.execute(
             select(BBUOrder).where(BBUOrder.stripe_session_id == session_id)
         )).scalars().first()
-    return HTMLResponse(success_page(order, _base_url(request)))
+
+    resp = HTMLResponse(success_page(order, _base_url(request)))
+
+    # Sign the buyer in. Checkout only collects an email — they have no password
+    # and never went through signup — so without this they land on the platform
+    # anonymous, can't see what they just bought, and have no way in. Paying is a
+    # stronger proof of identity than the email link we'd otherwise send; the
+    # session is scoped to the account the payment created.
+    try:
+        if order and order.user_id and order.status == "paid":
+            from src.db.users import User as _U
+            from src.security.auth import create_access_token, create_refresh_token
+            from src.routers.auth import set_auth_cookies
+            buyer = (await db_session.execute(
+                select(_U).where(_U.id == order.user_id))).scalars().first()
+            if buyer:
+                set_auth_cookies(
+                    resp,
+                    create_access_token(data={"sub": buyer.username}),
+                    create_refresh_token(data={"sub": buyer.username}),
+                    request,
+                )
+    except Exception:
+        import traceback
+        print(f"[BBU] post-purchase sign-in failed:\n{traceback.format_exc()[-500:]}",
+              flush=True)
+    return resp
 
 
 @router.get("/cohort-availability")
@@ -392,8 +418,31 @@ async def _grant_course_access(db_session: AsyncSession, order, product):
         user = (await db_session.execute(
             select(User).where(User.email == order.email)
         )).scalars().first()
+    if not user and order.email:
+        # First-time buyer: checkout only asked for an email, so there is no
+        # account yet. Returning here left them having paid for nothing — the
+        # order was marked paid, no access was granted, and the success page
+        # pointed at /courses which they could neither see nor sign in to.
+        # Create the account so the purchase actually lands somewhere.
+        try:
+            from src.bbu_migration.router import _get_or_create_user, _learner_role_id
+            role_id = await _learner_role_id(db_session)
+            name = ""
+            try:
+                name = ((order.extra or {}).get("customer_name") or "")
+            except Exception:
+                name = ""
+            user = await _get_or_create_user(db_session, order.org_id, role_id,
+                                             order.email, name)
+            order.user_id = user.id
+            db_session.add(order)
+            await db_session.commit()
+        except Exception:
+            import traceback
+            print(f"[BBU] buyer account creation failed for order {order.id}:\n"
+                  f"{traceback.format_exc()[-600:]}", flush=True)
     if not user:
-        return  # no account yet (guest email) — order stays the record of purchase
+        return  # nothing we can do without an email — order remains the record
     now = datetime.now(timezone.utc).isoformat()
     trail = await _ensure_trail(db_session, order.org_id, user.id)
     for cu in uuids:
@@ -434,6 +483,11 @@ async def _fulfill(db_session: AsyncSession, session_obj: dict):
     order.status = "paid"
     order.stripe_payment_intent = session_obj.get("payment_intent") or ""
     order.paid_at = datetime.now(timezone.utc).isoformat()
+    # Stripe already collects the cardholder name — use it rather than asking for
+    # a name before payment, so the buy page stays a single email field.
+    cust_name = (session_obj.get("customer_details") or {}).get("name") or ""
+    if cust_name:
+        order.extra = {**(order.extra or {}), "customer_name": cust_name}
     cust_email = (session_obj.get("customer_details") or {}).get("email")
     if cust_email and not order.email:
         order.email = cust_email
