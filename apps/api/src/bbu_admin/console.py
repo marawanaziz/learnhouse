@@ -19,7 +19,7 @@ from src.db.users import User
 from src.db.courses.courses import Course
 from src.db.communities.communities import Community
 from src.bbu_admin.auth import authorize_admin
-from src.bbu_payments.models import BBUCoupon, BBUProduct, BBUOrder
+from src.bbu_payments.models import BBUCoupon, BBUProduct, BBUOrder, BBUCircleRedemption
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_cohorts.models import BBUCohort, BBUCohortWaitlist
 from src.bbu_cohorts import service as cohort_svc
@@ -381,6 +381,70 @@ async def credentials_user(request: Request, email: str, db_session: AsyncSessio
     }
 
 
+@router.get("/circle-history")
+async def circle_history(request: Request, q: str = "", code: str = "",
+                         fmt: str = "json", page: int = 1, per_page: int = 50,
+                         db_session: AsyncSession = Depends(get_db_session)):
+    """Circle's coupon redemption history, archived here before Circle shut down.
+
+    This is what the team hands a funder: which people were served under which
+    code. Search by person (name/email) or filter to a single code. fmt=csv
+    returns every matching row, ignoring pagination, for a grant report.
+    """
+    await _auth(request, db_session)
+    rows = (await db_session.execute(select(BBUCircleRedemption).where(
+        BBUCircleRedemption.org_id == ORG))).scalars().all()
+
+    if code:
+        rows = [r for r in rows if r.code.upper() == code.strip().upper()]
+    if q:
+        needle = q.strip().lower()
+        rows = [r for r in rows if needle in (r.member_name or "").lower()
+                or needle in (r.member_email or "").lower()]
+    rows.sort(key=lambda r: (r.redeemed_on or "", r.code), reverse=True)
+
+    # per-code rollup drives the filter dropdown and the funder-facing totals
+    tally: dict = {}
+    for r in rows:
+        t = tally.setdefault(r.code, {"code": r.code, "terms": r.terms,
+                                      "redemptions": 0, "people": set()})
+        t["redemptions"] += 1
+        if r.member_email:
+            t["people"].add(r.member_email)
+    by_code = sorted(({"code": t["code"], "terms": t["terms"],
+                       "redemptions": t["redemptions"], "people": len(t["people"])}
+                      for t in tally.values()), key=lambda x: -x["redemptions"])
+
+    def _row(r):
+        return {"code": r.code, "terms": r.terms, "name": r.member_name,
+                "email": r.member_email, "course": r.paywall_name,
+                "date": r.redeemed_on, "amount": r.amount, "status": r.charge_status}
+
+    if fmt == "csv":
+        import csv as _csv
+        import io as _io
+        from fastapi.responses import PlainTextResponse as _PT
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["coupon_code", "terms", "member_name", "member_email",
+                    "course", "date_redeemed", "amount", "status"])
+        for r in rows:
+            w.writerow([r.code, r.terms, r.member_name, r.member_email,
+                        r.paywall_name, r.redeemed_on, r.amount, r.charge_status])
+        name = f"circle-history{'-' + code.upper() if code else ''}.csv"
+        return _PT(buf.getvalue(), media_type="text/csv",
+                   headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    per_page = max(1, min(500, per_page))
+    total = len(rows)
+    start = (max(1, page) - 1) * per_page
+    return {"total": total, "page": page, "per_page": per_page,
+            "pages": max(1, (total + per_page - 1) // per_page),
+            "unique_people": len({r.member_email for r in rows if r.member_email}),
+            "by_code": by_code,
+            "rows": [_row(r) for r in rows[start:start + per_page]]}
+
+
 @router.get("/credentials/roster")
 async def credentials_roster(request: Request, q: str = "", status: str = "",
                              ctype: str = "", source: str = "",
@@ -666,6 +730,7 @@ button.ghost:hover{{background:#dbecf8}}
   <div class="tab" data-t="credentials">Credentials</div>
   <div class="tab" data-t="seats">Seat codes</div>
   <div class="tab" data-t="store">Store</div>
+  <div class="tab" data-t="circlehist">Circle history</div>
 </div>
 <div class="wrap" style="padding-top:22px;padding-bottom:50px">
   <div class="panel on" id=p-coupons>
@@ -775,6 +840,28 @@ button.ghost:hover{{background:#dbecf8}}
       <table id=t-store><thead><tr><th>Offer</th><th>Price</th><th>Listed</th><th>Category</th><th>Seats/pack</th><th>Order-bump add-ons</th><th>Cohort enroll</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
+
+  <div class="panel" id=p-circlehist>
+    <div class=card><h2>Coupon history from Circle</h2>
+      <p class=muted style="margin-top:-.6rem">Every coupon redemption from the old Circle community, archived here before it was shut down &mdash; who redeemed which code, for which course, and when. This is the record for funder and grant reporting. It is history only: nothing here grants access or issues a certificate.</p>
+      <div id=ch-summary class=row style="gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
+      <div class=row style="flex-wrap:wrap;gap:.4rem">
+        <input id=chq placeholder="search name or email" style="width:230px" onkeyup="if(event.key==='Enter'){{CHPAGE=1;loadCircleHist()}}">
+        <select id=chcode onchange="CHPAGE=1;loadCircleHist()"><option value="">all coupon codes</option></select>
+        <button onclick="CHPAGE=1;loadCircleHist()">Filter</button>
+        <select id=chper onchange="CHPAGE=1;loadCircleHist()"><option value=50>50 / page</option><option value=100>100 / page</option><option value=250>250 / page</option></select>
+        <button class=ghost onclick=exportCircleHist()>&#11015; Export CSV (all matching)</button>
+      </div>
+      <div style="max-height:520px;overflow:auto;margin-top:.6rem">
+        <table id=t-circlehist><thead><tr><th>Code</th><th>Member</th><th>Email</th><th>Course</th><th>Date</th><th>Value</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class=row id=chpager style="justify-content:space-between;align-items:center;margin-top:.6rem"></div>
+    </div>
+    <div class=card><h2>Totals by code</h2>
+      <p class=muted style="margin-top:-.6rem">Redemptions counts every use; people counts distinct email addresses (one person can redeem across several courses).</p>
+      <table id=t-chcodes><thead><tr><th>Code</th><th>Terms</th><th>Redemptions</th><th>People</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
 </div>
 <script>
 const API='/api/v1/bbu/admin';
@@ -787,7 +874,50 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   t.classList.add('on'); document.getElementById('p-'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
   if(t.dataset.t==='credentials')loadCredRoster();
+  if(t.dataset.t==='circlehist')loadCircleHist();
 }});
+// Circle coupon history (archived before Circle was shut down)
+let CHPAGE=1, CHCODES=0;
+function chQS(){{
+  const p=new URLSearchParams();
+  const q=document.getElementById('chq').value.trim(); if(q)p.set('q',q);
+  const c=document.getElementById('chcode').value; if(c)p.set('code',c);
+  return p.toString();
+}}
+function chGo(n){{CHPAGE=n;loadCircleHist();document.querySelector('#t-circlehist').scrollIntoView({{block:'nearest'}});}}
+function chPick(code){{document.getElementById('chcode').value=code;CHPAGE=1;loadCircleHist();
+  document.querySelector('#t-circlehist').scrollIntoView({{block:'nearest'}});}}
+function loadCircleHist(){{
+  const per=document.getElementById('chper').value, qs=chQS();
+  j('/circle-history?page='+CHPAGE+'&per_page='+per+(qs?'&'+qs:'')).then(d=>{{
+    if(!d||d.detail){{document.querySelector('#t-circlehist tbody').innerHTML='<tr><td colspan=6 class=muted>Could not load.</td></tr>';return;}}
+    document.getElementById('ch-summary').innerHTML=
+      `<span class=badge>${{d.total}} redemptions</span>`+
+      `<span class=badge>${{d.unique_people}} people</span>`+
+      `<span class=badge>${{(d.by_code||[]).length}} codes</span>`;
+    document.querySelector('#t-circlehist tbody').innerHTML=(d.rows||[]).map(r=>
+      `<tr><td><b>${{esc(r.code)}}</b></td><td>${{esc(r.name)}}</td><td>${{esc(r.email)}}</td>`+
+      `<td>${{esc(r.course)}}</td><td>${{esc(r.date)}}</td><td>${{esc(r.amount)}}</td></tr>`
+    ).join('')||'<tr><td colspan=6 class=muted>Nothing matches.</td></tr>';
+    const pg=[];
+    if(d.page>1)pg.push(`<button class=ghost onclick="chGo(${{d.page-1}})">&larr; Prev</button>`);
+    pg.push(`<span class=muted>Page ${{d.page}} of ${{d.pages}}</span>`);
+    if(d.page<d.pages)pg.push(`<button class=ghost onclick="chGo(${{d.page+1}})">Next &rarr;</button>`);
+    document.getElementById('chpager').innerHTML=pg.join(' ');
+    // the code dropdown + rollup only need building once (they ignore the filter)
+    if(!CHCODES && !chQS()){{
+      CHCODES=1;
+      document.getElementById('chcode').innerHTML='<option value="">all coupon codes</option>'+
+        (d.by_code||[]).map(c=>`<option value="${{esc(c.code)}}">${{esc(c.code)}} (${{c.redemptions}})</option>`).join('');
+      document.querySelector('#t-chcodes tbody').innerHTML=(d.by_code||[]).map(c=>
+        `<tr><td><b>${{esc(c.code)}}</b></td><td>${{esc(c.terms)}}</td><td>${{c.redemptions}}</td><td>${{c.people}}</td>`+
+        `<td><button class=ghost onclick="chPick('${{esc(c.code)}}')">View</button></td></tr>`).join('');
+    }}
+  }});
+}}
+function exportCircleHist(){{
+  const qs=chQS(); window.open(API+'/circle-history?fmt=csv'+(qs?'&'+qs:''),'_blank');
+}}
 // Store merchandising
 const CATS=['','Birth Classes','Postpartum Classes','Spanish Classes','Professional Training','Mentorship','Bundles','eBooks'];
 let STORE=[]; let COHORTS=[];
