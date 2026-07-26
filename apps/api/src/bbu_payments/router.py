@@ -257,6 +257,54 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
     return resp
 
 
+@router.post("/complete-account")
+async def complete_account(request: Request,
+                           db_session: AsyncSession = Depends(get_db_session)):
+    """Finish the account a purchase created: real name + a password they choose.
+
+    Checkout deliberately asks for an email and nothing else — every extra field
+    in front of a payment costs conversions, and these offers run on a 24-hour
+    deadline. So the account is created by the purchase and completed here,
+    afterwards, when the buyer is already signed in and has a reason to care.
+
+    Authorised by the session the purchase just minted, so this is only ever
+    "set my own password" — no token to forge, no email to guess.
+    """
+    from src.security.auth import get_current_user
+    from src.security.org_auth import resolve_acting_user_id
+    from src.security.security import security_hash_password
+    from src.db.users import User as _U
+
+    b = await request.json()
+    password = (b.get("password") or "").strip()
+    name = (b.get("name") or "").strip()
+    if len(password) < 8:
+        raise HTTPException(400, "Please choose a password of at least 8 characters.")
+
+    try:
+        uid = resolve_acting_user_id(await get_current_user(request, db_session)) or 0
+    except Exception:
+        uid = 0
+    if not uid:
+        raise HTTPException(401, "Your session expired — use forgot password instead.")
+
+    user = (await db_session.execute(select(_U).where(_U.id == uid))).scalars().first()
+    if not user:
+        raise HTTPException(404, "Account not found")
+
+    user.password = security_hash_password(password)
+    # Leave password_changed_at alone: it revokes tokens issued before it, which
+    # would sign the buyer straight back out of the session they are using.
+    if name:
+        parts = name.split(" ", 1)
+        user.first_name = parts[0][:100]
+        user.last_name = (parts[1] if len(parts) > 1 else "")[:100]
+    user.update_date = datetime.now(timezone.utc).isoformat()
+    db_session.add(user)
+    await db_session.commit()
+    return {"ok": True, "email": user.email}
+
+
 @router.get("/cohort-availability")
 async def cohort_availability(product_id: int, db_session: AsyncSession = Depends(get_db_session)):
     """Storefront check: is this a cohort product, and does it have an open seat?

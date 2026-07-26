@@ -230,11 +230,44 @@ def success_page(order, base):
             first = ""
         target = f"{base}/course/{first}" if first else f"{base}/courses"
         label = "Start your course →" if first else "Go to my courses →"
-        cta = (f"<a class='btn' href='{target}'>{label}</a>"
-               f"<p style='margin-top:14px;color:#6b6f79;font-size:.85rem'>"
-               f"We've emailed your receipt. To set a password for next time, use "
-               f"<a href='{base}/forgot' style='color:inherit'>forgot password</a> "
-               f"with this email.</p>")
+        prefill = ""
+        try:
+            prefill = ((order.extra or {}).get("customer_name") or "") if order else ""
+        except Exception:
+            prefill = ""
+        # Finish the account here rather than before payment: an extra two
+        # fields in front of checkout costs sales on a 24-hour offer, and at
+        # this point they are already signed in, so this is a plain
+        # "set my own password".
+        cta = (
+            f"<a class='btn' href='{target}'>{label}</a>"
+            f"<div style='margin-top:26px;padding-top:22px;border-top:1px solid rgba(17,61,93,.1);text-align:left'>"
+            f"<div class='eyebrow' style='margin-bottom:6px'>One last step</div>"
+            f"<p style='color:#4a5b68;font-size:.92rem;margin-bottom:12px'>"
+            f"Set a password so you can sign back in any time. You're already "
+            f"signed in — this takes ten seconds.</p>"
+            f"<label for='acc-name'>Your name</label>"
+            f"<input id='acc-name' value='{prefill}' placeholder='First and last name'>"
+            f"<label for='acc-pw' style='display:block;margin-top:12px'>Choose a password</label>"
+            f"<input id='acc-pw' type='password' placeholder='At least 8 characters'>"
+            f"<button class='btn' style='margin-top:14px;width:100%' onclick='saveAcct()'>"
+            f"Save &amp; finish</button>"
+            f"<p id='acc-msg' style='margin-top:10px;font-size:.85rem;color:#6b6f79'></p>"
+            f"</div>"
+            f"<script>function saveAcct(){{"
+            f"var n=document.getElementById('acc-name').value,"
+            f"p=document.getElementById('acc-pw').value,"
+            f"m=document.getElementById('acc-msg');"
+            f"if(p.length<8){{m.textContent='Please use at least 8 characters.';return;}}"
+            f"m.textContent='Saving...';"
+            f"fetch('{base}/api/v1/bbu/complete-account',{{method:'POST',"
+            f"credentials:'include',headers:{{'Content-Type':'application/json'}},"
+            f"body:JSON.stringify({{name:n,password:p}})}})"
+            f".then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})"
+            f".then(function(x){{m.textContent=x.ok?'Saved — you can now sign in with '"
+            f"+x.d.email+' any time.':(x.d.detail||'Something went wrong.');}})"
+            f".catch(function(){{m.textContent='Something went wrong.';}});}}</script>"
+        )
     # Reseller/bulk pack: link the buyer straight to their self-serve seat portal.
     seat_token = ((getattr(order, "extra", None) or {}).get("seat_owner_token")) if order else None
     if seat_token:
