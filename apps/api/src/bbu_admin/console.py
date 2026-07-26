@@ -328,6 +328,81 @@ async def credentials_user(request: Request, email: str, db_session: AsyncSessio
     }
 
 
+@router.get("/credentials/roster")
+async def credentials_roster(request: Request, q: str = "", status: str = "",
+                             ctype: str = "", source: str = "",
+                             expiring_days: int = 0, fmt: str = "json",
+                             db_session: AsyncSession = Depends(get_db_session)):
+    """THE credential registry the admin team manages from: every credential
+    holder with status, expiry, days-to-expiry and CEUs. Filterable by status,
+    type (birth/postpartum), source (training = first-year cert, cross_cert),
+    and an "expiring within N days" window. fmt=csv returns a CSV to hand to a
+    mail merge."""
+    await _auth(request, db_session)
+    creds = (await db_session.execute(select(BBUCredential).where(
+        BBUCredential.org_id == ORG))).scalars().all()
+    uids = list({c.user_id for c in creds})
+    users = {}
+    if uids:
+        urows = (await db_session.execute(select(User).where(User.id.in_(uids)))).scalars().all()
+        users = {u.id: u for u in urows}
+    now = cred_svc._now_dt()
+    ql = (q or "").strip().lower()
+    out = []
+    for c in creds:
+        eff = cred_svc.compute_effective_status(c)
+        u = users.get(c.user_id)
+        name = f"{getattr(u,'first_name','') or ''} {getattr(u,'last_name','') or ''}".strip()
+        email = getattr(u, "email", "") or ""
+        exp_raw = (c.full_expires_at if c.status == "full" else c.provisional_expires_at) or ""
+        exp = cred_svc._parse(exp_raw)
+        days = (exp - now).days if exp else None
+        if status and eff != status:
+            continue
+        if ctype and c.credential_type != ctype:
+            continue
+        if source and (c.source or "") != source:
+            continue
+        if expiring_days:
+            if days is None or days < 0 or days > expiring_days:
+                continue
+        if ql and ql not in name.lower() and ql not in email.lower():
+            continue
+        out.append({
+            "credential_id": c.id, "user_id": c.user_id,
+            "name": name or "(no name)", "email": email,
+            "type": c.credential_type,
+            "track": "Cross-certification" if (c.source or "") == "cross_cert" else (
+                "Manual" if (c.source or "") == "manual" else "First-year training"),
+            "status": eff,
+            "issued": (c.full_effective_at or c.issued_at or "")[:10],
+            "expires": exp_raw[:10],
+            "days_to_expiry": days,
+            "directory_listed": bool(c.directory_opt_in),
+        })
+    out.sort(key=lambda r: (r["days_to_expiry"] if r["days_to_expiry"] is not None else 10**6))
+    if fmt == "csv":
+        import io, csv
+        from fastapi.responses import Response
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=list(out[0].keys()) if out else
+                           ["credential_id", "user_id", "name", "email", "type", "track",
+                            "status", "issued", "expires", "days_to_expiry", "directory_listed"])
+        w.writeheader()
+        for r in out:
+            w.writerow(r)
+        return Response(buf.getvalue(), media_type="text/csv", headers={
+            "Content-Disposition": "attachment; filename=bbu-credentials.csv"})
+    summary = {"total": len(out)}
+    for r in out:
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+    exp30 = len([r for r in out if r["days_to_expiry"] is not None and 0 <= r["days_to_expiry"] <= 30])
+    exp90 = len([r for r in out if r["days_to_expiry"] is not None and 0 <= r["days_to_expiry"] <= 90])
+    summary["expiring_30d"] = exp30
+    summary["expiring_90d"] = exp90
+    return {"summary": summary, "rows": out}
+
+
 @router.post("/credentials/action")
 async def credentials_action(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     b = await request.json()
@@ -585,6 +660,21 @@ button.ghost:hover{{background:#dbecf8}}
       <div class=row><input id=cr-email placeholder="member email" style="width:280px"><button onclick=loadCred()>Look up</button></div>
       <div id=cr-out></div>
     </div>
+    <div class=card><h2>Credential registry — who's certified &amp; who's expiring</h2>
+      <div id=cr-summary class=row style="gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
+      <div class=row style="flex-wrap:wrap;gap:.4rem">
+        <input id=rq placeholder="search name or email" style="width:220px" onkeyup="if(event.key==='Enter')loadRoster()">
+        <select id=rstatus><option value="">any status</option><option value=full>full</option><option value=provisional>provisional</option><option value=lapsed>lapsed</option><option value=expired>expired</option></select>
+        <select id=rtype><option value="">any type</option><option value=birth>birth</option><option value=postpartum>postpartum</option></select>
+        <select id=rsource><option value="">any track</option><option value=training>First-year training</option><option value=cross_cert>Cross-certification</option><option value=manual>Manual</option></select>
+        <select id=rexp><option value=0>any expiry</option><option value=30>expiring ≤30 days</option><option value=60>expiring ≤60 days</option><option value=90>expiring ≤90 days</option><option value=180>expiring ≤180 days</option></select>
+        <button onclick=loadRoster()>Filter</button>
+        <button class=ghost onclick=exportRoster()>⬇ Export CSV</button>
+      </div>
+      <div style="max-height:460px;overflow:auto;margin-top:.6rem">
+        <table id=t-roster><thead><tr><th>Member</th><th>Credential</th><th>Track</th><th>Status</th><th>Valid through</th><th>Days left</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
     <div class=card><h2>Actions</h2>
       <div class=row>
         <input id=cra-email placeholder="member email">
@@ -629,6 +719,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); document.getElementById('p-'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
+  if(t.dataset.t==='credentials')loadRoster();
 }});
 // Store merchandising
 const CATS=['','Birth Classes','Postpartum Classes','Spanish Classes','Professional Training','Mentorship','Bundles','eBooks'];
@@ -794,6 +885,37 @@ function closeCohort(){{
   j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:'close'}})}}).then(()=>{{loadRoster();loadCohorts();}});
 }}
 // Credentials
+function rosterQS(){{
+  const p=new URLSearchParams();
+  const q=document.getElementById('rq').value.trim(); if(q)p.set('q',q);
+  const st=document.getElementById('rstatus').value; if(st)p.set('status',st);
+  const ty=document.getElementById('rtype').value; if(ty)p.set('ctype',ty);
+  const so=document.getElementById('rsource').value; if(so)p.set('source',so);
+  const ex=document.getElementById('rexp').value; if(ex&&ex!=='0')p.set('expiring_days',ex);
+  return p.toString();
+}}
+function loadRoster(){{
+  j('/credentials/roster?'+rosterQS()).then(d=>{{
+    const s=d.summary||{{}};
+    const chip=(l,v,c)=>`<span style="background:${{c}};border-radius:999px;padding:.25rem .7rem;font-size:.8rem;font-weight:700">${{l}}: ${{v||0}}</span>`;
+    document.getElementById('cr-summary').innerHTML=
+      chip('Total',s.total,'#eaf2f9')+chip('Full',s.full,'#dff5e6')+chip('Provisional',s.provisional,'#fff2d6')
+      +chip('Lapsed',s.lapsed,'#fde8e8')+chip('Expired',s.expired,'#fde8e8')
+      +chip('Expiring ≤30d',s.expiring_30d,'#ffe0b2')+chip('Expiring ≤90d',s.expiring_90d,'#f1e4ff');
+    document.querySelector('#t-roster tbody').innerHTML=(d.rows||[]).map(r=>{{
+      const dl=r.days_to_expiry;
+      const col=dl===null?'#6b6f79':(dl<0?'#b3261e':(dl<=30?'#b26a00':(dl<=90?'#7a5b12':'#1c7a41')));
+      const badge=`<span style="padding:.15rem .55rem;border-radius:999px;font-size:.75rem;font-weight:700;background:${{r.status==='full'?'#dff5e6':(r.status==='provisional'?'#fff2d6':'#fde8e8')}}">${{esc(r.status)}}</span>`;
+      return `<tr><td><b>${{esc(r.name)}}</b><br><span class=muted style="font-size:.8rem">${{esc(r.email)}}</span></td>`
+        +`<td>${{esc(r.type)}}</td><td style="font-size:.82rem">${{esc(r.track)}}</td><td>${{badge}}</td>`
+        +`<td>${{esc(r.expires||'—')}}</td>`
+        +`<td style="color:${{col}};font-weight:700">${{dl===null?'—':(dl<0?Math.abs(dl)+'d ago':dl+'d')}}</td></tr>`;
+    }}).join('')||'<tr><td colspan=6 class=muted>No credentials match those filters.</td></tr>';
+  }});
+}}
+function exportRoster(){{
+  const qs=rosterQS(); window.open(API+'/credentials/roster?fmt=csv'+(qs?'&'+qs:''),'_blank');
+}}
 function loadCred(){{
   j('/credentials?email='+encodeURIComponent(document.getElementById('cr-email').value)).then(d=>{{
     if(d.detail){{document.getElementById('cr-out').innerHTML='<span class=muted>'+esc(d.detail)+'</span>';return;}}
