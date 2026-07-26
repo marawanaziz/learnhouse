@@ -139,8 +139,7 @@ async def sync_all(db: AsyncSession, org_id: int, reset: bool = False,
         if want and c.stripe_coupon_id:
             try:
                 live = stripe.Coupon.retrieve(c.stripe_coupon_id)
-                ap = live["applies_to"] if "applies_to" in live else None
-                have = set((ap["products"] if ap and "products" in ap else []) or [])
+                have = set(coupon_svc._scope_of(live))
                 if have != set(want):
                     try:
                         stripe.Coupon.delete(c.stripe_coupon_id)

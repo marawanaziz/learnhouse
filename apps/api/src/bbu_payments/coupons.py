@@ -25,6 +25,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _scope_of(stripe_coupon) -> list:
+    """Product ids a Stripe coupon is restricted to, or [] if unrestricted.
+
+    Stripe returns StripeObject, which does NOT implement .get() — calling it
+    raises AttributeError('get'). Read by key with an `in` guard instead.
+    """
+    try:
+        if "applies_to" not in stripe_coupon:
+            return []
+        ap = stripe_coupon["applies_to"]
+        if not ap or "products" not in ap:
+            return []
+        return list(ap["products"] or [])
+    except Exception:
+        return []
+
+
 def ensure_stripe_objects(coupon: BBUCoupon,
                           applies_to_products: list | None = None) -> None:
     """Create the Stripe Coupon + Promotion Code once; cache their ids on the row.
@@ -65,7 +82,7 @@ def ensure_stripe_objects(coupon: BBUCoupon,
         # 100%-off code valid on every course. Fail loudly rather than leave that
         # sitting in the account looking healthy.
         if applies_to_products:
-            got = (c.get("applies_to") or {}).get("products") or []
+            got = _scope_of(c)
             if not got:
                 try:
                     stripe.Coupon.delete(c["id"])
