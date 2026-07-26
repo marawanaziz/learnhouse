@@ -354,8 +354,54 @@ async def connect_to_db(app: FastAPI):
         # Create all tables
         if not is_testing:
             await conn.run_sync(SQLModel.metadata.create_all)
+            await conn.run_sync(_add_missing_columns)
     app.db_engine = engine  # type: ignore
     logging.info("LearnHouse database has been started.")
+
+
+def _add_missing_columns(conn):
+    """Add columns present on a model but missing from its table.
+
+    There is no migration tool in this codebase — startup relies on
+    ``create_all``, which creates missing *tables* but silently ignores missing
+    *columns*. So adding a field to an existing model deploys clean and then
+    500s every query against that table, because SELECT names a column the
+    database doesn't have. (That is exactly how BBUProduct.stripe_product_id
+    took the store down.)
+
+    This closes that gap conservatively: it only ever ADDs a nullable column.
+    It never drops, renames, or retypes anything, so it cannot destroy data —
+    a real migration is still the right tool for those.
+    """
+    from sqlalchemy import inspect as _inspect, text as _text
+    from sqlalchemy.schema import CreateColumn
+
+    insp = _inspect(conn)
+    try:
+        existing_tables = set(insp.get_table_names())
+    except Exception as e:
+        logging.warning("column check skipped: %s", e)
+        return
+
+    for table in SQLModel.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # create_all just made it, or it isn't ours
+        try:
+            have = {c["name"] for c in insp.get_columns(table.name)}
+        except Exception:
+            continue
+        for col in table.columns:
+            if col.name in have:
+                continue
+            try:
+                ddl = str(CreateColumn(col).compile(conn.engine))
+                # a column added to a populated table cannot be NOT NULL
+                ddl = ddl.replace(" NOT NULL", "")
+                conn.execute(_text(
+                    f'ALTER TABLE "{table.name}" ADD COLUMN IF NOT EXISTS {ddl}'))
+                logging.warning("added missing column %s.%s", table.name, col.name)
+            except Exception as e:
+                logging.error("could not add %s.%s: %s", table.name, col.name, e)
 
 
 async def get_db_session() -> AsyncSession:  # type: ignore[override]
