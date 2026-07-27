@@ -49,6 +49,10 @@ const Canva = lazy(() => import('@components/Objects/Activities/DynamicCanva/Dyn
 const VideoActivity = lazy(() => import('@components/Objects/Activities/Video/Video'))
 const DocumentPdfActivity = lazy(() => import('@components/Objects/Activities/DocumentPdf/DocumentPdf'))
 const AssignmentStudentActivity = lazy(() => import('@components/Objects/Activities/Assignment/AssignmentStudentActivity'))
+// BBU: the learner-facing "Ask AI" button is hidden on every course. Flip to
+// true to bring it back — the org-wide AI toggle is deliberately left alone so
+// admin AI tooling (editor, generation) keeps working.
+const BBU_SHOW_ASK_AI = false
 const AIActivityAsk = lazy(() => import('@components/Objects/Activities/AI/AIActivityAsk'))
 const AISidePanelContentWrapper = lazy(() => import('@components/Objects/Activities/AI/AIActivityAsk').then(mod => ({ default: mod.AISidePanelContentWrapper })))
 const AISidePanelInline = lazy(() => import('@components/Objects/Activities/AI/AIActivityAsk').then(mod => ({ default: mod.AISidePanelInline })))
@@ -1054,7 +1058,7 @@ function ActivityClient(props: ActivityClientProps) {
                               <AuthenticatedClientElement checkMethod="authentication">
                                 {activity.activity_type != 'TYPE_ASSIGNMENT' && (
                                   <>
-                                    <AIActivityAsk activity={activity} />
+                                    {BBU_SHOW_ASK_AI && <AIActivityAsk activity={activity} />}
                                     <ActivityChapterDropdown
                                       course={course}
                                       currentActivityId={activity.activity_uuid ? activity.activity_uuid.replace('activity_', '') : activityid.replace('activity_', '')}
@@ -1110,9 +1114,11 @@ function ActivityClient(props: ActivityClientProps) {
                                 </button>
                                 {activityContent}
                               </div>
-                              <Suspense fallback={null}>
-                                <AISidePanelInline activity={activity} />
-                              </Suspense>
+                              {BBU_SHOW_ASK_AI && (
+                                <Suspense fallback={null}>
+                                  <AISidePanelInline activity={activity} />
+                                </Suspense>
+                              )}
                             </div>
                           )}
                         </>
