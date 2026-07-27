@@ -479,6 +479,16 @@ async def learner_menu(request: Request, db_session: AsyncSession = Depends(get_
     flag_modified(row, "config")
     db_session.add(row)
     await db_session.commit()
+
+    # Bust the org caches explicitly. The mapper-level invalidation did not fire
+    # for this write, so the learner nav kept serving the old item list even
+    # though the stored config was correct.
+    try:
+        from src.services.orgs.cache import invalidate_org_cache, invalidate_org_config_cache
+        invalidate_org_config_cache(ORG)
+        invalidate_org_cache("bbu")
+    except Exception:
+        pass
     return {"ok": True, "items": items}
 
 
