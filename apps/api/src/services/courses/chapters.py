@@ -476,7 +476,14 @@ async def DEPRECEATED_get_course_chapters(
     # RBAC check
     await check_resource_access(request, db_session, current_user, course.course_uuid, AccessAction.READ)
 
-    chapters_in_db = await get_course_chapters(request, course.id, db_session, current_user)  # type: ignore
+    # `with_unpublished_activities` is a required argument and was never passed
+    # here, so this raised TypeError and returned a 500 — the course page came
+    # up blank for a learner who legitimately had access. False matches the
+    # non-deprecated reader route: learners see published activities only.
+    chapters_in_db = await get_course_chapters(
+        request, course.id, db_session, current_user,  # type: ignore
+        with_unpublished_activities=False,
+    )
 
     # activities
 
