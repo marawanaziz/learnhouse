@@ -82,7 +82,7 @@ function LibraryClient({ orgslug }: { orgslug: string }) {
               {Array.isArray(myEbooks) && myEbooks.length > 0 && (
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-3">
-                    Your e-books
+                    E-books
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {myEbooks.map((b: any) => (
@@ -91,17 +91,24 @@ function LibraryClient({ orgslug }: { orgslug: string }) {
                         {b.description && (
                           <div className="text-sm text-gray-500 line-clamp-2">{b.description}</div>
                         )}
-                        {b.download_url ? (
+                        {b.owned && b.download_url ? (
                           <a
                             href={b.download_url}
                             className="mt-auto inline-block text-center rounded-lg bg-gray-900 text-white text-sm font-semibold px-4 py-2 hover:bg-gray-700"
                           >
                             Download PDF
                           </a>
-                        ) : (
+                        ) : b.owned ? (
                           <span className="mt-auto text-xs text-gray-400">
                             Download link unavailable — contact support
                           </span>
+                        ) : (
+                          <a
+                            href={b.buy_url}
+                            className="mt-auto inline-block text-center rounded-lg border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2 hover:bg-gray-50"
+                          >
+                            Get it{b.price ? ` — $${b.price}` : ''}
+                          </a>
                         )}
                       </div>
                     ))}

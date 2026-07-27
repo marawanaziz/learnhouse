@@ -515,25 +515,33 @@ async def my_ebooks(request: Request, db_session: AsyncSession = Depends(get_db_
         BBUOrder.org_id == 1, BBUOrder.status == "paid"))).scalars().all()
     mine = [o for o in orders
             if (o.user_id == uid) or ((o.email or "").lower() == (user.email or "").lower())]
-    if not mine:
-        return []
-
-    prods = {p.id: p for p in (await db_session.execute(select(BBUProduct).where(
-        BBUProduct.org_id == 1))).scalars().all()}
-    base = _base_url(request)
-    out, seen = [], set()
+    owned = {}
     for o in mine:
-        p = prods.get(o.product_id)
-        if not p or p.kind != "ebook" or p.id in seen:
-            continue
-        seen.add(p.id)
+        if o.product_id not in owned or o.download_token:
+            owned[o.product_id] = o
+
+    # Show the whole e-book shelf, not only what's been bought. A member should
+    # be able to SEE what exists — owned ones download, the rest link to buy.
+    # Returning purchases only left the Library empty for everyone until their
+    # first e-book sale.
+    base = _base_url(request)
+    out = []
+    for p in (await db_session.execute(select(BBUProduct).where(
+            BBUProduct.org_id == 1, BBUProduct.kind == "ebook"))).scalars().all():
+        if not p.public and p.id not in owned:
+            continue          # unlisted/QA items stay hidden unless owned
+        o = owned.get(p.id)
         out.append({
             "id": p.id, "name": p.name, "description": (p.description or "")[:200],
             "image_url": p.image_url or "",
-            "purchased_on": (o.paid_at or o.created_at or "")[:10],
+            "owned": bool(o),
+            "price": round((p.price_cents or 0) / 100, 2),
+            "purchased_on": ((o.paid_at or o.created_at or "")[:10] if o else ""),
             "download_url": (f"{base}/api/v1/bbu/ebook/download/{o.download_token}"
-                             if o.download_token else ""),
+                             if o and o.download_token else ""),
+            "buy_url": f"{base}/api/v1/bbu/buy/{p.id}",
         })
+    out.sort(key=lambda x: (not x["owned"], x["name"]))
     return out
 
 
