@@ -137,6 +137,12 @@ async def list_meetings() -> list:
             users = r.json().get("users", []) if r.status_code == 200 else []
         except Exception:
             users = []
+        # Not every S2S app is granted user:read:list_users:admin — the webinar
+        # account isn't. Without it /users returns nothing and the whole account
+        # silently contributes zero rows, even though its webinars are readable.
+        # Fall back to the token's own user, which needs no listing scope.
+        if not users:
+            users = [{"id": "me", "email": _acct.get("label", "")}]
         for u in users:
             uid, email = u.get("id"), u.get("email", "")
             if not uid:
