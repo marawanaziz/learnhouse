@@ -175,11 +175,15 @@ function DashLeftMenu() {
   const rf = org?.config?.config?.resolved_features
   const isEnabled = (feature: string) => rf?.[feature]?.enabled === true
 
+  // BBU: the sidebar was showing every module the platform ships with, most of
+  // which this org doesn't use. Keep it to what the team actually operates.
+  // Library stays on — it's where the e-books live.
+  const BBU_HIDDEN_NAV = ['podcasts', 'boards', 'playgrounds']
   const showLibrary = isEnabled('folders')
   const showCommunities = isEnabled('communities')
-  const showPodcasts = isEnabled('podcasts')
-  const showBoards = isEnabled('boards')
-  const showPlaygrounds = isEnabled('playgrounds')
+  const showPodcasts = isEnabled('podcasts') && !BBU_HIDDEN_NAV.includes('podcasts')
+  const showBoards = isEnabled('boards') && !BBU_HIDDEN_NAV.includes('boards')
+  const showPlaygrounds = isEnabled('playgrounds') && !BBU_HIDDEN_NAV.includes('playgrounds')
   const showPayments = isEnabled('payments')
 
   return (

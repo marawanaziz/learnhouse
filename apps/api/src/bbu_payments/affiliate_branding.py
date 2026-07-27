@@ -191,7 +191,8 @@ def admin_page(settings, affs, totals, earned, base, admin_key=""):
         + setting_input("Commission basis", "commission_basis", settings.commission_basis)
         + setting_input("Attribution window (days)", "attribution_window_days", settings.attribution_window_days, "number")
         + setting_input("Refund hold (days)", "refund_hold_days", settings.refund_hold_days, "number")
-        + setting_input("Min payout (cents)", "min_payout_cents", settings.min_payout_cents, "number")
+        + setting_input("Minimum payout ($)", "min_payout_dollars",
+                      round((settings.min_payout_cents or 0) / 100, 2), "number")
         + setting_input("Payout schedule", "payout_schedule", settings.payout_schedule)
         + f"</div>"
         f"<button class='btn' id='savecfg' style='margin-top:16px'>Save settings</button>"

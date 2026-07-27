@@ -45,10 +45,53 @@ function parseDiscussionContent(content: string | null): any {
       return parsed
     }
     // Not tiptap format, return as string
-    return content
+    return htmlToDoc(content)
   } catch {
     // Not JSON, return as plain text
-    return content
+    return htmlToDoc(content)
+  }
+}
+
+/**
+ * Posts migrated from Circle arrive as raw HTML, and the renderer treats
+ * non-tiptap content as plain text — so readers saw literal <p> tags instead of
+ * paragraphs. Convert the markup into a tiptap doc: block tags become paragraph
+ * breaks, everything else is stripped and entity-decoded.
+ *
+ * Deliberately builds a document rather than injecting HTML, so migrated
+ * content can never execute anything.
+ */
+function htmlToDoc(raw: string): any {
+  if (!raw || !/<[a-z][\s\S]*>/i.test(raw)) return raw
+
+  const text = raw
+    .replace(/<\s*(br|hr)\s*\/?\s*>/gi, '\n')
+    .replace(/<\/\s*(p|div|li|h[1-6]|blockquote|tr)\s*>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+
+  const decoded = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_m: string, n: string) => String.fromCharCode(parseInt(n, 10)))
+
+  const paragraphs = decoded
+    .split(/\n{1,}/)
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter((line) => line.length > 0)
+
+  if (paragraphs.length === 0) return ''
+
+  return {
+    type: 'doc',
+    content: paragraphs.map((line) => ({
+      type: 'paragraph',
+      content: [{ type: 'text', text: line }],
+    })),
   }
 }
 

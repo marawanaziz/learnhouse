@@ -458,6 +458,13 @@ async def update_settings(request: Request, db_session: AsyncSession = Depends(g
                 except (TypeError, ValueError):
                     continue
             setattr(s, field, val)
+    # The admin enters a dollar threshold; "5,000" meaning cents read as $5,000
+    # and silently blocked every payout. Store cents, show and accept dollars.
+    if body.get("min_payout_dollars") is not None:
+        try:
+            s.min_payout_cents = int(round(float(body["min_payout_dollars"]) * 100))
+        except (TypeError, ValueError):
+            pass
     s.updated_at = _now().isoformat()
     db_session.add(s)
     await db_session.commit()
