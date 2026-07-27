@@ -232,7 +232,11 @@ def success_page(order, base):
             first = [u for u in (order.course_uuids or "").split(",") if u][0] if order else ""
         except Exception:
             first = ""
-        target = f"{base}/course/{first}" if first else f"{base}/courses"
+        # The frontend re-adds the "course_" prefix when it calls the API, so the
+        # URL segment must be the BARE uuid. Passing the full course_uuid here
+        # produced /api/v1/courses/course_course_<uuid>/meta -> 404 -> blank page.
+        target = (f"{base}/course/{first.replace('course_', '', 1)}"
+                  if first else f"{base}/courses")
         label = "Start your course →" if first else "Go to my courses →"
         prefill = ""
         try:
