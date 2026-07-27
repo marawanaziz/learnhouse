@@ -204,7 +204,7 @@ async def affiliate_blast(request: Request, db_session: AsyncSession = Depends(g
         for a in rows:
             try:
                 portal = f"{base}/api/v1/bbu/affiliate/portal?token={a.portal_token}" if getattr(a, "portal_token", "") else f"{base}/api/v1/bbu/affiliate/portal"
-                ref = f"{base}/?ref={a.ref_code}"
+                ref = f"{base}/api/v1/bbu/r/{a.ref_code}"
                 nm = (a.name or "").strip().split(" ", 1)
                 await ghl.upsert_contact(
                     email=a.email.strip().lower(),
@@ -362,7 +362,7 @@ async def send_campaign(request: Request, db_session: AsyncSession = Depends(get
                     continue
                 targets.append((a.email.strip().lower(), (a.name or "").split(" ")[0], {
                     "bbu_affiliate_portal_url": f"{base}/api/v1/bbu/affiliate/portal?token={getattr(a,'portal_token','')}",
-                    "bbu_affiliate_referral_url": f"{base}/?ref={a.ref_code}",
+                    "bbu_affiliate_referral_url": f"{base}/api/v1/bbu/r/{a.ref_code}",
                 }))
         else:  # password_setup — reuse the reset URLs already pushed to GHL
             q = (select(User).join(UserOrganization, UserOrganization.user_id == User.id)

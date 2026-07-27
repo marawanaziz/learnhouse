@@ -150,12 +150,23 @@ async def products(request: Request, audience: str = "",
                    db_session: AsyncSession = Depends(get_db_session)):
     rows = await _list_products(db_session)
     rows = await _visible_products(request, db_session, rows, audience)
+    # Buyers of a cohort product need to see which dates they can actually join
+    # before they pay, not a single yes/no availability flag afterwards.
+    programs = {getattr(p, "cohort_program", "") or "" for p in rows}
+    cohorts_by_program = {}
+    for prog in programs:
+        if prog:
+            cohorts_by_program[prog] = await _upcoming_cohorts(db_session, 1, prog)
     return [
         {
             "id": p.id, "name": p.name, "kind": p.kind,
             "price_cents": p.price_cents, "currency": p.currency,
             "description": p.description, "image_url": p.image_url,
             "course_uuids": [u for u in p.course_uuids.split(",") if u],
+            "cohort_program": getattr(p, "cohort_program", "") or "",
+            "upcoming_cohorts": cohorts_by_program.get(
+                getattr(p, "cohort_program", "") or "", []
+            ) if (getattr(p, "cohort_program", "") or getattr(p, "cohort_id", None)) else [],
         }
         for p in rows
     ]
@@ -186,11 +197,56 @@ async def _apply_ref(request: Request, response, db_session: AsyncSession):
     return request.cookies.get(REF_COOKIE, "")
 
 
+@router.get("/r/{ref_code}")
+async def referral_redirect(ref_code: str, request: Request,
+                            db_session: AsyncSession = Depends(get_db_session)):
+    """Affiliate referral entry point: set the attribution cookie, then send the
+    visitor into the site.
+
+    The affiliate link used to be `{base}/?ref=CODE` — the site root, which is
+    served by the Next frontend and never touches this router. The cookie was
+    therefore never set and attribution silently dropped for every referral that
+    didn't happen to land on the API-served store page. Routing through here
+    guarantees the click is recorded whatever the visitor does next, signed in
+    or not.
+
+    `?next=` allows deep links (a specific class) while keeping attribution.
+    """
+    from fastapi.responses import RedirectResponse
+
+    nxt = (request.query_params.get("next") or "/").strip()
+    # only ever redirect within this site
+    if not nxt.startswith("/") or nxt.startswith("//"):
+        nxt = "/"
+    resp = RedirectResponse(url=f"{_base_url(request)}{nxt}", status_code=302)
+
+    affiliate = await aff.get_affiliate_by_ref(db_session, (ref_code or "").strip())
+    if affiliate:
+        settings = await aff.get_settings(db_session)
+        resp.set_cookie(REF_COOKIE, affiliate.ref_code,
+                        max_age=settings.attribution_window_days * 86400,
+                        httponly=True, samesite="lax", secure=True)
+        try:
+            await aff.log_click(db_session, affiliate, str(request.url.path),
+                                _ip_hash(request))
+        except Exception:
+            pass
+    return resp
+
+
 @router.get("/store", response_class=HTMLResponse)
 async def store(request: Request, audience: str = "",
                 db_session: AsyncSession = Depends(get_db_session)):
     rows = await _list_products(db_session)
     rows = await _visible_products(request, db_session, rows, audience)
+    # attach upcoming dates to cohort products so the storefront can render them
+    for p in rows:
+        prog = getattr(p, "cohort_program", "") or ""
+        if prog or getattr(p, "cohort_id", None):
+            try:
+                p._upcoming_cohorts = await _upcoming_cohorts(db_session, 1, prog)
+            except Exception:
+                p._upcoming_cohorts = []
     resp = HTMLResponse(store_page(rows, _base_url(request)))
     await _apply_ref(request, resp, db_session)
     return resp

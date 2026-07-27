@@ -47,7 +47,7 @@ def join_page(base):
 
 # --------------------------------------------------------------------------- #
 def portal_page(affiliate, earnings, payouts, base):
-    link = f"{base}/api/v1/bbu/store?ref={affiliate.ref_code}"
+    link = f"{base}/api/v1/bbu/r/{affiliate.ref_code}"
     active = affiliate.status == "active"
     status_banner = "" if active else (
         f"<div class='card' style='padding:18px;margin-bottom:22px;background:{ICE}'>"
@@ -147,7 +147,7 @@ def admin_page(settings, affs, totals, earned, base, admin_key=""):
     rows = ""
     for a in affs:
         rate_pct = int((a.commission_rate if a.commission_rate is not None else settings.default_commission_rate) * 100)
-        reflink = f"{base}/?ref={a.ref_code}"
+        reflink = f"{base}/api/v1/bbu/r/{a.ref_code}"
         rows += (
             f"<tr>"
             f"<td style='padding:8px 4px'><a href='#' onclick='openDetail({a.id});return false' style='color:#113d5d;font-weight:700;text-decoration:none'>{a.name or a.email}</a>"

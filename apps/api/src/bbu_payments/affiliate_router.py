@@ -328,7 +328,7 @@ async def admin_detail(aff_id: int, request: Request, db_session: AsyncSession =
     return {
         "id": a.id, "name": a.name, "email": a.email, "ref_code": a.ref_code,
         "status": a.status, "rate": round(rate * 100), "payouts_enabled": bool(a.payouts_enabled),
-        "referral_link": f"{base}/?ref={a.ref_code}",
+        "referral_link": f"{base}/api/v1/bbu/r/{a.ref_code}",
         "portal_link": (f"{base}/api/v1/bbu/affiliate/portal/{a.portal_token}" if a.portal_token else ""),
         "join_link": f"{base}/api/v1/bbu/affiliate/join",
         "clicks": int(clicks), "converted": len(referred),

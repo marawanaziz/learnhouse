@@ -149,6 +149,23 @@ def store_page(products, base):
     for p in products:
         label = {"bundle": "Bundle", "ebook": "E-book"}.get(p.kind, "Training")
         cta = "Buy &amp; download" if p.kind == "ebook" else "Enroll now"
+        # Show the dates a buyer can actually join, not just a price.
+        cohort_note = ""
+        try:
+            ups = getattr(p, "_upcoming_cohorts", None) or []
+            if ups:
+                bits = []
+                for c in ups[:3]:
+                    left = c.get("seats_left")
+                    tag = ("full" if c.get("full")
+                           else (f"{left} left" if isinstance(left, int) else "open"))
+                    bits.append(f"{c.get('start_date','')} &middot; {tag}")
+                cohort_note = (
+                    "<div style='font-size:.82rem;color:#3a91c6;margin-top:-4px'>"
+                    "<b>Upcoming dates</b><br>" + "<br>".join(bits) + "</div>"
+                )
+        except Exception:
+            cohort_note = ""
         cards += (
             f"<div class='card'><div class='thumb'"
             + (f" style=\"background:#fff url('{p.image_url}') center/cover\"" if p.image_url else "")
@@ -157,6 +174,7 @@ def store_page(products, base):
             f"<h3>{p.name}</h3>"
             f"<p style='color:#4a5b68;font-size:.92rem'>{(p.description or '')[:130]}</p>"
             f"<div class='price'>{_price(p.price_cents, p.currency)}</div>"
+            f"{cohort_note}"
             f"<a class='btn' href='{base}/api/v1/bbu/buy/{p.id}'>{cta}</a>"
             f"</div></div>"
         )
