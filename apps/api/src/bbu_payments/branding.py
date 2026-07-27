@@ -240,6 +240,7 @@ def success_page(order, base):
         except Exception:
             prefill = ""
         sid = (getattr(order, "stripe_session_id", "") or "") if order else ""
+        buyer_email = (getattr(order, "email", "") or "") if order else ""
         # Registration is required before entering the platform. Checkout stays a
         # single email field — fields in front of a payment cost sales, and these
         # offers run on a 24-hour deadline — so the full account is completed
@@ -250,7 +251,12 @@ def success_page(order, base):
             f"<p style='color:#4a5b68;font-size:.92rem;margin-bottom:14px'>"
             f"Create your login so you can get back in any time. This takes a moment "
             f"and then your course opens.</p>"
-            f"<label for='acc-name'>Full name</label>"
+            f"<label for='acc-email'>Your login email</label>"
+            f"<input id='acc-email' type='email' value='{buyer_email}' readonly "
+            f"style='background:#f2f5f8;color:#4a5b68' aria-readonly='true'>"
+            f"<p style='margin-top:6px;color:#6b6f79;font-size:.8rem'>"
+            f"This is the email you'll sign in with.</p>"
+            f"<label for='acc-name' style='display:block;margin-top:12px'>Full name</label>"
             f"<input id='acc-name' value='{prefill}' placeholder='First and last name'>"
             f"<label for='acc-phone' style='display:block;margin-top:12px'>Phone number</label>"
             f"<input id='acc-phone' type='tel' placeholder='(555) 123-4567'>"
