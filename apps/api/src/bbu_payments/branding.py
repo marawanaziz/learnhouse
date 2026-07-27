@@ -222,7 +222,7 @@ def success_page(order, base):
                f"We've also emailed this link to you.</p>")
     else:
         headline = "You're in!"
-        status_line = "Your enrollment is confirmed — you're signed in and ready to start." if paid \
+        status_line = "Your payment is confirmed. Create your login below to start." if paid \
             else "Payment received — finalizing your enrollment."
         # Deep-link to the course they actually bought. "/courses" made a buyer
         # hunt for it, and a bundle buyer landed on a list with no indication of
@@ -239,38 +239,53 @@ def success_page(order, base):
             prefill = ((order.extra or {}).get("customer_name") or "") if order else ""
         except Exception:
             prefill = ""
-        # Finish the account here rather than before payment: an extra two
-        # fields in front of checkout costs sales on a 24-hour offer, and at
-        # this point they are already signed in, so this is a plain
-        # "set my own password".
+        sid = (getattr(order, "stripe_session_id", "") or "") if order else ""
+        # Registration is required before entering the platform. Checkout stays a
+        # single email field — fields in front of a payment cost sales, and these
+        # offers run on a 24-hour deadline — so the full account is completed
+        # here, once, before the course opens.
         cta = (
-            f"<a class='btn' href='{target}'>{label}</a>"
-            f"<div style='margin-top:26px;padding-top:22px;border-top:1px solid rgba(17,61,93,.1);text-align:left'>"
-            f"<div class='eyebrow' style='margin-bottom:6px'>One last step</div>"
-            f"<p style='color:#4a5b68;font-size:.92rem;margin-bottom:12px'>"
-            f"Set a password so you can sign back in any time. You're already "
-            f"signed in — this takes ten seconds.</p>"
-            f"<label for='acc-name'>Your name</label>"
+            f"<div style='text-align:left'>"
+            f"<div class='eyebrow' style='margin-bottom:6px'>Finish setting up your account</div>"
+            f"<p style='color:#4a5b68;font-size:.92rem;margin-bottom:14px'>"
+            f"Create your login so you can get back in any time. This takes a moment "
+            f"and then your course opens.</p>"
+            f"<label for='acc-name'>Full name</label>"
             f"<input id='acc-name' value='{prefill}' placeholder='First and last name'>"
-            f"<label for='acc-pw' style='display:block;margin-top:12px'>Choose a password</label>"
+            f"<label for='acc-phone' style='display:block;margin-top:12px'>Phone number</label>"
+            f"<input id='acc-phone' type='tel' placeholder='(555) 123-4567'>"
+            f"<label for='acc-pw' style='display:block;margin-top:12px'>Password</label>"
             f"<input id='acc-pw' type='password' placeholder='At least 8 characters'>"
-            f"<button class='btn' style='margin-top:14px;width:100%' onclick='saveAcct()'>"
-            f"Save &amp; finish</button>"
-            f"<p id='acc-msg' style='margin-top:10px;font-size:.85rem;color:#6b6f79'></p>"
+            f"<label for='acc-pw2' style='display:block;margin-top:12px'>Confirm password</label>"
+            f"<input id='acc-pw2' type='password' placeholder='Re-enter your password'>"
+            f"<button class='btn' id='acc-go' style='margin-top:18px;width:100%' "
+            f"onclick='saveAcct()'>Create my account &amp; start &rarr;</button>"
+            f"<p id='acc-msg' style='margin-top:10px;font-size:.88rem;color:#b3261e'></p>"
             f"</div>"
-            f"<script>function saveAcct(){{"
-            f"var n=document.getElementById('acc-name').value,"
-            f"p=document.getElementById('acc-pw').value,"
-            f"m=document.getElementById('acc-msg');"
-            f"if(p.length<8){{m.textContent='Please use at least 8 characters.';return;}}"
-            f"m.textContent='Saving...';"
-            f"fetch('{base}/api/v1/bbu/complete-account',{{method:'POST',"
-            f"credentials:'include',headers:{{'Content-Type':'application/json'}},"
-            f"body:JSON.stringify({{name:n,password:p}})}})"
+            f"<script>"
+            f"function saveAcct(){{"
+            f"var n=document.getElementById('acc-name').value.trim(),"
+            f"ph=document.getElementById('acc-phone').value.trim(),"
+            f"p1=document.getElementById('acc-pw').value,"
+            f"p2=document.getElementById('acc-pw2').value,"
+            f"m=document.getElementById('acc-msg'),b=document.getElementById('acc-go');"
+            f"m.style.color='#b3261e';"
+            f"if(!n){{m.textContent='Please enter your name.';return;}}"
+            f"if(ph.replace(/\\D/g,'').length<10){{m.textContent='Please enter a valid phone number.';return;}}"
+            f"if(p1.length<8){{m.textContent='Password must be at least 8 characters.';return;}}"
+            f"if(p1!==p2){{m.textContent=\"Those passwords don't match.\";return;}}"
+            f"b.disabled=true;m.style.color='#6b6f79';m.textContent='Creating your account...';"
+            f"fetch('{base}/api/v1/bbu/complete-account',{{method:'POST',credentials:'include',"
+            f"headers:{{'Content-Type':'application/json'}},"
+            f"body:JSON.stringify({{session_id:'{sid}',name:n,phone:ph,password:p1,confirm:p2}})}})"
             f".then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})"
-            f".then(function(x){{m.textContent=x.ok?'Saved — you can now sign in with '"
-            f"+x.d.email+' any time.':(x.d.detail||'Something went wrong.');}})"
-            f".catch(function(){{m.textContent='Something went wrong.';}});}}</script>"
+            f".then(function(x){{if(x.ok){{m.style.color='#1e7d43';"
+            f"m.textContent='All set — taking you to your course...';"
+            f"setTimeout(function(){{window.location='{target}';}},700);}}"
+            f"else{{b.disabled=false;m.style.color='#b3261e';"
+            f"m.textContent=(x.d&&x.d.detail)||'Something went wrong.';}}}})"
+            f".catch(function(){{b.disabled=false;m.textContent='Something went wrong.';}});}}"
+            f"</script>"
         )
     # Reseller/bulk pack: link the buyer straight to their self-serve seat portal.
     seat_token = ((getattr(order, "extra", None) or {}).get("seat_owner_token")) if order else None

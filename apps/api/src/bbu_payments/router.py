@@ -259,48 +259,108 @@ async def success(request: Request, session_id: str = "", db_session: AsyncSessi
 @router.post("/complete-account")
 async def complete_account(request: Request,
                            db_session: AsyncSession = Depends(get_db_session)):
-    """Finish the account a purchase created: real name + a password they choose.
+    """Finish the account a purchase created: name, phone, and a chosen password.
 
-    Checkout deliberately asks for an email and nothing else — every extra field
-    in front of a payment costs conversions, and these offers run on a 24-hour
-    deadline. So the account is created by the purchase and completed here,
-    afterwards, when the buyer is already signed in and has a reason to care.
-
-    Authorised by the session the purchase just minted, so this is only ever
-    "set my own password" — no token to forge, no email to guess.
+    Identity comes from the PAID ORDER, never from the ambient session cookie.
+    Using the cookie was a real defect: the buy flow is often opened in a browser
+    that is already signed in as somebody else — an admin demoing it, a shared
+    machine — and the form then rewrote *that* account's name and password
+    instead of the buyer's. The Stripe session id in the success URL is the only
+    thing that identifies who actually paid.
     """
-    from src.security.auth import get_current_user, resolve_acting_user_id
     from src.security.security import security_hash_password
     from src.db.users import User as _U
 
     b = await request.json()
+    session_id = (b.get("session_id") or "").strip()
     password = (b.get("password") or "").strip()
+    confirm = (b.get("confirm") or "").strip()
     name = (b.get("name") or "").strip()
+    phone = (b.get("phone") or "").strip()
+
+    if not session_id:
+        raise HTTPException(400, "Missing your order reference — please reopen the link from your receipt.")
+    if not name:
+        raise HTTPException(400, "Please enter your name.")
+    if len("".join(ch for ch in phone if ch.isdigit())) < 10:
+        raise HTTPException(400, "Please enter a valid phone number.")
     if len(password) < 8:
         raise HTTPException(400, "Please choose a password of at least 8 characters.")
+    if confirm and confirm != password:
+        raise HTTPException(400, "Those passwords don't match.")
 
-    try:
-        uid = resolve_acting_user_id(await get_current_user(request, db_session)) or 0
-    except Exception:
-        uid = 0
-    if not uid:
-        raise HTTPException(401, "Your session expired — use forgot password instead.")
+    order = (await db_session.execute(select(BBUOrder).where(
+        BBUOrder.stripe_session_id == session_id))).scalars().first()
+    if not order or order.status != "paid":
+        raise HTTPException(403, "We couldn't verify that purchase.")
 
-    user = (await db_session.execute(select(_U).where(_U.id == uid))).scalars().first()
+    # The order's own email is the buyer. Create the account here if fulfillment
+    # hasn't already (webhook ordering, or a fulfillment that errored).
+    user = None
+    if order.user_id:
+        user = (await db_session.execute(
+            select(_U).where(_U.id == order.user_id))).scalars().first()
+    if not user and order.email:
+        user = (await db_session.execute(
+            select(_U).where(_U.email == order.email))).scalars().first()
+    if not user and order.email:
+        from src.bbu_migration.router import _get_or_create_user, _learner_role_id
+        user = await _get_or_create_user(
+            db_session, order.org_id, await _learner_role_id(db_session),
+            order.email, name)
     if not user:
-        raise HTTPException(404, "Account not found")
+        raise HTTPException(404, "We couldn't find the account for that purchase.")
+
+    # Refuse to touch an account that isn't the one that paid.
+    if (user.email or "").lower() != (order.email or "").lower():
+        raise HTTPException(403, "That purchase belongs to a different account.")
 
     user.password = security_hash_password(password)
     # Leave password_changed_at alone: it revokes tokens issued before it, which
-    # would sign the buyer straight back out of the session they are using.
-    if name:
-        parts = name.split(" ", 1)
-        user.first_name = parts[0][:100]
-        user.last_name = (parts[1] if len(parts) > 1 else "")[:100]
+    # would sign the buyer out of the session they are about to use.
+    parts = name.split(" ", 1)
+    user.first_name = parts[0][:100]
+    user.last_name = (parts[1] if len(parts) > 1 else "")[:100]
+    user.phone = phone[:40]
     user.update_date = datetime.now(timezone.utc).isoformat()
+    order.user_id = user.id
     db_session.add(user)
+    db_session.add(order)
     await db_session.commit()
-    return {"ok": True, "email": user.email}
+
+    # Make sure the courses they paid for are actually granted before we send
+    # them onward — otherwise "start your course" lands on a locked page.
+    try:
+        prod = (await db_session.execute(select(BBUProduct).where(
+            BBUProduct.id == order.product_id))).scalars().first()
+        if prod:
+            await _grant_course_access(db_session, order, prod)
+    except Exception:
+        import traceback
+        print(f"[BBU] grant during complete-account failed:\n"
+              f"{traceback.format_exc()[-500:]}", flush=True)
+
+    try:
+        from src.bbu_ghl.client import GHLClient, is_configured
+        if is_configured():
+            async with GHLClient() as ghl:
+                await ghl.upsert_contact(email=user.email, first_name=user.first_name,
+                                         last_name=user.last_name, phone=phone)
+    except Exception:
+        pass
+
+    # Sign in as the BUYER, replacing whatever session the browser had.
+    resp = JSONResponse({"ok": True, "email": user.email})
+    try:
+        from src.security.auth import create_access_token, create_refresh_token
+        from src.routers.auth import set_auth_cookies
+        set_auth_cookies(resp,
+                         create_access_token(data={"sub": user.email}),
+                         create_refresh_token(data={"sub": user.email}),
+                         request)
+    except Exception:
+        pass
+    return resp
 
 
 @router.get("/cohort-availability")

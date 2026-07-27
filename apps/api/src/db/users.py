@@ -167,6 +167,9 @@ class User(UserBase, table=True):
     last_login_at: Optional[str] = None
     last_login_ip: Optional[str] = None
     signup_method: Optional[str] = None
+    # Collected when a buyer completes registration after purchase. Nullable and
+    # additive; also pushed to the GHL contact, which is where the team acts on it.
+    phone: Optional[str] = Field(default=None)
     is_superadmin: bool = Field(default=False)
     password_changed_at: Optional[datetime] = Field(default=None)
     creation_date: str = ""
