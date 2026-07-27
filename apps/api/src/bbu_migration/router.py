@@ -998,15 +998,29 @@ async def list_communities(request: Request, db_session: AsyncSession = Depends(
     groups_by_res: dict = {}
     for link, grp in links:
         groups_by_res.setdefault(link.resource_uuid, []).append(grp.name)
+    # Communities hold MANY courses via the community_course join table; the
+    # legacy Community.course_id only ever held the first one. Report both, or
+    # the mapping looks empty for every community linked after the join landed.
+    from src.db.communities.community_courses import CommunityCourse
+    joins = (await db_session.execute(select(CommunityCourse).where(
+        CommunityCourse.org_id == org_id))).scalars().all()
+    courses_by_comm: dict = {}
+    for j in joins:
+        c = course_by_id.get(j.course_id)
+        if c:
+            courses_by_comm.setdefault(j.community_id, []).append(c.name)
     out = []
     for c in comms:
         course = course_by_id.get(c.course_id) if c.course_id else None
+        linked = sorted(set(courses_by_comm.get(c.id, [])
+                            + ([course.name] if course else [])))
         out.append({
             "id": c.id, "community_uuid": c.community_uuid, "name": c.name,
             "public": bool(c.public), "has_image": bool(c.thumbnail_image),
             "course_uuid": course.course_uuid if course else None,
             "course_has_thumb": bool(course.thumbnail_image) if course else False,
             "access_groups": groups_by_res.get(c.community_uuid, []),
+            "courses": linked, "course_count": len(linked),
         })
     return out
 
