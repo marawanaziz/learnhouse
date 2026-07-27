@@ -13,6 +13,7 @@ BBU_STRIPE_* env vars. HSA/FSA + Klarna surface automatically via
 automatic_payment_methods.
 """
 import os
+import io
 import json
 import hashlib
 from datetime import datetime, timezone
@@ -143,6 +144,32 @@ async def cert_template(name: str):
         raise HTTPException(404, "Not found")
     return FileResponse(path, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/cert-qr/{cert_id}")
+async def cert_qr(cert_id: str, request: Request):
+    """QR for a certificate, encoding its public verification URL.
+
+    Same-origin on purpose: the certificate is exported to PDF with html2canvas,
+    which taints the canvas on a cross-origin image and silently produces a
+    blank download. SVG so it stays sharp when printed.
+    """
+    import re
+    from fastapi.responses import Response
+    if not re.fullmatch(r"[A-Za-z0-9._-]{4,80}", cert_id):
+        raise HTTPException(404, "Not found")
+    base = str(request.base_url).rstrip("/")
+    try:
+        import segno
+    except ImportError:                       # dependency not yet in the image
+        raise HTTPException(503, "QR generation unavailable")
+    buf = io.BytesIO()
+    # error correction "M": survives a printed certificate being scuffed while
+    # keeping the module count low enough to scan at ~1 inch.
+    segno.make(f"{base}/certificates/{cert_id}/verify", error="m").save(
+        buf, kind="svg", scale=8, dark="#113d5d", light=None, xmldecl=False)
+    return Response(buf.getvalue(), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/products")

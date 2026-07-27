@@ -39,10 +39,23 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
 }) => {
   // ---- BBU-branded certificate ------------------------------------------
   // Renders the client's exact Canva artwork as the background and overlays
-  // only the live fields (recipient name + dates + credential ID) onto the
-  // blank lines. One position set works across all 13 templates since they
-  // share the same layout skeleton. Font sizes use cqw so text scales with the
-  // certificate width (container query) for pixel-consistent PDF export.
+  // only the live fields onto the blank lines.
+  //
+  // Every percentage below was MEASURED off the template PNGs (detecting the
+  // printed rules by scanning for dark horizontal runs), not eyeballed. The two
+  // layouts genuinely differ, so they get separate numbers:
+  //
+  //   certification (01-04): rules at y=74.5% (issue | expiration) and y=82.4%
+  //                          (credential id | signature), centres 39.5%/60.5%
+  //   completion    (05-13): one rule at y=79.1%, three slots centred
+  //                          29.4% (date) / 50.1% (instructor) / 70.7% (signature)
+  //
+  // Fields are anchored with `bottom`, not `top`: text has to sit ON the printed
+  // rule, and bottom-anchoring keeps it there no matter how the font resolves.
+  // The previous top-anchored values centred the dates at 36.5%/63.5% -- ~3% wide
+  // of the actual rules, which is the "writing is a little off" Anna reported.
+  const RULE = { name: 46.2, certRow1: 74.5, certRow2: 82.4, compRow: 79.1 };
+  const sit = (rulePct: number) => `${100 - rulePct + 0.7}%`;  // just above the rule
   if (certificatePattern === 'bbu' && bbuTemplate) {
     const isCertification = bbuLayout === 'certification';
     return (
@@ -60,35 +73,49 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
           color: '#113d5d',
         }}
       >
-        {/* Recipient name — sits on the blank line under "This certifies that:" */}
+        {/* Recipient name — sits on the rule under "This certifies that:" */}
         <div style={{
-          position: 'absolute', top: '40%', left: '15%', right: '15%',
+          position: 'absolute', bottom: sit(RULE.name), left: '15%', right: '15%',
           textAlign: 'center', fontFamily: '"Playfair Display", Georgia, serif',
-          fontWeight: 700, fontSize: '4.2cqw', color: '#113d5d', lineHeight: 1,
+          fontWeight: 700, fontSize: '4.2cqw', color: '#113d5d', lineHeight: 1.1,
         }}>{recipientName || ''}</div>
 
         {isCertification ? (
           <>
-            {/* DATE OF ISSUE — above its printed label */}
-            <div style={{ position: 'absolute', top: '70.5%', left: '26.5%', width: '20%',
+            {/* DATE OF ISSUE — rule centred at 39.5% */}
+            <div style={{ position: 'absolute', bottom: sit(RULE.certRow1), left: '30.7%', width: '17.6%',
               textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{issueDate || ''}</div>
-            {/* DATE OF EXPIRATION */}
-            <div style={{ position: 'absolute', top: '70.5%', left: '53.5%', width: '20%',
+            {/* DATE OF EXPIRATION — rule centred at 60.5% */}
+            <div style={{ position: 'absolute', bottom: sit(RULE.certRow1), left: '51.7%', width: '17.6%',
               textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{expirationDate || ''}</div>
-            {/* CREDENTIAL ID */}
-            <div style={{ position: 'absolute', top: '78.5%', left: '26.5%', width: '20%',
+            {/* CREDENTIAL ID — rule centred at 39.5%, one row lower */}
+            <div style={{ position: 'absolute', bottom: sit(RULE.certRow2), left: '30.7%', width: '17.6%',
               textAlign: 'center', fontSize: '1.5cqw', color: '#113d5d', letterSpacing: '0.02em' }}>{certificateId || ''}</div>
           </>
         ) : (
           <>
-            {/* DATE OF COMPLETION */}
-            <div style={{ position: 'absolute', top: '76.2%', left: '18%', width: '22%',
+            {/* DATE OF COMPLETION — rule centred at 29.4% */}
+            <div style={{ position: 'absolute', bottom: sit(RULE.compRow), left: '20.6%', width: '17.6%',
               textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{issueDate || awardedDate || ''}</div>
-            {/* INSTRUCTOR NAME — defaults to the org's director */}
-            <div style={{ position: 'absolute', top: '76.2%', left: '41%', width: '22%',
+            {/* INSTRUCTOR NAME — rule centred at 50.1% */}
+            <div style={{ position: 'absolute', bottom: sit(RULE.compRow), left: '41.3%', width: '17.6%',
               textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{certificateInstructor || 'Anna Rodney'}</div>
           </>
         )}
+
+        {/* Verification QR. Box measured clear of artwork on all 13 templates.
+            Served same-origin as SVG so the html2canvas PDF export doesn't taint
+            the canvas and produce a blank file. */}
+        {certificateId ? (
+          <img
+            src={`/api/v1/bbu/cert-qr/${encodeURIComponent(certificateId)}`}
+            alt="Scan to verify this certificate"
+            style={{
+              position: 'absolute', left: '78%', top: '70%',
+              width: '8.5%', aspectRatio: '1 / 1',
+            }}
+          />
+        ) : null}
       </div>
     );
   }
