@@ -247,7 +247,7 @@ async def close_cohort(cohort_id: int, request: Request, db_session: AsyncSessio
     return await svc.close(db_session, c, revoke_access=bool(b.get("revoke_access", True)))
 
 @router.get("/workbook")
-async def my_workbook(course_uuid: str = "", request: Request = None,
+async def my_workbook(request: Request, course_uuid: str = "",
                       db_session: AsyncSession = Depends(get_db_session)):
     """The course book for the signed-in learner's cohort on this course.
 
