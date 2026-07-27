@@ -13,6 +13,20 @@ interface CourseProgressProps {
 }
 
 const CourseProgress: React.FC<CourseProgressProps> = ({ course, orgslug, isOpen, onClose, trailData }) => {
+  // The workbook lives on the cohort, not the course, so learners had no way to
+  // reach it. Renders only when a URL is actually configured — no dead button.
+  const [courseBook, setCourseBook] = React.useState<{ url: string; label: string } | null>(null)
+  React.useEffect(() => {
+    const uuid = (course as any)?.course_uuid
+    if (!isOpen || !uuid) return
+    fetch(`/api/v1/bbu/course-book?course_uuid=${encodeURIComponent(uuid)}`, {
+      credentials: 'include',
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setCourseBook(d && d.url ? d : null))
+      .catch(() => setCourseBook(null))
+  }, [isOpen, (course as any)?.course_uuid])
+
   const [completedActivities, setCompletedActivities] = useState(0)
   const [totalActivities, setTotalActivities] = useState(0)
 
@@ -107,11 +121,27 @@ const CourseProgress: React.FC<CourseProgressProps> = ({ course, orgslug, isOpen
     </div>
   )
 
+  const dialogWithBook = (
+    <div>
+      {courseBook?.url && (
+        <a
+          href={courseBook.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-100"
+        >
+          {courseBook.label || 'Download the course book'}
+        </a>
+      )}
+      {dialogContent}
+    </div>
+  )
+
   return (
     <Modal
       isDialogOpen={isOpen}
       onOpenChange={onClose}
-      dialogContent={dialogContent}
+      dialogContent={dialogWithBook}
       dialogTitle="Course Progress"
       dialogDescription={`${completedActivities} of ${totalActivities} activities completed`}
       minWidth="md"

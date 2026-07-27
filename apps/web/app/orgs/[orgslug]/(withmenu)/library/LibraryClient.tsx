@@ -20,6 +20,16 @@ function LibraryClient({ orgslug }: { orgslug: string }) {
   const session = useLHSession() as any
   const access_token = session?.data?.tokens?.access_token
 
+  // E-books are products with a token-gated PDF, separate from the folder tree —
+  // so a buyer had nowhere to re-download them after the original receipt.
+  const { data: myEbooks } = useQuery({
+    queryKey: ['bbu', 'my-ebooks'],
+    queryFn: async () => {
+      const r = await fetch('/api/v1/bbu/my-ebooks', { credentials: 'include' })
+      return r.ok ? r.json() : []
+    },
+  })
+
   const { data, isLoading, isError } = useQuery({
     queryKey: org?.id ? queryKeys.folders.list(org.id) : ['folders', 'pending'],
     queryFn: () => getOrgFolders(org.id, access_token),
@@ -69,6 +79,36 @@ function LibraryClient({ orgslug }: { orgslug: string }) {
             </div>
 
             <div className="flex flex-col gap-7">
+              {Array.isArray(myEbooks) && myEbooks.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-3">
+                    Your e-books
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {myEbooks.map((b: any) => (
+                      <div key={b.id} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2">
+                        <div className="font-semibold text-gray-900">{b.name}</div>
+                        {b.description && (
+                          <div className="text-sm text-gray-500 line-clamp-2">{b.description}</div>
+                        )}
+                        {b.download_url ? (
+                          <a
+                            href={b.download_url}
+                            className="mt-auto inline-block text-center rounded-lg bg-gray-900 text-white text-sm font-semibold px-4 py-2 hover:bg-gray-700"
+                          >
+                            Download PDF
+                          </a>
+                        ) : (
+                          <span className="mt-auto text-xs text-gray-400">
+                            Download link unavailable — contact support
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {folders.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   {folders.map((folder: any) => (

@@ -453,6 +453,90 @@ async def complete_account(request: Request,
     return resp
 
 
+@router.get("/course-book")
+async def course_book(course_uuid: str, db_session: AsyncSession = Depends(get_db_session)):
+    """The downloadable workbook for a course, if one has been set.
+
+    Cohort programmes carry a workbook_url; a course reached through a cohort
+    inherits it. Returns an empty url when nothing is configured so the UI can
+    hide the link rather than offer a dead button.
+    """
+    out = {"url": "", "label": "Download the course book"}
+    try:
+        from src.bbu_cohorts.models import BBUCohort
+        from src.bbu_cohorts.templates import workbook_for
+
+        course = (await db_session.execute(select(Course).where(
+            Course.course_uuid == course_uuid))).scalars().first()
+        if not course:
+            return out
+        cohorts = (await db_session.execute(select(BBUCohort).where(
+            BBUCohort.org_id == course.org_id))).scalars().all()
+        for c in cohorts:
+            if (c.course_uuid or "") == course_uuid or (course.name or "").startswith(c.name or "\x00"):
+                url = (getattr(c, "workbook_url", "") or "") or workbook_for(c.program or "")
+                if url:
+                    out["url"] = url
+                    return out
+        for p in (await db_session.execute(select(BBUProduct).where(
+                BBUProduct.org_id == course.org_id))).scalars().all():
+            if course_uuid in (p.course_uuids or "") and (p.cohort_program or ""):
+                url = workbook_for(p.cohort_program)
+                if url:
+                    out["url"] = url
+                    return out
+    except Exception:
+        return out
+    return out
+
+
+@router.get("/my-ebooks")
+async def my_ebooks(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """E-books the signed-in member has bought, with a fresh download link.
+
+    E-books are products with a token-gated PDF, entirely separate from the
+    Library's folder tree — so a buyer had nowhere to re-download from after the
+    original receipt. This is what the Library shows them.
+    """
+    from src.security.auth import get_current_user, resolve_acting_user_id
+    from src.db.users import User as _U
+
+    try:
+        uid = resolve_acting_user_id(await get_current_user(request, db_session)) or 0
+    except Exception:
+        uid = 0
+    if not uid:
+        return []
+    user = (await db_session.execute(select(_U).where(_U.id == uid))).scalars().first()
+    if not user:
+        return []
+
+    orders = (await db_session.execute(select(BBUOrder).where(
+        BBUOrder.org_id == 1, BBUOrder.status == "paid"))).scalars().all()
+    mine = [o for o in orders
+            if (o.user_id == uid) or ((o.email or "").lower() == (user.email or "").lower())]
+    if not mine:
+        return []
+
+    prods = {p.id: p for p in (await db_session.execute(select(BBUProduct).where(
+        BBUProduct.org_id == 1))).scalars().all()}
+    base = _base_url(request)
+    out, seen = [], set()
+    for o in mine:
+        p = prods.get(o.product_id)
+        if not p or p.kind != "ebook" or p.id in seen:
+            continue
+        seen.add(p.id)
+        out.append({
+            "id": p.id, "name": p.name, "description": (p.description or "")[:200],
+            "image_url": p.image_url or "",
+            "purchased_on": (o.paid_at or o.created_at or "")[:10],
+            "download_url": (f"{base}/api/v1/bbu/ebook/download/{o.download_token}"
+                             if o.download_token else ""),
+        })
+    return out
+
+
 @router.get("/cohort-availability")
 async def cohort_availability(product_id: int, db_session: AsyncSession = Depends(get_db_session)):
     """Storefront check: is this a cohort product, and does it have an open seat?
