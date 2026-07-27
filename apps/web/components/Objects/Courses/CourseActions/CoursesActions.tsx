@@ -61,6 +61,13 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
   const [isContributeLoading, setIsContributeLoading] = useState(false)
   const { contributorStatus, refetch } = useContributorStatus(courseuuid)
   const [isProgressOpen, setIsProgressOpen] = useState(false)
+  const org = useOrg() as any
+  const { isUserPartOfTheOrg } = useOrgMembership()
+  const queryClient = useQueryClient()
+  const { track } = useLHAnalytics('learner')
+
+  // Clean up course UUID by removing 'course_' prefix if it exists
+  const cleanCourseUuid = course.course_uuid?.replace('course_', '');
   // The cohort workbook lived only on the cohort record, so learners had no way
   // to reach it from inside the course. Sits under Course Progress, where they
   // already look for their materials.
@@ -74,13 +81,6 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
       .then((d) => setWorkbook(d && d.workbook_url ? d : null))
       .catch(() => setWorkbook(null))
   }, [cleanCourseUuid])
-  const org = useOrg() as any
-  const { isUserPartOfTheOrg } = useOrgMembership()
-  const queryClient = useQueryClient()
-  const { track } = useLHAnalytics('learner')
-
-  // Clean up course UUID by removing 'course_' prefix if it exists
-  const cleanCourseUuid = course.course_uuid?.replace('course_', '');
   const resourceUuid = cleanCourseUuid ? `course_${cleanCourseUuid}` : null;
 
   const isStarted = trailData?.runs?.find(
