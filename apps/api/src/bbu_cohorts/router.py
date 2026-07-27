@@ -245,3 +245,36 @@ async def close_cohort(cohort_id: int, request: Request, db_session: AsyncSessio
         raise HTTPException(404, "Cohort not found")
     b = await request.json()
     return await svc.close(db_session, c, revoke_access=bool(b.get("revoke_access", True)))
+
+@router.get("/workbook")
+async def my_workbook(course_uuid: str = "", request: Request = None,
+                      db_session: AsyncSession = Depends(get_db_session)):
+    """The course book for the signed-in learner's cohort on this course.
+
+    Learners had no way to reach the workbook from inside the course — it lived
+    only on the cohort record. Returns {} rather than erroring when they aren't
+    in a cohort or none has a book yet, so the caller just renders nothing.
+    """
+    from src.security.auth import get_current_user, resolve_acting_user_id
+    from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
+
+    if not course_uuid:
+        return {}
+    try:
+        uid = resolve_acting_user_id(await get_current_user(request, db_session)) or 0
+    except Exception:
+        uid = 0
+    if not uid:
+        return {}
+
+    cu = course_uuid if course_uuid.startswith("course_") else f"course_{course_uuid}"
+    mine = {m.cohort_id for m in (await db_session.execute(select(BBUCohortMember).where(
+        BBUCohortMember.user_id == uid,
+        BBUCohortMember.status.in_(("active", "completed"))))).scalars().all()}
+    if not mine:
+        return {}
+    for c in (await db_session.execute(select(BBUCohort).where(
+            BBUCohort.id.in_(mine), BBUCohort.course_uuid == cu))).scalars().all():
+        if c.workbook_url:
+            return {"workbook_url": c.workbook_url, "cohort": c.name}
+    return {}

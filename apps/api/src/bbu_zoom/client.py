@@ -19,6 +19,47 @@ ACCOUNT_ID = os.environ.get("ZOOM_ACCOUNT_ID", "")
 CLIENT_ID = os.environ.get("ZOOM_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("ZOOM_CLIENT_SECRET", "")
 
+# BBU runs webinars from more than one Zoom account — the BBU account and the
+# original Chicago Family Doulas one. A single credential set made every meeting
+# hosted on the other account invisible to the cohort picker. Extra accounts are
+# configured as ZOOM_ACCOUNT_ID_2 / ZOOM_CLIENT_ID_2 / ZOOM_CLIENT_SECRET_2
+# (…_3 and so on); each is optional and simply skipped when unset.
+def _accounts() -> list:
+    out = []
+    if ACCOUNT_ID and CLIENT_ID and CLIENT_SECRET:
+        out.append({"label": os.environ.get("ZOOM_LABEL", "BBU"),
+                    "account_id": ACCOUNT_ID, "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET})
+    for n in range(2, 6):
+        a = os.environ.get(f"ZOOM_ACCOUNT_ID_{n}", "")
+        c = os.environ.get(f"ZOOM_CLIENT_ID_{n}", "")
+        sec = os.environ.get(f"ZOOM_CLIENT_SECRET_{n}", "")
+        if a and c and sec:
+            out.append({"label": os.environ.get(f"ZOOM_LABEL_{n}", f"Account {n}"),
+                        "account_id": a, "client_id": c, "client_secret": sec})
+    return out
+
+
+# per-account token cache, keyed by account id
+_tokens: dict = {}
+
+
+async def _token_for(acct: dict) -> str:
+    cached = _tokens.get(acct["account_id"])
+    if cached and cached["exp"] - 60 > time.time():
+        return cached["value"]
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.post(_TOKEN_URL,
+                         params={"grant_type": "account_credentials",
+                                 "account_id": acct["account_id"]},
+                         auth=(acct["client_id"], acct["client_secret"]))
+        r.raise_for_status()
+        data = r.json()
+    tok = data.get("access_token", "")
+    _tokens[acct["account_id"]] = {
+        "value": tok, "exp": time.time() + int(data.get("expires_in", 3600) or 3600)}
+    return tok
+
 _TOKEN_URL = "https://zoom.us/oauth/token"
 _API = "https://api.zoom.us/v2"
 
@@ -80,14 +121,17 @@ async def list_meetings() -> list:
     picker. Iterates hosts (users) → their scheduled meetings (incl. recurring)
     + webinars. Returns [{id, topic, kind, host}] sorted by topic; [] when the
     integration isn't configured or on any error (caller shows a manual field)."""
-    if not is_configured():
-        return []
-    try:
-        hdr = await _headers()
-    except Exception:
+    accounts = _accounts()
+    if not accounts:
         return []
     rows = []
     async with httpx.AsyncClient(timeout=25) as c:
+      for _acct in accounts:
+        try:
+            hdr = {"Authorization": f"Bearer {await _token_for(_acct)}",
+                   "Content-Type": "application/json"}
+        except Exception:
+            continue
         try:
             r = await c.get(f"{_API}/users", params={"status": "active", "page_size": 300}, headers=hdr)
             users = r.json().get("users", []) if r.status_code == 200 else []
@@ -101,14 +145,18 @@ async def list_meetings() -> list:
                 r = await c.get(f"{_API}/users/{uid}/meetings",
                                 params={"type": "scheduled", "page_size": 300}, headers=hdr)
                 for m in (r.json().get("meetings", []) if r.status_code == 200 else []):
-                    rows.append({"id": str(m.get("id")), "topic": m.get("topic", ""), "kind": "meeting", "host": email})
+                    rows.append({"id": str(m.get("id")), "topic": m.get("topic", ""),
+                                 "kind": "meeting", "host": email,
+                                 "account": _acct["label"]})
             except Exception:
                 pass
             try:
                 r = await c.get(f"{_API}/users/{uid}/webinars",
                                 params={"page_size": 300}, headers=hdr)
                 for w in (r.json().get("webinars", []) if r.status_code == 200 else []):
-                    rows.append({"id": str(w.get("id")), "topic": w.get("topic", ""), "kind": "webinar", "host": email})
+                    rows.append({"id": str(w.get("id")), "topic": w.get("topic", ""),
+                                 "kind": "webinar", "host": email,
+                                 "account": _acct["label"]})
             except Exception:
                 pass
     dedup = {r["id"]: r for r in rows if r.get("id")}
@@ -116,8 +164,13 @@ async def list_meetings() -> list:
 
 
 async def get_recording_urls(meeting_id: str) -> list:
-    """Return share/play URLs for a meeting's cloud recordings ([] on any issue)."""
-    if not is_configured() or not meeting_id:
+    """Return share/play URLs for a meeting's cloud recordings ([] on any issue).
+
+    Tries every configured account: a meeting hosted on the Chicago Family Doulas
+    account is not visible to the BBU token, so a single-account lookup silently
+    returned nothing for half the webinars.
+    """
+    if not meeting_id or not _accounts():
         return []
     try:
         hdr = await _headers()

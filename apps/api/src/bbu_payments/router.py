@@ -100,6 +100,37 @@ async def _visible_products(request: Request, db: AsyncSession, rows: list,
         return rows
 
 
+async def _upcoming_cohorts(db: AsyncSession, org_id: int, program: str = "") -> list:
+    """Every cohort a buyer could still join, soonest first.
+
+    Buyers were paying without seeing which dates they were signing up for and
+    only found out afterwards; the page showed a single yes/no availability flag.
+    """
+    from datetime import date as _date
+    from src.bbu_cohorts import service as cohort_svc
+    out = []
+    try:
+        today = _date.today().isoformat()
+        q = select(BBUCohort).where(BBUCohort.org_id == org_id,
+                                    BBUCohort.status.in_(("open", "full")))
+        if program:
+            q = q.where(BBUCohort.program == program)
+        for c in (await db.execute(q)).scalars().all():
+            if c.end_date and c.end_date < today:
+                continue
+            taken = await cohort_svc.active_count(db, c.id)
+            out.append({
+                "id": c.id, "name": c.name, "program": c.program,
+                "start_date": c.start_date, "end_date": c.end_date,
+                "seats_left": (c.capacity - taken) if c.capacity else None,
+                "full": bool(c.capacity and taken >= c.capacity),
+            })
+        out.sort(key=lambda x: (x["start_date"] or "9999"))
+    except Exception:
+        return []
+    return out
+
+
 @router.get("/cert-template/{name}")
 async def cert_template(name: str):
     """Serve a BBU certificate template PNG (same-origin so html2canvas can
@@ -198,9 +229,12 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
         else:
             program = prog
             sold_out = not await cohort_svc.has_open_seat(db_session, p.org_id, prog)
+    cohorts = []
+    if prog or getattr(p, "cohort_id", None):
+        cohorts = await _upcoming_cohorts(db_session, p.org_id, program or prog)
     resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request), sold_out=sold_out,
                                       program=program, coupon_code=coupon_code,
-                                      discount_cents=discount_cents))
+                                      discount_cents=discount_cents, cohorts=cohorts))
     await _apply_ref(request, resp, db_session)
     return resp
 
@@ -381,7 +415,10 @@ async def cohort_availability(product_id: int, db_session: AsyncSession = Depend
         prog = prog or (c.program if c else "")
     else:
         avail = await cohort_svc.has_open_seat(db_session, p.org_id, prog)
+    upcoming = await _upcoming_cohorts(db_session, p.org_id, prog)
+
     return {"is_cohort": True, "available": avail, "program": prog,
+            "upcoming": upcoming,
             "waitlist_count": await cohort_svc.waitlist_count(db_session, p.org_id, prog)}
 
 

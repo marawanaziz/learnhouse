@@ -445,6 +445,43 @@ async def credentials_user(request: Request, email: str, db_session: AsyncSessio
     }
 
 
+@router.post("/learner-menu")
+async def learner_menu(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Set which items appear in the learner top nav. Body: {items:["courses",...]}.
+
+    The nav is config-driven, and the stored config had dropped Library — so the
+    e-books had no home in the navigation even though the feature was enabled.
+    Order is the order given.
+    """
+    from src.db.organization_config import OrganizationConfig
+    b = await request.json()
+    await _auth(request, db_session, b)
+    items = b.get("items")
+    row = (await db_session.execute(select(OrganizationConfig).where(
+        OrganizationConfig.org_id == ORG))).scalars().first()
+    if not row:
+        raise HTTPException(404, "Org config not found")
+
+    cfg = dict(row.config or {})
+    inner = dict(cfg.get("config") or {})
+    if items is None:
+        cur = ((inner.get("customization") or {}).get("menu") or {}).get("items") or []
+        return {"items": [i.get("type") for i in cur]}
+
+    cust = dict(inner.get("customization") or {})
+    cust["menu"] = {"items": [{"type": t, "enabled": True, "order": i, "label": "", "url": ""}
+                              for i, t in enumerate(items)]}
+    inner["customization"] = cust
+    cfg["config"] = inner
+    row.config = cfg
+    # SQLAlchemy won't notice an in-place dict mutation on a JSON column
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(row, "config")
+    db_session.add(row)
+    await db_session.commit()
+    return {"ok": True, "items": items}
+
+
 @router.get("/stripe-sync")
 async def stripe_sync_status(request: Request,
                              db_session: AsyncSession = Depends(get_db_session)):

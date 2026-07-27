@@ -101,6 +101,46 @@ def _price_block(p, discount_cents=0, coupon_code=""):
     return f"<div class='price' style='margin:18px 0'>{_price(p.price_cents, p.currency)}</div>"
 
 
+def _cohort_dates(cohorts):
+    """Upcoming cohort dates on the buy page.
+
+    A cohort product used to show only "available / sold out", so a buyer picked
+    a date they never saw. Full cohorts are listed too, greyed out, so the next
+    opening is obvious rather than the list just looking short.
+    """
+    if not cohorts:
+        return ""
+    rows = ""
+    for c in cohorts:
+        when = c.get("start_date") or ""
+        if c.get("end_date"):
+            when = f"{when} &ndash; {c['end_date']}"
+        left = c.get("seats_left")
+        if c.get("full"):
+            note, colour = "Full", "#b3261e"
+        elif left is not None and left <= 3:
+            note, colour = f"{left} seat{'s' if left != 1 else ''} left", "#b3261e"
+        elif left is not None:
+            note, colour = f"{left} seats left", "#1e7d43"
+        else:
+            note, colour = "Open", "#1e7d43"
+        rows += (
+            f"<div style='display:flex;justify-content:space-between;align-items:baseline;"
+            f"gap:12px;padding:9px 0;border-bottom:1px solid rgba(17,61,93,.07)"
+            f"{';opacity:.55' if c.get('full') else ''}'>"
+            f"<span><b>{c.get('name','')}</b>"
+            f"<br><span style='font-size:.82rem;color:#6b6f79'>{when}</span></span>"
+            f"<span style='font-size:.8rem;font-weight:700;color:{colour};white-space:nowrap'>{note}</span>"
+            f"</div>")
+    return (
+        "<div style='margin:6px 0 18px'>"
+        "<div class='eyebrow' style='margin-bottom:6px'>Upcoming dates</div>"
+        f"{rows}"
+        "<p style='margin-top:8px;font-size:.8rem;color:#6b6f79'>"
+        "You'll be enrolled in the next cohort with an open seat.</p></div>"
+    )
+
+
 def store_page(products, base):
     cards = ""
     if not products:
@@ -173,7 +213,8 @@ def waitlist_page(p, base, program):
     return _shell(f"Waitlist · {p.name}", inner)
 
 
-def checkout_page(p, pub_key, base, sold_out=False, program="", coupon_code="", discount_cents=0):
+def checkout_page(p, pub_key, base, sold_out=False, program="", coupon_code="",
+                  discount_cents=0, cohorts=None):
     if sold_out:
         return waitlist_page(p, base, program)
     is_ebook = getattr(p, "kind", "") == "ebook"
@@ -186,6 +227,7 @@ def checkout_page(p, pub_key, base, sold_out=False, program="", coupon_code="", 
         f"<h1 style='font-size:2rem;margin:12px 0 6px'>{p.name}</h1>"
         f"<p style='color:#4a5b68;margin-bottom:8px'>{(p.description or '')[:200]}</p>"
         f"{_price_block(p, discount_cents, coupon_code)}"
+        f"{_cohort_dates(cohorts)}"
         f"<label for='email'>{email_label}</label>"
         f"<input id='email' type='email' placeholder='you@example.com' required>"
         f"<div style='height:22px'></div>"

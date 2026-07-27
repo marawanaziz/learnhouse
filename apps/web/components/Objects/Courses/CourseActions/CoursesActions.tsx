@@ -1,11 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { removeCourse, startCourse } from '@services/courses/activity'
 import { revalidateTags } from '@services/utils/ts/requests'
 import { useRouter } from 'next/navigation'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
-import { getUriWithOrg } from '@services/config/config'
+import { getUriWithOrg, getAPIUrl } from '@services/config/config'
 import { getOffersByResource } from '@services/payments/offers'
-import { UserPen, ClockIcon, ArrowRight, BookOpen, UserPlus } from 'lucide-react'
+import { UserPen, ClockIcon, ArrowRight, BookOpen, UserPlus, Download } from 'lucide-react'
 import { OfferCard } from './OfferCard'
 import { applyForContributor } from '@services/courses/courses'
 import toast from 'react-hot-toast'
@@ -61,6 +61,19 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
   const [isContributeLoading, setIsContributeLoading] = useState(false)
   const { contributorStatus, refetch } = useContributorStatus(courseuuid)
   const [isProgressOpen, setIsProgressOpen] = useState(false)
+  // The cohort workbook lived only on the cohort record, so learners had no way
+  // to reach it from inside the course. Sits under Course Progress, where they
+  // already look for their materials.
+  const [workbook, setWorkbook] = useState<{ workbook_url: string; cohort?: string } | null>(null)
+  useEffect(() => {
+    if (!cleanCourseUuid) return
+    fetch(`${getAPIUrl()}bbu/cohorts/workbook?course_uuid=${cleanCourseUuid}`, {
+      credentials: 'include',
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setWorkbook(d && d.workbook_url ? d : null))
+      .catch(() => setWorkbook(null))
+  }, [cleanCourseUuid])
   const org = useOrg() as any
   const { isUserPartOfTheOrg } = useOrgMembership()
   const queryClient = useQueryClient()
@@ -374,6 +387,17 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
                   </div>
                 </button>
               </div>
+              {workbook && (
+                <a
+                  href={workbook.workbook_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 flex items-center gap-2 px-2 py-2 text-sm font-medium text-gray-900 hover:bg-neutral-50/50 rounded-lg transition-colors"
+                >
+                  <Download size={16} />
+                  <span>Download the course book</span>
+                </a>
+              )}
             </div>
           </div>
         </div>
