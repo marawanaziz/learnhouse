@@ -263,6 +263,19 @@ async def verify(request: Request, email: str = "", db_session: AsyncSession = D
     return out
 
 
+@router.get("/courses")
+async def list_courses(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Course id/name/uuid map. The cut-over puller needs numeric ids to build
+    [email, course_id] enrolment pairs, and names to match against the source."""
+    _check(request)
+    org = (await db_session.execute(select(Organization).where(Organization.slug == "bbu"))).scalars().first()
+    rows = (await db_session.execute(
+        select(Course).where(Course.org_id == org.id).order_by(Course.name)
+    )).scalars().all()
+    return {"count": len(rows), "courses": [
+        {"id": c.id, "name": c.name, "uuid": c.course_uuid, "public": c.public} for c in rows]}
+
+
 @router.post("/students")
 async def migrate_students(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     body = await request.json()
