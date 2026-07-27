@@ -285,12 +285,24 @@ def success_page(order, base):
             f"headers:{{'Content-Type':'application/json'}},"
             f"body:JSON.stringify({{session_id:'{sid}',name:n,phone:ph,password:p1,confirm:p2}})}})"
             f".then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})"
-            f".then(function(x){{if(x.ok){{m.style.color='#1e7d43';"
-            f"m.textContent='Account created — taking you to sign in...';"
-            f"setTimeout(function(){{window.location='{base}/auth/login';}},900);}}"
+            # Sign in through the app's OWN login route. Setting the API
+            # cookie server-side is not enough: a real login also issues
+            # LH_session, and without it the app renders logged-out and the
+            # course page comes up blank.
+            f".then(function(x){{if(!x.ok){{b.disabled=false;m.style.color='#b3261e';"
+            f"m.textContent=(x.d&&x.d.detail)||'Something went wrong.';return null;}}"
+            f"m.style.color='#1e7d43';m.textContent='Account created — signing you in...';"
+            f"var fd=new URLSearchParams();fd.append('username',x.d.email);"
+            f"fd.append('password',p1);"
+            f"return fetch('{base}/api/auth/login',{{method:'POST',credentials:'include',"
+            f"headers:{{'Content-Type':'application/x-www-form-urlencoded'}},"
+            f"body:fd.toString()}});}})"
+            f".then(function(r){{if(!r)return;"
+            f"if(r.ok){{window.location='{target}';}}"
             f"else{{b.disabled=false;m.style.color='#b3261e';"
-            f"m.textContent=(x.d&&x.d.detail)||'Something went wrong.';}}}})"
-            f".catch(function(){{b.disabled=false;m.textContent='Something went wrong.';}});}}"
+            f"m.textContent='Account created — please sign in at {base}/login';}}}})"
+            f".catch(function(){{b.disabled=false;m.style.color='#b3261e';"
+            f"m.textContent='Something went wrong.';}});}}"
             f"</script>"
         )
     # Reseller/bulk pack: link the buyer straight to their self-serve seat portal.
