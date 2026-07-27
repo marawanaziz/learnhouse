@@ -131,7 +131,14 @@ export default function MemberProfile({ userId, onClose }: { userId: number; onC
               <Card icon={<BadgeCheck size={18} />} title="Certificates" count={d.certificates?.length}>
                 {d.certificates?.length ? d.certificates.map((c: any, i: number) => (
                   <div key={i} className="flex items-center justify-between text-sm py-1">
-                    <span className="text-slate-700 truncate pr-2">{c.course}</span>
+                    {c.verify_url ? (
+                      <a href={c.verify_url} target="_blank" rel="noopener noreferrer"
+                        className="text-slate-700 truncate pr-2 hover:text-sky-700 hover:underline">
+                        {c.course}
+                      </a>
+                    ) : (
+                      <span className="text-slate-700 truncate pr-2">{c.course}</span>
+                    )}
                     <span className="text-xs text-slate-400 shrink-0">{c.issued}</span>
                   </div>
                 )) : <p className="text-sm text-slate-400">None.</p>}

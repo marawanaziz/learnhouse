@@ -260,8 +260,13 @@ async def profile(user_id: int, request: Request,
         course = None
         if cdef:
             course = (await db_session.execute(select(Course).where(Course.id == cdef.course_id))).scalars().first()
+        # uuid is what makes the row openable -- without it the profile can only
+        # print the course name, which is what Anna hit on the Jul 24 walkthrough
+        # ("she could just click on those certificates, right?").
         certificates.append({"course": (course.name if course else "Certificate"),
-                             "issued": (getattr(c, "created_at", "") or "")[:10]})
+                             "issued": (getattr(c, "created_at", "") or "")[:10],
+                             "uuid": c.user_certification_uuid,
+                             "verify_url": f"/orgs/bbu/certificates/{c.user_certification_uuid}/verify"})
 
     # --- credentials + CEU ---
     creds = (await db_session.execute(select(BBUCredential).where(
