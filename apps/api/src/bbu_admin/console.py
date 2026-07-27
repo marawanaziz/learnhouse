@@ -768,6 +768,9 @@ async def offers_list(request: Request, db_session: AsyncSession = Depends(get_d
         "cohort_program": p.cohort_program or "",
         "cohort_id": p.cohort_id,
         "seat_count": int(getattr(p, "seat_count", 0) or 0),
+        # so the team can see at a glance which e-books actually have a file
+        "asset_filename": getattr(p, "asset_filename", "") or "",
+        "has_file": bool(getattr(p, "asset_path", "")),
     } for p in rows]
 
 
