@@ -117,7 +117,7 @@ async def test_direct_checkout_redirects_to_stripe_and_preserves_tracking(
         )
     )
 
-    response = await payments_router.direct_checkout(1, request, db)
+    response = await payments_router.direct_checkout("1", request, db)
 
     assert response.status_code == 303
     assert response.headers["location"].startswith(
@@ -149,7 +149,7 @@ async def test_direct_checkout_sends_full_cohort_to_waitlist(
     )
 
     response = await payments_router.direct_checkout(
-        26,
+        "26",
         _request(
             path="/api/v1/bbu/checkout/26",
             query="coupon=WEBINAR-AGENCY&ref=CFD",
@@ -173,3 +173,22 @@ def test_direct_checkout_rejects_untrusted_cancel_destination():
         "https://birthandbabyuniversity.com/"
     )
 
+
+@pytest.mark.asyncio
+async def test_wordpress_checkout_slug_resolves_to_product(db, org):
+    product = BBUProduct(
+        id=1,
+        org_id=org.id,
+        name="Certified Birth Doula Training",
+        course_uuids="course_birth",
+        price_cents=55000,
+    )
+    db.add(product)
+    await db.commit()
+
+    product_id = await payments_router._resolve_checkout_product_id(
+        db,
+        "certified-birth-doula-training",
+    )
+
+    assert product_id == 1

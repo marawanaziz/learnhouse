@@ -3,7 +3,7 @@
 Endpoints (mounted at /api/v1/bbu):
   GET  /store                      BBU-branded storefront (HTML)
   GET  /buy/{course_uuid}          branded checkout landing for one course (HTML)
-  GET  /checkout/{product_id}      create a Stripe Session and redirect immediately
+  GET  /checkout/{product_ref}     create a Stripe Session and redirect immediately
   GET  /success                    post-payment confirmation (HTML)
   GET  /products                   JSON list of purchasable products
   POST /checkout                   create a Stripe Checkout Session -> {url}
@@ -17,6 +17,8 @@ import os
 import io
 import json
 import hashlib
+import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
@@ -108,6 +110,38 @@ async def _list_products(db: AsyncSession, org_id: int = 1):
         select(BBUProduct).where(BBUProduct.org_id == org_id, BBUProduct.public == True)  # noqa: E712
     )).scalars().all()
     return rows
+
+
+def _product_slug(name: str) -> str:
+    """Convert a product name to the public checkout slug used by WordPress."""
+    normalized = unicodedata.normalize("NFKD", name or "")
+    ascii_name = "".join(
+        char for char in normalized if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+
+
+async def _resolve_checkout_product_id(
+    db_session: AsyncSession,
+    product_ref: str,
+) -> int:
+    """Resolve either the legacy numeric id or a human-readable product slug."""
+    ref = (product_ref or "").strip()
+    if ref.isdigit():
+        return int(ref)
+
+    products = (
+        await db_session.execute(
+            select(BBUProduct).where(BBUProduct.org_id == 1)
+        )
+    ).scalars().all()
+    product = next(
+        (item for item in products if _product_slug(item.name) == ref),
+        None,
+    )
+    if not product or not product.id:
+        raise HTTPException(404, "Product not found")
+    return product.id
 
 
 
@@ -776,9 +810,9 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
     )
 
 
-@router.get("/checkout/{product_id}")
+@router.get("/checkout/{product_ref}")
 async def direct_checkout(
-    product_id: int,
+    product_ref: str,
     request: Request,
     db_session: AsyncSession = Depends(get_db_session),
 ):
@@ -790,6 +824,10 @@ async def direct_checkout(
     """
     coupon_code = (request.query_params.get("coupon") or "").strip()
     ref = (request.query_params.get("ref") or "").strip()
+    product_id = await _resolve_checkout_product_id(
+        db_session,
+        product_ref,
+    )
     result = await _create_checkout_session(
         request,
         db_session,
