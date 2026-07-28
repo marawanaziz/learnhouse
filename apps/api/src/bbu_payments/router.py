@@ -36,6 +36,7 @@ from src.db.courses.courses import Course
 from src.bbu_payments.models import BBUProduct, BBUOrder
 from src.bbu_cohorts.models import BBUCohort
 from src.bbu_payments.branding import store_page, checkout_page, success_page
+from src.bbu_payments.public_url import get_bbu_public_base_url
 from src.bbu_payments import affiliates as aff
 from src.bbu_payments import coupons as _coupon_svc
 
@@ -65,26 +66,7 @@ def _as_dict(obj):
 
 
 def _base_url(request: Request) -> str:
-    """Return the public origin for BBU checkout pages and Stripe redirects.
-
-    The primary custom domain remains the default.  A temporary/public fallback
-    can be declared through ``BBU_FALLBACK_PUBLIC_DOMAINS`` (a comma-separated
-    list of hostnames) while DNS changes propagate.  We intentionally do not
-    reflect an arbitrary Host header here: this URL is sent to Stripe as the
-    success/cancel destination.
-    """
-    canonical_domain = os.environ.get("LEARNHOUSE_DOMAIN") or request.url.netloc
-    request_host = request.headers.get("host") or request.url.netloc
-    request_host = request_host.split(",", 1)[0]
-    request_host = request_host.strip().lower().split(":", 1)[0]
-    fallback_domains = {
-        domain.strip().lower()
-        for domain in os.environ.get("BBU_FALLBACK_PUBLIC_DOMAINS", "").split(",")
-        if domain.strip()
-    }
-    domain = request_host if request_host in fallback_domains else canonical_domain
-    scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
-    return f"{scheme}://{domain}"
+    return get_bbu_public_base_url(request)
 
 
 async def _list_products(db: AsyncSession, org_id: int = 1):

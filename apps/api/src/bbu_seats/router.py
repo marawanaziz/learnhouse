@@ -17,6 +17,7 @@ from src.db.users import User
 from src.db.usergroups import UserGroup
 from src.db.usergroup_user import UserGroupUser
 from src.bbu_seats.models import BBUSeatCode
+from src.bbu_payments.public_url import get_bbu_public_base_url
 
 router = APIRouter()
 ADMIN_KEY = os.environ.get("BBU_MIGRATION_KEY") or os.environ.get("BBU_AFFILIATE_ADMIN_KEY", "")
@@ -92,9 +93,7 @@ async def generate(request: Request, db_session: AsyncSession = Depends(get_db_s
         db_session, org_id, count, course_uuids,
         owner_email=(b.get("owner_email") or ""), product_id=product_id,
         batch_label=b.get("batch_label") or "")
-    _domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
-    _scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
-    portal_url = f"{_scheme}://{_domain}/api/v1/bbu/seats/portal?token={r['owner_token']}"
+    portal_url = f"{_base(request)}/api/v1/bbu/seats/portal?token={r['owner_token']}"
     return {"batch_label": r["batch_label"], "count": r["count"], "course_uuids": course_uuids,
             "codes": r["codes"], "owner_token": r["owner_token"], "portal_url": portal_url}
 
@@ -217,10 +216,7 @@ from src.bbu_seats import service as seat_svc  # noqa: E402
 
 
 def _base(request: Request) -> str:
-    # https-aware base behind the Railway proxy (mirrors bbu_payments._base_url)
-    domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
-    scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
-    return f"{scheme}://{domain}"
+    return get_bbu_public_base_url(request)
 
 
 @router.get("/portal", response_class=HTMLResponse)

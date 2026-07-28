@@ -28,6 +28,7 @@ from src.bbu_payments.models import (
 )
 from sqlalchemy import func as _func
 from src.bbu_payments import affiliates as aff
+from src.bbu_payments.public_url import get_bbu_public_base_url
 from src.bbu_admin.auth import authorize_admin
 from src.bbu_payments.affiliate_branding import (
     join_page, portal_page, admin_page,
@@ -51,9 +52,7 @@ def _check_admin(request: Request, body: dict | None = None):
 
 
 def _base_url(request: Request) -> str:
-    domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
-    scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
-    return f"{scheme}://{domain}"
+    return get_bbu_public_base_url(request)
 
 
 def _now():

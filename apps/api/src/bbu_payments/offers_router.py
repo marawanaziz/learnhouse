@@ -35,6 +35,7 @@ from src.bbu_payments import audiences as audience_svc
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.helpers import merge_course_uuids
 from src.bbu_payments.models import BBUCoupon, BBUOrder, BBUProduct
+from src.bbu_payments.public_url import get_bbu_public_base_url
 from src.bbu_payments.router import _as_dict, _fulfill
 from src.core.events.database import get_db_session
 from src.db.courses.courses import Course
@@ -751,6 +752,4 @@ async def validate_coupon(org_id: int, offer_uuid: str, request: Request,
 
 
 def _base_from_request(request: Request) -> str:
-    domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
-    scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
-    return f"{scheme}://{domain}"
+    return get_bbu_public_base_url(request)
