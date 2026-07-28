@@ -90,7 +90,8 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
               textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{expirationDate || ''}</div>
             {/* CREDENTIAL ID — rule centred at 39.5%, one row lower */}
             <div style={{ position: 'absolute', bottom: sit(RULE.certRow2), left: '30.7%', width: '17.6%',
-              textAlign: 'center', fontSize: '1.5cqw', color: '#113d5d', letterSpacing: '0.02em' }}>{certificateId || ''}</div>
+              textAlign: 'center', fontSize: '1.2cqw', color: '#113d5d',
+              letterSpacing: '0.01em', whiteSpace: 'nowrap' }}>{certificateId || ''}</div>
           </>
         ) : (
           <>
