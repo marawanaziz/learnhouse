@@ -266,7 +266,12 @@ async def profile(user_id: int, request: Request,
         certificates.append({"course": (course.name if course else "Certificate"),
                              "issued": (getattr(c, "created_at", "") or "")[:10],
                              "uuid": c.user_certification_uuid,
-                             "verify_url": f"/orgs/bbu/certificates/{c.user_certification_uuid}/verify"})
+                             # /certificates/{id}/verify -- NOT /orgs/{slug}/...
+                             # The page lives under an (withmenu) route group, which
+                             # is a Next.js layout grouping and contributes no URL
+                             # segment. Verified against the live app: the /orgs form
+                             # 404s.
+                             "verify_url": f"/certificates/{c.user_certification_uuid}/verify"})
 
     # --- credentials + CEU ---
     creds = (await db_session.execute(select(BBUCredential).where(
