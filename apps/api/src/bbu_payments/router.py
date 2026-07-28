@@ -933,6 +933,12 @@ async def webhook(request: Request, db_session: AsyncSession = Depends(get_db_se
     etype = event["type"] if isinstance(event, dict) else event.type
     data = _as_dict(event["data"]["object"] if isinstance(event, dict) else event.data.object)
     if etype == "checkout.session.completed":
+        # Delayed methods can complete Checkout before money has settled.  Do
+        # not grant course access until Stripe marks the Session paid; the
+        # async-success event below fulfills those purchases later.
+        if data.get("payment_status") in ("paid", "no_payment_required"):
+            await _fulfill(db_session, data)
+    elif etype == "checkout.session.async_payment_succeeded":
         await _fulfill(db_session, data)
     elif etype == "charge.refunded":
         pi = data.get("payment_intent")
