@@ -1,6 +1,13 @@
 """Checkout cohort availability copy stays aligned with real capacity."""
 
-from src.bbu_payments.branding import _cohort_dates
+from src.bbu_payments.branding import _cohort_dates, _shell
+
+
+def test_bbu_public_pages_include_the_existing_clarity_project():
+    html = _shell("Checkout", "<main>content</main>")
+
+    assert "https://www.clarity.ms/tag/" in html
+    assert "xn0xh5wcb2" in html
 
 
 def test_unlimited_cohort_has_no_numeric_inventory_copy():

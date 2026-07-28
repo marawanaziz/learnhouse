@@ -21,6 +21,16 @@ _FONTS = (
     "family=League+Spartan:wght@400;500;600;700&family=Open+Sans:wght@400;500;600&display=swap' rel='stylesheet'>"
 )
 
+# Use the existing Birth & Baby University Clarity project so public checkout
+# sessions appear alongside the webinar funnel sessions.
+_CLARITY = (
+    "<script type='text/javascript'>(function(c,l,a,r,i,t,y){"
+    "c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};"
+    "t=l.createElement(r);t.async=1;t.src='https://www.clarity.ms/tag/'+i;"
+    "y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);"
+    "})(window,document,'clarity','script','xn0xh5wcb2');</script>"
+)
+
 _BASE_CSS = f"""
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:'Open Sans',system-ui,sans-serif;color:{NAVY};background:{PAPER};line-height:1.6}}
@@ -65,7 +75,7 @@ def _shell(title, inner, payment=True):
     return (
         f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{title} · Birth &amp; Baby University</title>{_FONTS}"
+        f"<title>{title} · Birth &amp; Baby University</title>{_FONTS}{_CLARITY}"
         f"<style>{_BASE_CSS}</style></head><body>"
         f"<div class='nav'><div class='wrap'><img src='{LOGO}' alt='Birth & Baby University'></div></div>"
         f"{inner}"
