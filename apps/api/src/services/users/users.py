@@ -3,30 +3,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
-from fastapi import HTTPException, Request, UploadFile, status
+
 import redis
-from sqlmodel import select, func
+from fastapi import HTTPException, Request, UploadFile, status
+from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from config.config import get_learnhouse_config
-from src.security.features_utils.usage import (
-    check_limits_with_usage,
-    increase_feature_usage,
-)
 from src.core.deployment_mode import get_deployment_mode
-from src.services.users.usergroups import add_users_to_usergroup
-from src.services.users.emails import (
-    send_account_creation_email,
-)
-from src.services.orgs.invites import get_invite_code
-from src.services.users.avatars import upload_avatar
-from src.db.roles import Role, RoleRead
-from src.security.rbac.rbac import (
-    authorization_verify_based_on_roles_and_authorship,
-    authorization_verify_if_user_is_anon,
-)
 from src.db.organization_config import OrganizationConfig
 from src.db.organizations import Organization, OrganizationRead
-from src.services.orgs.orgs import get_org_default_language
+from src.db.roles import Role, RoleRead
+from src.db.user_organizations import UserOrganization
 from src.db.users import (
     AnonymousUser,
     InternalUser,
@@ -40,12 +28,26 @@ from src.db.users import (
     UserUpdate,
     UserUpdatePassword,
 )
-from src.db.user_organizations import UserOrganization
+from src.security.features_utils.usage import (
+    check_limits_with_usage,
+    increase_feature_usage,
+)
 from src.security.rbac.constants import ADMIN_ROLE_ID
+from src.security.rbac.rbac import (
+    authorization_verify_based_on_roles_and_authorship,
+    authorization_verify_if_user_is_anon,
+)
 from src.security.security import security_hash_password, security_verify_password
-from src.services.security.password_validation import validate_password_complexity
-from src.services.analytics.analytics import track
 from src.services.analytics import events as analytics_events
+from src.services.analytics.analytics import track
+from src.services.orgs.invites import get_invite_code
+from src.services.orgs.orgs import get_org_default_language
+from src.services.security.password_validation import validate_password_complexity
+from src.services.users.avatars import upload_avatar
+from src.services.users.emails import (
+    send_account_creation_email,
+)
+from src.services.users.usergroups import add_users_to_usergroup
 from src.services.webhooks.dispatch import dispatch_webhooks
 
 
@@ -57,6 +59,7 @@ async def create_user(
     org_id: int,
     is_oauth: bool = False,
     signup_provider: str = "email",
+    assign_bbu_audience: bool = True,
 ):
     # Validate password complexity (skip for OAuth users who have empty passwords)
     if user_object.password and not is_oauth:
@@ -149,6 +152,16 @@ async def create_user(
     await db_session.commit()
     await db_session.refresh(user_organization)
 
+    if assign_bbu_audience:
+        from src.bbu_migration.registration import assign_registration_audience
+
+        await assign_registration_audience(
+            db_session,
+            user.id or 0,
+            org_id,
+            user.extra_metadata,
+        )
+
     user_read = UserRead.model_validate(user)
 
     await increase_feature_usage("members", org_id, db_session)
@@ -217,7 +230,17 @@ async def create_user_with_invite(
 
 
 
-    user = await create_user(request, db_session, current_user, user_object, org_id, signup_provider="invite")
+    user = await create_user(
+        request,
+        db_session,
+        current_user,
+        user_object,
+        org_id,
+        signup_provider="invite",
+        # A group-linked invite is itself the audience decision. Do not also
+        # put dedicated Bold/CFD signups into the public Family group.
+        assign_bbu_audience=False,
+    )
 
     # Check if invite code contains UserGroup
     if inviteCode.get("usergroup_id"): # type: ignore

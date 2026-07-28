@@ -29,6 +29,7 @@ interface Offer {
   benefits: string
   payments_group_id: number | null
   category?: string
+  automatic_discount_percent?: number
   included_resources: Resource[]
 }
 
@@ -41,7 +42,14 @@ const CATEGORY_ORDER = [
 interface StoreProps {
   orgslug: string
   offers: Offer[]
+  activeAudience: string
 }
+
+const STORE_TABS = [
+  { slug: 'family', label: 'Courses for Families' },
+  { slug: 'professional', label: 'Courses for Doulas' },
+  { slug: 'spanish_family', label: 'Spanish Classes' },
+]
 
 function stripTypePrefix(uuid: string): string {
   return uuid.replace(/^[a-z]+_/, '')
@@ -102,6 +110,10 @@ function OfferCard({ offer, orgslug, orgUuid, position }: { offer: Offer; orgslu
   const benefits = offer.benefits ? offer.benefits.split(',').map(b => b.trim()).filter(Boolean) : []
   const resources = offer.included_resources ?? []
   const { track } = useLHAnalytics('learner')
+  const discountPercent = Number(offer.automatic_discount_percent || 0)
+  const displayAmount = discountPercent
+    ? offer.amount * (1 - discountPercent / 100)
+    : offer.amount
 
   // Full-bleed cover: the first included course that has a thumbnail.
   const coverRes = resources.find(r => r.resource_type === 'course' && r.thumbnail_image)
@@ -202,8 +214,18 @@ function OfferCard({ offer, orgslug, orgUuid, position }: { offer: Offer; orgslu
           {/* Price + CTA */}
           <div className="mt-auto pt-3 border-t border-gray-100 flex items-center justify-between">
             <div>
+              {discountPercent > 0 && (
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="text-xs text-gray-400 line-through">
+                    {new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency }).format(offer.amount)}
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 rounded-full px-1.5 py-0.5">
+                    {discountPercent}% CFD access
+                  </span>
+                </div>
+              )}
               <div className={`text-xl font-black ${isSubscription ? 'text-indigo-700' : 'text-gray-900'}`}>
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency }).format(offer.amount)}
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency }).format(displayAmount)}
               </div>
               {offer.price_type === 'customer_choice' && (
                 <p className="text-xs text-gray-400 leading-none">min.</p>
@@ -227,7 +249,7 @@ function OfferCard({ offer, orgslug, orgUuid, position }: { offer: Offer; orgslu
   )
 }
 
-function Store({ orgslug, offers }: StoreProps) {
+function Store({ orgslug, offers, activeAudience }: StoreProps) {
   const org = useOrg() as any
 
   useTrackView(AnalyticsEvent.StoreViewed, { offers_count: offers.length, is_empty: offers.length === 0 }, true, 'learner')
@@ -240,21 +262,44 @@ function Store({ orgslug, offers }: StoreProps) {
             <ShoppingBag size={18} className="text-gray-800" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight">Store</h1>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight">Access More Courses</h1>
             {org?.name && (
               <p className="text-sm text-gray-400 mt-0.5">Unlock premium content from {org.name}</p>
             )}
           </div>
         </div>
 
+        <nav
+          aria-label="Course catalogue"
+          className="mb-6 flex flex-wrap gap-2 rounded-2xl bg-white p-2 nice-shadow"
+        >
+          {STORE_TABS.map(tab => {
+            const active = tab.slug === activeAudience
+            return (
+              <Link
+                key={tab.slug}
+                href={getUriWithOrg(orgslug, `/store?audience=${tab.slug}`)}
+                aria-current={active ? 'page' : undefined}
+                className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+                  active
+                    ? 'bg-[#113d5d] text-white'
+                    : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                {tab.label}
+              </Link>
+            )
+          })}
+        </nav>
+
         {offers.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center mb-4 nice-shadow">
               <ShoppingBag size={28} className="text-gray-300" strokeWidth={1.5} />
             </div>
-            <h2 className="text-xl font-bold text-gray-600 mb-2">No offers available yet</h2>
+            <h2 className="text-xl font-bold text-gray-600 mb-2">You already have access to these courses</h2>
             <p className="text-gray-400 text-sm max-w-sm">
-              Check back soon — offers and subscriptions will appear here when they become available.
+              Try another tab to browse courses for a different audience.
             </p>
           </div>
         ) : (

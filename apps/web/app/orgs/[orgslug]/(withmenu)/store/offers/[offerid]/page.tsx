@@ -1,9 +1,9 @@
 import { Metadata } from 'next'
 import { getOrganizationContextInfo } from '@services/organizations/orgs'
-import { getCanonicalUrl, getOrgSeoConfig, buildPageTitle, buildBreadcrumbJsonLd } from '@/lib/seo/utils'
+import { getOrgSeoConfig, buildPageTitle, buildBreadcrumbJsonLd } from '@/lib/seo/utils'
 import { getServerCanonicalUrl } from '@/lib/seo/utils.server'
 import { JsonLd } from '@components/SEO/JsonLd'
-import { getPublicOffer, getPublicOffers } from '@services/payments/offers'
+import { getPublicOffer, getStorefrontOffers } from '@services/payments/offers'
 import { getServerSession } from '@/lib/auth/server'
 import OfferDetailClient from './offer-detail'
 
@@ -17,7 +17,9 @@ export async function generateMetadata({ params }: { params: PageParams }): Prom
   try {
     const result = await getPublicOffer(org.id, offerid)
     offerName = result?.data?.name || 'Offer'
-  } catch {}
+  } catch {
+    offerName = 'Offer'
+  }
   const title = buildPageTitle(offerName, org?.name || 'Organization', seoConfig)
   return {
     title,
@@ -34,17 +36,23 @@ export default async function OfferPage({ params }: { params: PageParams }) {
 
   let offer: any = null
   try {
-    const result = await getPublicOffer(org.id, offerid)
+    const result = await getPublicOffer(org.id, offerid, access_token ?? '')
     offer = result?.data ?? result
-  } catch {}
+  } catch {
+    offer = null
+  }
 
   // Upsells: other offers from the same org (excluding this one), max 3.
   let upsells: any[] = []
   try {
-    const all = await getPublicOffers(org.id)
-    const list = all?.success && Array.isArray(all.data) ? all.data : []
+    const all = await getStorefrontOffers(org.id, access_token ?? '')
+    const list = all?.success && Array.isArray(all.data?.offers)
+      ? all.data.offers
+      : []
     upsells = list.filter((o: any) => o.offer_uuid !== offerid).slice(0, 3)
-  } catch {}
+  } catch {
+    upsells = []
+  }
 
   const breadcrumbJsonLd = buildBreadcrumbJsonLd([
     { name: 'Home', url: await getServerCanonicalUrl(orgslug, '/') },

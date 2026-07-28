@@ -15,7 +15,9 @@ Two rules keep it safe:
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.bbu_payments.models import BBUProduct, BBUAudience
+from src.bbu_payments.models import BBUAudience, BBUProduct
+
+RETAIL_AUDIENCES = {"family", "professional", "spanish_family"}
 
 
 def tags_of(product: BBUProduct) -> list:
@@ -47,6 +49,66 @@ async def slugs_for_user(db: AsyncSession, user_id: int, org_id: int = 1) -> lis
         UserGroupUser.user_id == user_id))).scalars().all()}
     slugs = [a.slug for a in auds if a.usergroup_id and a.usergroup_id in mine]
     return slugs or [a.slug for a in auds if a.is_public_default]
+
+
+async def preferred_store_slug(
+    db: AsyncSession,
+    user_id: int,
+    org_id: int = 1,
+) -> str:
+    """Map cohort audiences to the retail tab they should see by default."""
+    slugs = set(await slugs_for_user(db, user_id, org_id))
+    if "professional" in slugs or "bold_professional" in slugs:
+        return "professional"
+    if "spanish_family" in slugs or "bold_spanish_family" in slugs:
+        return "spanish_family"
+    return "family"
+
+
+async def exclude_owned_products(
+    db: AsyncSession,
+    products: list,
+    user_id: int,
+    org_id: int = 1,
+) -> list:
+    """Hide course offers whose complete course set is already unlocked."""
+    if not user_id:
+        return products
+
+    from src.db.usergroup_resources import UserGroupResource
+    from src.db.usergroup_user import UserGroupUser
+
+    group_ids = (
+        await db.execute(
+            select(UserGroupUser.usergroup_id).where(
+                UserGroupUser.user_id == user_id,
+                UserGroupUser.org_id == org_id,
+            )
+        )
+    ).scalars().all()
+    if not group_ids:
+        return products
+    resource_uuids = set(
+        (
+            await db.execute(
+                select(UserGroupResource.resource_uuid).where(
+                    UserGroupResource.usergroup_id.in_(group_ids)
+                )
+            )
+        ).scalars().all()
+    )
+
+    visible = []
+    for product in products:
+        course_uuids = {
+            item.strip()
+            for item in (product.course_uuids or "").split(",")
+            if item.strip()
+        }
+        if course_uuids and course_uuids.issubset(resource_uuids):
+            continue
+        visible.append(product)
+    return visible
 
 
 def visible_to(product: BBUProduct, slugs: list) -> bool:

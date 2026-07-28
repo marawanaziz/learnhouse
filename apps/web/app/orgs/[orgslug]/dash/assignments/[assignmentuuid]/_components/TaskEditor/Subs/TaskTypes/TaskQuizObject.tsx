@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query/keys';
 import { applyManualGrade } from './applyManualGrade';
+import { registerAssignmentDraftSave } from '@/lib/assignments/draftSaveRegistry';
 
 type QuizSchema = {
     questionText: string;
@@ -152,10 +153,22 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
     });
     const [showSavingDisclaimer, setShowSavingDisclaimer] = useState<boolean>(false);
     const [assignmentTaskOutsideProvider, setAssignmentTaskOutsideProvider] = useState<any>(null);
+    const userSubmissionsRef = React.useRef<QuizSubmitSchema>(userSubmissions);
+    const questionsRef = React.useRef<QuizSchema[]>(questions);
+    const saveQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+
+    useEffect(() => {
+        userSubmissionsRef.current = userSubmissions;
+    }, [userSubmissions]);
+
+    useEffect(() => {
+        questionsRef.current = questions;
+    }, [questions]);
 
     async function chooseOption(qIndex: number, oIndex: number) {
-        const updatedSubmissions = [...userSubmissions.submissions];
-        const question = questions[qIndex];
+        const currentUserSubmissions = userSubmissionsRef.current;
+        const updatedSubmissions = [...currentUserSubmissions.submissions];
+        const question = questionsRef.current[qIndex];
         const option = question?.options[oIndex];
 
         if (!question || !option) return;
@@ -175,10 +188,12 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
             updatedSubmissions[submissionIndex].answer = !updatedSubmissions[submissionIndex].answer;
         }
 
-        setUserSubmissions({
-            ...userSubmissions,
+        const nextUserSubmissions = {
+            ...currentUserSubmissions,
             submissions: updatedSubmissions,
-        });
+        };
+        userSubmissionsRef.current = nextUserSubmissions;
+        setUserSubmissions(nextUserSubmissions);
     }
 
     // Used only by grading view — student view hydrates from useAssignments() context
@@ -210,10 +225,12 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
         if (!assignmentTaskUUID) return;
         const sub = taskSubmissionsMap?.[assignmentTaskUUID] ?? null;
         if (sub) {
-            setUserSubmissions({
+            const hydratedSubmission = {
                 ...sub.task_submission,
                 assignment_task_submission_uuid: sub.assignment_task_submission_uuid,
-            });
+            };
+            userSubmissionsRef.current = hydratedSubmission;
+            setUserSubmissions(hydratedSubmission);
             setInitialUserSubmissions({
                 ...sub.task_submission,
                 assignment_task_submission_uuid: sub.assignment_task_submission_uuid,
@@ -229,57 +246,113 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
 
 
 
-    const submitFC = async () => {
-        // Ensure all questions and options have submissions
-        const updatedSubmissions: Submission[] = questions.flatMap(question => {
-            return question.options.map(option => {
-                const existingSubmission = userSubmissions.submissions.find(
-                    submission => submission.questionUUID === question.questionUUID && submission.optionUUID === option.optionUUID
-                );
-                
-                return existingSubmission || {
-                    questionUUID: question.questionUUID || '',
-                    optionUUID: option.optionUUID || '',
-                    answer: false // Mark unsubmitted options as false
-                };
-            });
-        });
-
-        // Update userSubmissions with the complete set of submissions
-        const updatedUserSubmissions: QuizSubmitSchema = {
-            ...userSubmissions,
-            submissions: updatedSubmissions
-        };
-
-        // Save the quiz to the server
-        const values = {
-            assignment_task_submission_uuid: userSubmissions.assignment_task_submission_uuid || null,
-            task_submission: updatedUserSubmissions,
-            grade: 0,
-            task_submission_grade_feedback: '',
-        };
-
-        if (assignmentTaskUUID) {
-            const res = await handleAssignmentTaskSubmission(values, assignmentTaskUUID, assignment.assignment_object.assignment_uuid, access_token);
-            if (res) {
-                assignmentTaskStateHook({
-                    type: 'reload',
-                });
-                toast.success(t('dashboard.assignments.editor.toasts.task_saved'));
-                setShowSavingDisclaimer(false);
-                // Update userSubmissions with the returned UUID for future updates
-                const updatedUserSubmissionsWithUUID = {
-                    ...updatedUserSubmissions,
-                    assignment_task_submission_uuid: res.data?.assignment_task_submission_uuid || userSubmissions.assignment_task_submission_uuid
-                };
-                setUserSubmissions(updatedUserSubmissionsWithUUID);
-                setInitialUserSubmissions(updatedUserSubmissionsWithUUID);
-                queryClient.invalidateQueries({ queryKey: queryKeys.assignments.taskSubmission(assignment.assignment_object.assignment_uuid) });
-            } else {
-                toast.error(t('dashboard.assignments.editor.toasts.task_save_error'));
-            }
+    const submitFC = React.useCallback(async () => {
+        if (!assignmentTaskUUID || !assignment?.assignment_object?.assignment_uuid) {
+            return;
         }
-    };
+
+        const queuedSave = saveQueueRef.current
+            .catch(() => undefined)
+            .then(async () => {
+                const currentUserSubmissions = userSubmissionsRef.current;
+                const currentQuestions = questionsRef.current;
+
+                // Ensure every option is represented. The server grades both
+                // selected (true) and unselected (false) answers.
+                const updatedSubmissions: Submission[] = currentQuestions.flatMap(question => {
+                    return question.options.map(option => {
+                        const existingSubmission = currentUserSubmissions.submissions.find(
+                            submission => submission.questionUUID === question.questionUUID && submission.optionUUID === option.optionUUID
+                        );
+
+                        return existingSubmission || {
+                            questionUUID: question.questionUUID || '',
+                            optionUUID: option.optionUUID || '',
+                            answer: false
+                        };
+                    });
+                });
+
+                const updatedUserSubmissions: QuizSubmitSchema = {
+                    ...currentUserSubmissions,
+                    submissions: updatedSubmissions
+                };
+                const values = {
+                    assignment_task_submission_uuid: currentUserSubmissions.assignment_task_submission_uuid || null,
+                    task_submission: updatedUserSubmissions,
+                    grade: 0,
+                    task_submission_grade_feedback: '',
+                };
+
+                const res = await handleAssignmentTaskSubmission(
+                    values,
+                    assignmentTaskUUID,
+                    assignment.assignment_object.assignment_uuid,
+                    access_token
+                );
+                if (!res.success) {
+                    throw new Error(res.data?.detail || 'Quiz answers could not be saved');
+                }
+
+                assignmentTaskStateHook({ type: 'reload' });
+                setShowSavingDisclaimer(false);
+                const savedSubmissionWithUUID = {
+                    ...updatedUserSubmissions,
+                    assignment_task_submission_uuid:
+                        res.data?.assignment_task_submission_uuid ||
+                        currentUserSubmissions.assignment_task_submission_uuid
+                };
+                // A learner can click again while this request is in flight.
+                // Preserve that newer local answer set and only merge in the
+                // server UUID; the changed-vs-saved comparison will schedule
+                // the follow-up save instead of reverting their click.
+                const latestSubmissionWithUUID = {
+                    ...userSubmissionsRef.current,
+                    assignment_task_submission_uuid:
+                        savedSubmissionWithUUID.assignment_task_submission_uuid
+                };
+                userSubmissionsRef.current = latestSubmissionWithUUID;
+                setUserSubmissions(latestSubmissionWithUUID);
+                setInitialUserSubmissions(savedSubmissionWithUUID);
+                queryClient.invalidateQueries({
+                    queryKey: queryKeys.assignments.taskSubmission(
+                        assignment.assignment_object.assignment_uuid
+                    )
+                });
+            });
+
+        saveQueueRef.current = queuedSave;
+
+        try {
+            await queuedSave;
+        } catch (error) {
+            toast.error(t('dashboard.assignments.editor.toasts.task_save_error'));
+            throw error;
+        }
+    }, [
+        access_token,
+        assignment,
+        assignmentTaskStateHook,
+        assignmentTaskUUID,
+        queryClient,
+        t,
+    ]);
+
+    useEffect(() => {
+        if (
+            view !== 'student' ||
+            !assignmentTaskUUID ||
+            !assignment?.assignment_object?.assignment_uuid
+        ) {
+            return;
+        }
+
+        return registerAssignmentDraftSave(
+            assignment.assignment_object.assignment_uuid,
+            assignmentTaskUUID,
+            submitFC
+        );
+    }, [assignment, assignmentTaskUUID, submitFC, view]);
 
     /* STUDENT VIEW CODE */
 
@@ -292,7 +365,9 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
         const hasChanges = JSON.stringify(initialUserSubmissions.submissions) !== JSON.stringify(userSubmissions.submissions);
         if (!hasChanges) return;
         if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-        autoSaveTimer.current = setTimeout(() => { submitFC(); }, 800);
+        autoSaveTimer.current = setTimeout(() => {
+            submitFC().catch(() => undefined);
+        }, 800);
         return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userSubmissions]);

@@ -5,7 +5,10 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { Loader2, AlertTriangle, ShieldAlert } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth, validateOAuthState } from '@components/Contexts/AuthContext'
-import { getLEARNHOUSE_DOMAIN_VAL } from '@services/config/config'
+import {
+  getLEARNHOUSE_DOMAIN_VAL,
+  getLEARNHOUSE_TOP_DOMAIN_VAL,
+} from '@services/config/config'
 
 export default function GoogleCallbackPage() {
   const searchParams = useSearchParams()
@@ -70,6 +73,8 @@ export default function GoogleCallbackPage() {
 
       // Get org_id from cookie if set
       let orgId: number | undefined
+      let bbuAudience: 'family' | 'professional' | undefined
+      let bbuInviteCode: string | undefined
       try {
         const cookies = document.cookie.split(';')
         for (const cookie of cookies) {
@@ -79,11 +84,31 @@ export default function GoogleCallbackPage() {
             if (isNaN(orgId)) {
               orgId = undefined
             }
-            break
+          }
+          if (
+            name === 'LH_bbu_audience' &&
+            (value === 'family' || value === 'professional')
+          ) {
+            bbuAudience = value
+          }
+          if (name === 'LH_bbu_invite_code' && value) {
+            bbuInviteCode = value
           }
         }
       } catch {
         // Ignore cookie parsing errors
+      }
+      if (bbuAudience) {
+        const topDomain = getLEARNHOUSE_TOP_DOMAIN_VAL()
+        const domainAttr = topDomain === 'localhost' ? '' : `; domain=.${topDomain}`
+        const secureAttr = window.location.protocol === 'https:' ? '; secure' : ''
+        document.cookie = `LH_bbu_audience=; path=/; Max-Age=0; SameSite=Lax${secureAttr}${domainAttr}`
+      }
+      if (bbuInviteCode) {
+        const topDomain = getLEARNHOUSE_TOP_DOMAIN_VAL()
+        const domainAttr = topDomain === 'localhost' ? '' : `; domain=.${topDomain}`
+        const secureAttr = window.location.protocol === 'https:' ? '; secure' : ''
+        document.cookie = `LH_bbu_invite_code=; path=/; Max-Age=0; SameSite=Lax${secureAttr}${domainAttr}`
       }
 
       try {
@@ -112,6 +137,12 @@ export default function GoogleCallbackPage() {
           oauthCallbackUrl.searchParams.set('redirect_uri', oauthRedirectUri)
           if (orgId) {
             oauthCallbackUrl.searchParams.set('org_id', orgId.toString())
+          }
+          if (bbuAudience) {
+            oauthCallbackUrl.searchParams.set('bbu_audience', bbuAudience)
+          }
+          if (bbuInviteCode) {
+            oauthCallbackUrl.searchParams.set('invite_code', bbuInviteCode)
           }
 
           const backendResponse = await fetch(oauthCallbackUrl.toString(), {
@@ -180,9 +211,11 @@ export default function GoogleCallbackPage() {
         }
 
         // Call Next.js API route to ensure cookies are set properly
-        const oauthUrl = orgId
-          ? `/api/auth/oauth?org_id=${orgId}`
-          : '/api/auth/oauth'
+        const oauthParams = new URLSearchParams()
+        if (orgId) oauthParams.set('org_id', orgId.toString())
+        if (bbuAudience) oauthParams.set('bbu_audience', bbuAudience)
+        if (bbuInviteCode) oauthParams.set('invite_code', bbuInviteCode)
+        const oauthUrl = `/api/auth/oauth${oauthParams.size ? `?${oauthParams}` : ''}`
 
         const oauthResponse = await fetch(oauthUrl, {
           method: 'POST',

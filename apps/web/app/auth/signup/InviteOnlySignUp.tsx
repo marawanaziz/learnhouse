@@ -113,6 +113,7 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
       const domainAttr = topDomain === 'localhost' ? '' : `; domain=.${topDomain}`;
       document.cookie = `LH_oauth_orgslug=${org.slug}${baseAttributes}${domainAttr}`;
       document.cookie = `LH_oauth_org_id=${org.id}${baseAttributes}${domainAttr}`;
+      document.cookie = `LH_bbu_invite_code=${props.inviteCode}${baseAttributes}${domainAttr}`;
     }
     // Use absolute URL with current origin for custom domain support
     signIn('google', { callbackUrl: `${window.location.origin}/redirect_from_auth` });

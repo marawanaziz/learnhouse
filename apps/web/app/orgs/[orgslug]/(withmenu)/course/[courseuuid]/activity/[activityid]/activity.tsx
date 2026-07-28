@@ -41,6 +41,7 @@ import ActivityIndicators from '@components/Pages/Courses/ActivityIndicators'
 import UserAvatar from '@components/Objects/UserAvatar'
 import { useTranslation } from 'react-i18next'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
+import { flushAssignmentDraftSaves } from '@/lib/assignments/draftSaveRegistry'
 
 const ReactConfetti = dynamic(() => import('react-confetti'), { ssr: false })
 
@@ -1606,13 +1607,20 @@ function AssignmentTools(props: {
   const queryClient = useQueryClient();
   const [gradeData, setGradeData] = React.useState<any>(null);
   const [isGradeModalOpen, setIsGradeModalOpen] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const { width: windowWidth, height: windowHeight } = useWindowSize();
   // Ensures the auto-open-on-mount logic only fires once per page view,
   // so the modal doesn't pop back open every time gradeData refreshes.
   const hasAutoOpenedRef = React.useRef(false);
 
   const submitForGradingUI = async () => {
-    if (props.assignment) {
+    if (props.assignment && !isSubmitting) {
+      setIsSubmitting(true)
+      try {
+        // Quiz answers auto-save after a short debounce. Flush the registered
+        // task drafts before the final request so grading cannot race ahead
+        // of the learner's last click.
+        await flushAssignmentDraftSaves(props.assignment.assignment_uuid)
       const res = await submitAssignmentForGrading(
         props.assignment?.assignment_uuid,
         session.data?.tokens?.access_token
@@ -1627,6 +1635,11 @@ function AssignmentTools(props: {
       }
       else {
         toast.error(t('assignments.failed_submit_assignment'))
+      }
+      } catch (_error) {
+        toast.error(t('assignments.failed_submit_assignment'))
+      } finally {
+        setIsSubmitting(false)
       }
     }
   }
@@ -1720,7 +1733,9 @@ function AssignmentTools(props: {
           <div className="bg-[#113d5d] hover:bg-[#0d3350] hover:scale-[1.02] rounded-xl px-8 py-4 nice-shadow flex items-center gap-2.5 text-white hover:cursor-pointer transition-all duration-200">
             <BookOpenCheck size={22} />
             <span className="text-base font-bold">
-              {isRetryAttempt
+              {isSubmitting
+                ? t('common.saving')
+                : isRetryAttempt
                 ? t('assignments.attempt_count', { current: attemptNumber })
                 : 'Save & Continue'}
             </span>

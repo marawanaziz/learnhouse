@@ -50,6 +50,10 @@ function SignUpClient(props: SignUpClientProps) {
       {joinMethod == 'open' &&
         (session.status == 'authenticated' ? (
           <LoggedInJoinScreen inviteCode={inviteCode} org={props.org} />
+        ) : inviteCode ? (
+          <div className="flex-1 flex flex-row">
+            <InviteOnlySignUpComponent inviteCode={inviteCode} />
+          </div>
         ) : (
           <div className="flex-1 flex flex-row">
             <OpenSignUpComponent />

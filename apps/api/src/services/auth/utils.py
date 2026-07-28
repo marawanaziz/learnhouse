@@ -3,17 +3,18 @@ import os
 import random
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import Depends, HTTPException, Request
+
 import httpx
-from sqlmodel import select, func
+from fastapi import Depends, HTTPException, Request
+from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from src.core.events.database import get_db_session
 from src.db.users import User, UserCreate, UserRead
 from src.security.auth import get_current_user
-from src.services.users.users import create_user, create_user_without_org
-from src.services.security.rate_limiting import get_client_ip
 from src.services.security.account_lockout import update_login_info
-
+from src.services.security.rate_limiting import get_client_ip
+from src.services.users.users import create_user, create_user_without_org
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,8 @@ async def signWithGoogle(
     org_id: Optional[int] = None,
     current_user=Depends(get_current_user),
     db_session: AsyncSession = Depends(get_db_session),
+    bbu_audience: Optional[str] = None,
+    assign_bbu_audience: bool = True,
 ):
     # Google
     google_user = await get_google_user_info(access_token)
@@ -181,11 +184,23 @@ async def signWithGoogle(
             first_name=given_name,
             last_name=family_name,
             avatar_image=picture,
+            extra_metadata=(
+                {"bbu_audience": bbu_audience}
+                if bbu_audience in ("family", "professional")
+                else None
+            ),
         )
 
         if org_id is not None:
             user = await create_user(
-                request, db_session, current_user, user_object, org_id, is_oauth=True, signup_provider="google"
+                request,
+                db_session,
+                current_user,
+                user_object,
+                org_id,
+                is_oauth=True,
+                signup_provider="google",
+                assign_bbu_audience=assign_bbu_audience,
             )
 
             return user
@@ -248,6 +263,18 @@ async def signWithGoogle(
             await db_session.commit()
             await db_session.refresh(user_organization)
             await increase_feature_usage("members", org_id, db_session)
+
+        if org_id == 1 and assign_bbu_audience:
+            from src.bbu_migration.registration import assign_registration_audience
+
+            await assign_registration_audience(
+                db_session,
+                user.id,
+                org_id,
+                {"bbu_audience": bbu_audience}
+                if bbu_audience in ("family", "professional")
+                else None,
+            )
 
     # Update last login info
     client_ip = get_client_ip(request)

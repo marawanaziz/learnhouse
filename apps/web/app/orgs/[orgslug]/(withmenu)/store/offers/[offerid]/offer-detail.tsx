@@ -134,6 +134,10 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
     ? offer.benefits.split(',').map((b: string) => b.trim()).filter(Boolean)
     : []
   const resources: Resource[] = offer.included_resources ?? []
+  const automaticDiscountPercent = Number(offer.automatic_discount_percent || 0)
+  const displayAmount = automaticDiscountPercent
+    ? offer.amount * (1 - automaticDiscountPercent / 100)
+    : offer.amount
 
   const handleCheckout = async () => {
     if (!token) {
@@ -235,11 +239,24 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
                 <p className="text-xs text-gray-400 font-medium mb-1">
                   {offer.price_type === 'customer_choice' ? 'Pay what you want (min.)' : isSubscription ? 'Subscription price' : 'One-time price'}
                 </p>
+                {automaticDiscountPercent > 0 && (
+                  <div className="mb-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                    Your CFD Postpartum access automatically saves {automaticDiscountPercent}%.
+                  </div>
+                )}
+                {automaticDiscountPercent > 0 && (
+                  <p className="text-sm text-gray-400 line-through">
+                    {new Intl.NumberFormat('en-US', {
+                      style: 'currency',
+                      currency: offer.currency,
+                    }).format(offer.amount)}
+                  </p>
+                )}
                 <div className={`text-4xl font-black ${isSubscription ? 'text-indigo-700' : 'text-gray-900'}`}>
                   {new Intl.NumberFormat('en-US', {
                     style: 'currency',
                     currency: offer.currency,
-                  }).format(offer.amount)}
+                  }).format(displayAmount)}
                 </div>
                 {isSubscription && (
                   <p className="text-sm text-indigo-400 font-medium mt-0.5">recurring</p>

@@ -4,6 +4,7 @@ import math
 import re
 from datetime import datetime, timedelta
 from uuid import uuid4
+
 from fastapi import HTTPException, Request, UploadFile
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -34,26 +35,28 @@ from src.db.courses.courses import Course
 from src.db.organizations import Organization
 from src.db.trail_runs import TrailRun
 from src.db.trail_steps import TrailStep
-from src.db.users import AnonymousUser, PublicUser, User, APITokenUser
+from src.db.users import AnonymousUser, APITokenUser, PublicUser, User
 from src.security.features_utils.usage import (
     check_limits_with_usage,
     decrease_feature_usage,
     increase_feature_usage,
 )
 from src.security.rbac import (
-    authorization_verify_based_on_roles,
-    authorization_verify_api_token_permissions,
-    check_resource_access,
     AccessAction,
+    authorization_verify_api_token_permissions,
+    authorization_verify_based_on_roles,
+    check_resource_access,
 )
+from src.services.analytics import events as analytics_events
+from src.services.analytics.analytics import track
 from src.services.courses.activities.uploads.sub_file import upload_submission_file
 from src.services.courses.activities.uploads.tasks_ref_files import (
     upload_reference_file,
 )
+from src.services.courses.certifications import (
+    check_course_completion_and_create_certificate,
+)
 from src.services.trail.trail import check_trail_presence
-from src.services.courses.certifications import check_course_completion_and_create_certificate
-from src.services.analytics.analytics import track
-from src.services.analytics import events as analytics_events
 from src.services.webhooks.dispatch import dispatch_webhooks
 
 logger = logging.getLogger(__name__)
@@ -1988,6 +1991,45 @@ async def create_assignment_submission(
             status_code=403,
             detail="Assignment deadline has passed",
         )
+
+    # Do not finalize an auto-graded assignment until every auto-gradable task
+    # has a persisted draft. The learner UI saves answers separately from the
+    # final submission request, so a slow/debounced draft request can otherwise
+    # lose the race and permanently record a zero from no answer data.
+    if assignment.auto_grading:
+        tasks_statement = select(AssignmentTask).where(
+            AssignmentTask.assignment_id == assignment.id
+        )
+        auto_grade_tasks = (
+            await db_session.execute(tasks_statement)
+        ).scalars().all()
+        all_auto_gradable = bool(auto_grade_tasks) and all(
+            task.assignment_type in AUTO_GRADABLE_TASK_TYPES
+            for task in auto_grade_tasks
+        )
+        task_ids = [
+            task.id for task in auto_grade_tasks if task.id is not None
+        ]
+
+        if all_auto_gradable and task_ids:
+            submissions_statement = select(
+                AssignmentTaskSubmission.assignment_task_id
+            ).where(
+                AssignmentTaskSubmission.user_id == submitter.id,
+                AssignmentTaskSubmission.assignment_task_id.in_(task_ids),
+            )
+            submitted_task_ids = set(
+                (await db_session.execute(submissions_statement)).scalars().all()
+            )
+            missing_task_ids = set(task_ids) - submitted_task_ids
+            if missing_task_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Your answers are still saving. Please wait a moment "
+                        "and submit again."
+                    ),
+                )
 
     # Check if the submission has already been made. A row in PENDING /
     # NOT_SUBMITTED state means the learner previously hit "Try again":

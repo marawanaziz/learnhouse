@@ -1521,6 +1521,23 @@ class TestCreateAssignmentSubmission:
         db.add(assignment)
         await db.commit()
 
+        saved_answer = AssignmentTaskSubmission(
+            assignment_task_submission_uuid="ats_autograding",
+            task_submission={"answer": "4"},
+            grade=100,
+            task_submission_grade_feedback="Correct",
+            assignment_type=AssignmentTaskTypeEnum.SHORT_ANSWER,
+            user_id=admin_user.id,
+            activity_id=assignment_task.activity_id,
+            course_id=assignment_task.course_id,
+            chapter_id=assignment_task.chapter_id,
+            assignment_task_id=assignment_task.id,
+            creation_date=str(datetime.now()),
+            update_date=str(datetime.now()),
+        )
+        db.add(saved_answer)
+        await db.commit()
+
         trail = Trail(
             org_id=course.org_id,
             user_id=admin_user.id,
@@ -1546,6 +1563,25 @@ class TestCreateAssignmentSubmission:
                 db,
             )
         assert result.submission_status == AssignmentUserSubmissionStatus.SUBMITTED
+
+    async def test_auto_grading_rejects_missing_task_drafts(
+        self, mock_request, db, admin_user, assignment, assignment_task
+    ):
+        assignment.auto_grading = True
+        db.add(assignment)
+        await db.commit()
+
+        with patch(_PATCH_RBAC, new_callable=AsyncMock):
+            with pytest.raises(HTTPException) as exc:
+                await create_assignment_submission(
+                    mock_request,
+                    assignment.assignment_uuid,
+                    admin_user,
+                    db,
+                )
+
+        assert exc.value.status_code == 409
+        assert "still saving" in exc.value.detail
 
 
 # ---------------------------------------------------------------------------

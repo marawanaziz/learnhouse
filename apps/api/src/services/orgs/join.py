@@ -1,9 +1,11 @@
 from datetime import datetime
 from typing import Optional, Union
+
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, field_validator
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from src.db.organizations import Organization
 from src.db.user_organizations import UserOrganization
 from src.db.users import AnonymousUser, InternalUser, PublicUser, User
@@ -81,31 +83,39 @@ async def join_org(
             detail="Please verify your email address before joining an organization.",
         )
 
-    # Check if User isn't already part of the org
+    invite_code_data = None
+    if args.invite_code:
+        invite_code_data = await get_invite_code(
+            request, org.id, args.invite_code, current_user, db_session
+        )
+        if not invite_code_data:
+            raise HTTPException(status_code=400, detail="Invite code is incorrect")
+
+    # Check whether the user is already part of the org.
     statement = select(UserOrganization).where(
         UserOrganization.user_id == user.id, UserOrganization.org_id == args.org_id
     )
     userorg = (await db_session.execute(statement)).scalars().first()
 
     if userorg:
+        # Dedicated links must also work for an existing, signed-in BBU member.
+        # In that case there is no organization row to create; just apply the
+        # usergroup carried by the validated invite.
+        if invite_code_data and invite_code_data.get("usergroup_id"):
+            await add_users_to_usergroup(
+                request,
+                db_session,
+                InternalUser(id=0),
+                int(invite_code_data["usergroup_id"]),
+                str(user.id),
+            )
+            return "Access added to your account"
         raise HTTPException(
             status_code=400, detail="User is already part of that organization"
         )
 
-    if join_method == "inviteOnly" and user and org and args.invite_code:
+    if invite_code_data and user and org:
         if user.id is not None and org.id is not None:
-
-            # Check if invite code exists
-            inviteCode = await get_invite_code(
-                request, org.id, args.invite_code, current_user, db_session
-            )
-
-            if not inviteCode:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invite code is incorrect",
-                )
-
             # Link user and organization
             user_organization = UserOrganization(
                 user_id=user.id,
@@ -124,12 +134,12 @@ async def join_org(
             _invalidate_session_cache(user.id)
 
             # Add user to UserGroup if invite code is linked to one
-            if inviteCode.get("usergroup_id"):
+            if invite_code_data.get("usergroup_id"):
                 await add_users_to_usergroup(
                     request,
                     db_session,
                     InternalUser(id=0),
-                    int(inviteCode.get("usergroup_id")),
+                    int(invite_code_data.get("usergroup_id")),
                     str(user.id),
                 )
 

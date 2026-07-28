@@ -212,6 +212,50 @@ class TestOrgJoinService:
         mock_add_users.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_group_invite_applies_to_existing_open_org_member(
+        self, mock_request, db, org
+    ):
+        user = await _make_user(db, id=18, user_uuid="user_18")
+        usergroup = await _make_usergroup(db, org, id=28)
+        await _make_org_config(db, org, signup_mode="open", version="2.0")
+        db.add(
+            UserOrganization(
+                user_id=user.id,
+                org_id=org.id,
+                role_id=4,
+                creation_date=str(datetime.now()),
+                update_date=str(datetime.now()),
+            )
+        )
+        await db.commit()
+
+        with patch(
+            "src.services.orgs.join.check_limits_with_usage"
+        ), patch(
+            "src.services.orgs.join.get_org_join_mechanism",
+            new=AsyncMock(return_value="open"),
+        ), patch(
+            "src.services.orgs.join.get_invite_code",
+            new=AsyncMock(return_value={"usergroup_id": usergroup.id}),
+        ), patch(
+            "src.services.orgs.join.add_users_to_usergroup",
+            new=AsyncMock(),
+        ) as mock_add_users:
+            result = await join_org(
+                mock_request,
+                JoinOrg(
+                    org_id=org.id,
+                    user_id=user.id,
+                    invite_code="CFD12345",
+                ),
+                user,
+                db,
+            )
+
+        assert result == "Access added to your account"
+        mock_add_users.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_join_org_failure_branches(
         self, mock_request, db, org, anonymous_user
     ):

@@ -19,7 +19,7 @@ import { useTranslation } from 'react-i18next'
 import { PasswordStrengthIndicator, validatePasswordStrength } from '@components/Auth/PasswordStrengthIndicator'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
 
-const validate = (values: any, t: any) => {
+const validate = (values: any, t: any, isBbu: boolean) => {
   const errors: any = {}
 
   if (!values.email) {
@@ -43,6 +43,10 @@ const validate = (values: any, t: any) => {
     errors.username = t('validation.username_min_length')
   }
 
+  if (isBbu && !values.bbu_audience) {
+    errors.bbu_audience = t('validation.required')
+  }
+
   // Bio is optional - no validation required
 
   return errors
@@ -53,6 +57,7 @@ function OpenSignUpComponent() {
   const { track } = useLHAnalytics('public')
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const org = useOrg() as any
+  const isBbu = org?.id === 1
   const _router = useRouter()
   const [error, setError] = React.useState('')
   const [message, setMessage] = React.useState<{ email_verified: boolean } | null>(null)
@@ -66,15 +71,24 @@ function OpenSignUpComponent() {
       bio: '',
       first_name: '',
       last_name: '',
+      bbu_audience: '',
     },
-    validate: (values) => validate(values, t),
+    validate: (values) => validate(values, t, isBbu),
     enableReinitialize: true,
     onSubmit: async (values) => {
       setError('')
       setMessage(null)
       setIsSubmitting(true)
       track(AnalyticsEvent.SignupSubmitted, { invite_code_present: false, has_bio: !!values.bio })
-      let res = await signup(values)
+      const { bbu_audience, ...accountValues } = values
+      let res = await signup({
+        ...accountValues,
+        ...(isBbu && {
+          extra_metadata: {
+            bbu_audience: bbu_audience as 'family' | 'professional',
+          },
+        }),
+      })
       let message = await res.json()
       if (res.status == 200) {
         track(AnalyticsEvent.SignupSucceeded, { email_verified: message.email_verified })
@@ -100,6 +114,11 @@ function OpenSignUpComponent() {
   useEffect(() => { }, [org])
 
   const handleGoogleSignIn = () => {
+    if (isBbu && !formik.values.bbu_audience) {
+      formik.setFieldTouched('bbu_audience', true)
+      setError('Please answer the doula or perinatal professional question before continuing.')
+      return
+    }
     track(AnalyticsEvent.SignupGoogleClicked)
     // Store org context in cookies before OAuth redirect
     if (org?.slug) {
@@ -110,6 +129,9 @@ function OpenSignUpComponent() {
       const domainAttr = topDomain === 'localhost' ? '' : `; domain=.${topDomain}`;
       document.cookie = `LH_oauth_orgslug=${org.slug}${baseAttributes}${domainAttr}`;
       document.cookie = `LH_oauth_org_id=${org.id}${baseAttributes}${domainAttr}`;
+      if (isBbu) {
+        document.cookie = `LH_bbu_audience=${formik.values.bbu_audience}${baseAttributes}${domainAttr}`;
+      }
     }
     // Use absolute URL with current origin for custom domain support
     signIn('google', { callbackUrl: `${window.location.origin}/redirect_from_auth` });
@@ -246,6 +268,29 @@ function OpenSignUpComponent() {
               />
             </Form.Control>
           </FormField>
+
+          {isBbu && (
+            <FormField name="bbu_audience">
+              <FormLabelAndMessage
+                label="Are you wanting to become a doula, or are you already a doula or perinatal professional?"
+                message={formik.touched.bbu_audience ? formik.errors.bbu_audience : undefined}
+              />
+              <Form.Control asChild>
+                <select
+                  name="bbu_audience"
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
+                  value={formik.values.bbu_audience}
+                  required
+                  className="flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
+                >
+                  <option value="">Select an answer</option>
+                  <option value="professional">Yes</option>
+                  <option value="family">No</option>
+                </select>
+              </Form.Control>
+            </FormField>
+          )}
 
           <FormField name="bio">
             <FormLabelAndMessage

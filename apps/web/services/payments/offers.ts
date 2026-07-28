@@ -42,20 +42,38 @@ export async function getOfferDetails(orgId: number, offerId: string, access_tok
   return getResponseMetadata(result);
 }
 
-export async function getPublicOffer(orgId: number, offerId: string) {
+export async function getPublicOffer(orgId: number, offerId: string, access_token = '') {
   const result = await secureFetch(
     `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/${encodeURIComponent(offerId)}/public`,
-    RequestBodyWithAuthHeader('GET', null, null, '')
+    RequestBodyWithAuthHeader('GET', null, null, access_token)
   );
   return getResponseMetadata(result);
 }
 
-export async function getPublicOffers(orgId: number) {
+export async function getPublicOffers(orgId: number, access_token = '', audience = '') {
+  const params = new URLSearchParams()
+  if (audience) params.set('audience', audience)
+  const query = params.toString()
   const result = await secureFetch(
-    `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/public-listing`,
-    RequestBodyWithAuthHeader('GET', null, null, '')
+    `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/public-listing${query ? `?${query}` : ''}`,
+    RequestBodyWithAuthHeader('GET', null, null, access_token)
   );
   return getResponseMetadata(result);
+}
+
+export async function getStorefrontOffers(
+  orgId: number,
+  access_token = '',
+  audience = ''
+) {
+  const params = new URLSearchParams()
+  if (audience) params.set('audience', audience)
+  const query = params.toString()
+  const result = await secureFetch(
+    `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/storefront${query ? `?${query}` : ''}`,
+    RequestBodyWithAuthHeader('GET', null, null, access_token)
+  )
+  return getResponseMetadata(result)
 }
 
 export async function getOffersByResource(orgId: number, resourceUuid: string) {

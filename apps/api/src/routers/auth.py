@@ -1,49 +1,51 @@
-from datetime import timedelta, datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
-from fastapi import Depends, APIRouter, HTTPException, Response, status, Request, Form
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlmodel import select
-from src.db.users import AnonymousUser, User, UserRead
 from sqlmodel.ext.asyncio.session import AsyncSession
-from src.core.events.database import get_db_session
+
 from config.config import get_learnhouse_config
 from src.core.deployment_mode import get_deployment_mode
+from src.core.events.database import get_db_session
+from src.db.users import AnonymousUser, User, UserRead
 from src.security.auth import (
+    JWT_ACCESS_TOKEN_EXPIRES,
+    JWT_COOKIE_NAME,
+    JWT_REFRESH_COOKIE_NAME,
+    JWT_REFRESH_TOKEN_EXPIRES,
+    _is_token_revoked_for_user,
+    _mark_refresh_jti_used,
     authenticate_user,
-    get_current_user,
     create_access_token,
     create_refresh_token,
     decode_jwt,
     decode_refresh_token,
     extract_jwt_from_request,
+    get_current_user,
     revoke_user_sessions_before,
-    _is_token_revoked_for_user,
-    _mark_refresh_jti_used,
-    JWT_ACCESS_TOKEN_EXPIRES,
-    JWT_REFRESH_TOKEN_EXPIRES,
-    JWT_REFRESH_COOKIE_NAME,
-    JWT_COOKIE_NAME,
 )
-from src.services.users.users import security_get_user
-from src.services.auth.utils import signWithGoogle, get_google_user_info
+from src.services.auth.utils import get_google_user_info, signWithGoogle
 from src.services.dev.dev import isDevModeEnabled
-from src.services.security.rate_limiting import (
-    check_login_rate_limit,
-    check_refresh_rate_limit,
-    check_email_verification_rate_limit,
-    get_client_ip,
-)
 from src.services.security.account_lockout import (
     check_account_locked,
+    format_lockout_message,
     record_failed_login,
     reset_failed_attempts,
     update_login_info,
-    format_lockout_message,
+)
+from src.services.security.rate_limiting import (
+    check_email_verification_rate_limit,
+    check_login_rate_limit,
+    check_refresh_rate_limit,
+    get_client_ip,
 )
 from src.services.users.email_verification import (
-    verify_email_token,
     resend_verification_email,
+    verify_email_token,
 )
+from src.services.users.users import security_get_user
 
 
 def get_token_expiry_ms() -> Optional[int]:
@@ -457,10 +459,13 @@ async def third_party_login(
     response: Response,
     body: ThirdPartyLogin,
     org_id: Optional[int] = None,
+    bbu_audience: Optional[Literal["family", "professional"]] = None,
+    invite_code: Optional[str] = None,
     current_user: AnonymousUser = Depends(get_current_user),
     db_session: AsyncSession = Depends(get_db_session),
 ):
     import logging
+
     import redis as _redis
     _logger = logging.getLogger(__name__)
 
@@ -469,6 +474,7 @@ async def third_party_login(
     # not exist we reject the request. If the org exists but no invite is found
     # we log a warning and clear org_id so the user is created without an org
     # association (prevents unauthorized org membership via OAuth).
+    invite_code_data = None
     if org_id is not None:
         from src.db.organizations import Organization
         org_record = (await db_session.execute(
@@ -501,6 +507,17 @@ async def third_party_login(
         else:
             _invite_email = body.email
 
+        if invite_code:
+            from src.services.orgs.invites import get_invite_code
+
+            invite_code_data = await get_invite_code(
+                request,
+                org_id,
+                invite_code,
+                current_user,
+                db_session,
+            )
+
         # Check that a pending email invite exists for this address in the org
         _invite_found = False
         _r = None
@@ -523,7 +540,11 @@ async def third_party_login(
                 except Exception:
                     pass
 
-        if not _invite_found:
+        is_bbu_public_signup = org_id == 1 and bbu_audience in (
+            "family",
+            "professional",
+        )
+        if not _invite_found and not is_bbu_public_signup and not invite_code_data:
             _logger.warning(
                 "OAuth org_id=%s supplied for email=%s but no pending invite found; ignoring org_id",
                 org_id,
@@ -537,7 +558,14 @@ async def third_party_login(
     if body.provider == "google":
 
         user = await signWithGoogle(
-            request, body.access_token, body.email, org_id, current_user, db_session
+            request=request,
+            access_token=body.access_token,
+            email=body.email,
+            org_id=org_id,
+            current_user=current_user,
+            db_session=db_session,
+            bbu_audience=bbu_audience,
+            assign_bbu_audience=not bool(invite_code_data),
         )
     else:
         raise HTTPException(
@@ -550,6 +578,18 @@ async def third_party_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect Email or password",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if invite_code_data and invite_code_data.get("usergroup_id"):
+        from src.db.users import InternalUser
+        from src.services.users.usergroups import add_users_to_usergroup
+
+        await add_users_to_usergroup(
+            request,
+            db_session,
+            InternalUser(id=0),
+            int(invite_code_data["usergroup_id"]),
+            str(user.id),
         )
 
     access_token = create_access_token(

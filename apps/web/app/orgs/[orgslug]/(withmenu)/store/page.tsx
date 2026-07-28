@@ -4,7 +4,8 @@ import { getOrgThumbnailMediaDirectory, getOrgOgImageMediaDirectory } from '@ser
 import { getOrgSeoConfig, buildPageTitle, buildBreadcrumbJsonLd } from '@/lib/seo/utils'
 import { getServerCanonicalUrl } from '@/lib/seo/utils.server'
 import { JsonLd } from '@components/SEO/JsonLd'
-import { getPublicOffers } from '@services/payments/offers'
+import { getStorefrontOffers } from '@services/payments/offers'
+import { getServerSession } from '@/lib/auth/server'
 import Store from './store'
 
 type PageParams = Promise<{ orgslug: string }>
@@ -41,9 +42,20 @@ export async function generateMetadata({ params }: { params: PageParams }): Prom
   }
 }
 
-export default async function StorePage({ params }: { params: PageParams }) {
+type StoreSearchParams = Promise<{ audience?: string }>
+
+export default async function StorePage({
+  params,
+  searchParams,
+}: {
+  params: PageParams
+  searchParams: StoreSearchParams
+}) {
   const { orgslug } = await params
+  const { audience = '' } = await searchParams
   const org = await getOrganizationContextInfo(orgslug, { revalidate: 120, tags: ['organizations'] })
+  const session = await getServerSession()
+  const accessToken = session?.tokens?.access_token ?? ''
 
   const paymentsEnabled = org?.config?.config?.resolved_features?.payments?.enabled ?? org?.config?.config?.features?.payments?.enabled !== false
 
@@ -62,9 +74,13 @@ export default async function StorePage({ params }: { params: PageParams }) {
   }
 
   let offers: any[] = []
+  let activeAudience = audience
   try {
-    const result = await getPublicOffers(org.id)
-    offers = result?.success && Array.isArray(result.data) ? result.data : []
+    const result = await getStorefrontOffers(org.id, accessToken, audience)
+    offers = result?.success && Array.isArray(result.data?.offers)
+      ? result.data.offers
+      : []
+    activeAudience = result?.data?.active_audience || audience || 'family'
   } catch {
     offers = []
   }
@@ -77,7 +93,11 @@ export default async function StorePage({ params }: { params: PageParams }) {
   return (
     <>
       <JsonLd data={breadcrumbJsonLd} />
-      <Store orgslug={orgslug} offers={offers} />
+      <Store
+        orgslug={orgslug}
+        offers={offers}
+        activeAudience={activeAudience}
+      />
     </>
   )
 }

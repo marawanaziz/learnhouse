@@ -205,6 +205,9 @@ interface NewAccountBody {
   password: string
   org_slug: string
   org_id: string
+  extra_metadata?: {
+    bbu_audience?: 'family' | 'professional'
+  }
 }
 
 export async function signup(body: NewAccountBody): Promise<any> {

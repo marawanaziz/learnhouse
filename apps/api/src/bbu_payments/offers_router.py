@@ -23,22 +23,25 @@ Contract consumed by apps/web/services/payments/offers.ts:
 """
 import os
 from datetime import datetime, timezone
-from urllib.parse import urlparse, quote
+from urllib.parse import quote, urlparse
 
 import stripe
-from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.core.events.database import get_db_session
-from src.security.auth import get_current_user
-from src.db.courses.courses import Course
-from src.db.organizations import Organization
-from src.bbu_payments.models import BBUProduct, BBUOrder, BBUCoupon
-from src.bbu_payments.router import _fulfill, _as_dict
+from src.bbu_payments import audiences as audience_svc
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.helpers import merge_course_uuids
+from src.bbu_payments.models import BBUCoupon, BBUOrder, BBUProduct
+from src.bbu_payments.router import _as_dict, _fulfill
+from src.core.events.database import get_db_session
+from src.db.courses.courses import Course
+from src.db.organizations import Organization
+from src.db.usergroup_user import UserGroupUser
+from src.db.usergroups import UserGroup
+from src.security.auth import get_current_user
 
 router = APIRouter()
 
@@ -124,9 +127,56 @@ async def _to_offer(db: AsyncSession, p: BBUProduct, org_uuid: str) -> dict:
         "payments_group_id": None,
         "kind": p.kind,
         "category": p.category or "",
+        "audiences": p.audiences or "",
         "bump_offers": await _bump_offers(db, p),
         "included_resources": await _included_resources(db, p, org_uuid),
     }
+
+
+CFD_POSTPARTUM_GROUP = "CFD Postpartum Families"
+CFD_POSTPARTUM_COUPON = "CFDPOSTPARTUM50"
+
+
+async def _is_group_member(
+    db: AsyncSession,
+    user_id: int,
+    org_id: int,
+    group_name: str,
+) -> bool:
+    if not user_id:
+        return False
+    row = (
+        await db.execute(
+            select(UserGroupUser.id)
+            .join(UserGroup, UserGroup.id == UserGroupUser.usergroup_id)
+            .where(
+                UserGroupUser.user_id == user_id,
+                UserGroupUser.org_id == org_id,
+                UserGroup.name == group_name,
+            )
+        )
+    ).first()
+    return bool(row)
+
+
+async def _automatic_discount_percent(
+    db: AsyncSession,
+    user_id: int,
+    product: BBUProduct,
+) -> int:
+    if not await _is_group_member(
+        db, user_id, product.org_id, CFD_POSTPARTUM_GROUP
+    ):
+        return 0
+    coupon = await coupon_svc.find_by_code(
+        db, product.org_id, CFD_POSTPARTUM_COUPON
+    )
+    if not coupon:
+        return 0
+    ok, _reason = coupon_svc.validate_for(
+        coupon, product.id or 0, product.price_cents
+    )
+    return int(coupon.percent_off or 0) if ok and coupon.kind == "percent" else 0
 
 
 async def _get_product(db: AsyncSession, org_id: int, offer_uuid: str) -> BBUProduct:
@@ -158,20 +208,87 @@ def _require_user(user):
 # Public listing + detail
 # --------------------------------------------------------------------------- #
 @router.get("/{org_id}/offers/public-listing")
-async def public_listing(org_id: int, db_session: AsyncSession = Depends(get_db_session)):
+async def public_listing(
+    org_id: int,
+    audience: str = "",
+    db_session: AsyncSession = Depends(get_db_session),
+    user=Depends(get_current_user),
+):
     rows = (await db_session.execute(
         select(BBUProduct).where(
             BBUProduct.org_id == org_id, BBUProduct.public == True  # noqa: E712
         )
     )).scalars().all()
+    user_id = int(getattr(user, "id", 0) or 0)
+    selected = audience if audience in audience_svc.RETAIL_AUDIENCES else ""
+    if not selected:
+        selected = await audience_svc.preferred_store_slug(
+            db_session, user_id, org_id
+        )
+    rows = await audience_svc.filter_products(
+        db_session, rows, user_id, org_id, selected
+    )
+    rows = await audience_svc.exclude_owned_products(
+        db_session, rows, user_id, org_id
+    )
     org_uuid = await _org_uuid(db_session, org_id)
     return [await _to_offer(db_session, p, org_uuid) for p in rows]
 
 
+@router.get("/{org_id}/offers/storefront")
+async def storefront(
+    org_id: int,
+    audience: str = "",
+    db_session: AsyncSession = Depends(get_db_session),
+    user=Depends(get_current_user),
+):
+    """Personalized Access More Courses tabs for the native store."""
+    user_id = int(getattr(user, "id", 0) or 0)
+    selected = audience if audience in audience_svc.RETAIL_AUDIENCES else ""
+    if not selected:
+        selected = await audience_svc.preferred_store_slug(
+            db_session, user_id, org_id
+        )
+    rows = (
+        await db_session.execute(
+            select(BBUProduct).where(
+                BBUProduct.org_id == org_id,
+                BBUProduct.public == True,  # noqa: E712
+            )
+        )
+    ).scalars().all()
+    rows = await audience_svc.filter_products(
+        db_session, rows, user_id, org_id, selected
+    )
+    rows = await audience_svc.exclude_owned_products(
+        db_session, rows, user_id, org_id
+    )
+    org_uuid = await _org_uuid(db_session, org_id)
+    offers = []
+    for product in rows:
+        offer = await _to_offer(db_session, product, org_uuid)
+        offer["automatic_discount_percent"] = await _automatic_discount_percent(
+            db_session, user_id, product
+        )
+        offers.append(offer)
+    return {"active_audience": selected, "offers": offers}
+
+
 @router.get("/{org_id}/offers/{offer_uuid}/public")
-async def public_offer(org_id: int, offer_uuid: str, db_session: AsyncSession = Depends(get_db_session)):
+async def public_offer(
+    org_id: int,
+    offer_uuid: str,
+    db_session: AsyncSession = Depends(get_db_session),
+    user=Depends(get_current_user),
+):
     p = await _get_product(db_session, org_id, offer_uuid)
-    return await _to_offer(db_session, p, await _org_uuid(db_session, org_id))
+    offer = await _to_offer(
+        db_session, p, await _org_uuid(db_session, org_id)
+    )
+    offer["automatic_discount_percent"] = await _automatic_discount_percent(
+        db_session, int(getattr(user, "id", 0) or 0), p
+    )
+    return offer
 
 
 # --------------------------------------------------------------------------- #
@@ -244,23 +361,89 @@ async def checkout(
     merged_courses = merge_course_uuids(prod.course_uuids for prod in [p] + bump_products)
     total_cents = p.price_cents + sum(bp.price_cents for bp in bump_products)
 
+    automatic_coupon = None
+    automatic_discount_cents = 0
+    if await _is_group_member(
+        db_session, uid, org_id, CFD_POSTPARTUM_GROUP
+    ):
+        candidate = await coupon_svc.find_by_code(
+            db_session, org_id, CFD_POSTPARTUM_COUPON
+        )
+        ok, _reason = (
+            coupon_svc.validate_for(candidate, p.id or 0, total_cents)
+            if candidate else (False, "")
+        )
+        if ok:
+            scoped_ids = {
+                int(item)
+                for item in (candidate.applies_to or "").split(",")
+                if item.strip().isdigit()
+            }
+            scoped_products = (
+                await db_session.execute(
+                    select(BBUProduct).where(
+                        BBUProduct.org_id == org_id,
+                        BBUProduct.id.in_(scoped_ids),
+                    )
+                )
+            ).scalars().all() if scoped_ids else []
+            scope = []
+            for scoped_product in scoped_products:
+                _sync.ensure_product(scoped_product)
+                db_session.add(scoped_product)
+                if scoped_product.stripe_product_id:
+                    scope.append(scoped_product.stripe_product_id)
+            if len(scope) != len(scoped_ids):
+                raise HTTPException(
+                    503,
+                    "The CFD Postpartum discount is not fully configured. "
+                    "No checkout was created.",
+                )
+            coupon_svc.ensure_stripe_objects(candidate, scope)
+            db_session.add(candidate)
+            await db_session.commit()
+            if candidate.stripe_promo_id:
+                automatic_coupon = candidate
+                eligible_subtotal = sum(
+                    product.price_cents
+                    for product in [p, *bump_products]
+                    if product.id in scoped_ids
+                )
+                automatic_discount_cents = coupon_svc.compute_discount_cents(
+                    candidate, eligible_subtotal
+                )
+
     session = stripe.checkout.Session.create(
         mode="payment",
         customer_email=email or None,
         line_items=line_items,
         success_url=success_url,
         cancel_url=redirect_uri or f"{origin}{org_root}/store",
-        allow_promotion_codes=True,  # buyers enter BBU promo codes on Stripe's page
+        **(
+            {"discounts": [{"promotion_code": automatic_coupon.stripe_promo_id}]}
+            if automatic_coupon
+            else {"allow_promotion_codes": True}
+        ),
         metadata={"bbu_product_id": str(p.id), "course_uuids": merged_courses,
                   "bump_ids": ",".join(str(bp.id) for bp in bump_products),
-                  "affiliate_ref": "", "buyer_user_id": str(uid)},
+                  "affiliate_ref": "", "buyer_user_id": str(uid),
+                  "automatic_coupon": automatic_coupon.code if automatic_coupon else ""},
     )
 
     order = BBUOrder(
         org_id=p.org_id, product_id=p.id, stripe_session_id=session.id,
-        email=email, user_id=uid, amount_cents=total_cents, currency=p.currency,
+        email=email, user_id=uid,
+        amount_cents=max(0, total_cents - automatic_discount_cents),
+        currency=p.currency,
         status="pending", course_uuids=merged_courses,
         created_at=datetime.now(timezone.utc).isoformat(),
+        extra=(
+            {
+                "automatic_coupon": automatic_coupon.code,
+                "discount_cents": automatic_discount_cents,
+            }
+            if automatic_coupon else None
+        ),
     )
     db_session.add(order)
     await db_session.commit()

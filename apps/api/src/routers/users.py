@@ -1,25 +1,14 @@
 import json
 import logging
-from typing import Literal, List, Optional, Union
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Query
+from typing import List, Literal, Optional, Union
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, EmailStr
 from sqlmodel.ext.asyncio.session import AsyncSession
-from src.core.redis import get_redis_client as _get_redis_pool_client
-from src.services.users.password_reset import (
-    change_password_with_reset_code,
-    change_password_with_reset_code_platform,
-    send_reset_password_code,
-    send_reset_password_code_platform,
-)
-from src.services.security.rate_limiting import (
-    check_password_reset_rate_limit,
-    check_invite_acceptance_rate_limit,
-)
-from src.services.orgs.orgs import get_org_join_mechanism
-from src.security.auth import get_current_user, get_authenticated_user
-from src.core.events.database import get_db_session
-from src.db.courses.courses import CourseRead
 
+from src.core.events.database import get_db_session
+from src.core.redis import get_redis_client as _get_redis_pool_client
+from src.db.courses.courses import CourseRead
 from src.db.users import (
     AnonymousUser,
     PublicUser,
@@ -30,6 +19,19 @@ from src.db.users import (
     UserUpdate,
     UserUpdatePassword,
 )
+from src.security.auth import get_authenticated_user, get_current_user
+from src.services.courses.courses import get_user_courses
+from src.services.orgs.orgs import get_org_join_mechanism
+from src.services.security.rate_limiting import (
+    check_invite_acceptance_rate_limit,
+    check_password_reset_rate_limit,
+)
+from src.services.users.password_reset import (
+    change_password_with_reset_code,
+    change_password_with_reset_code_platform,
+    send_reset_password_code,
+    send_reset_password_code_platform,
+)
 from src.services.users.users import (
     authorize_user_action,
     create_user,
@@ -38,13 +40,12 @@ from src.services.users.users import (
     delete_user_by_id,
     get_user_session,
     read_user_by_id,
-    read_user_by_uuid,
     read_user_by_username,
+    read_user_by_uuid,
     update_user,
     update_user_avatar,
     update_user_password,
 )
-from src.services.courses.courses import get_user_courses
 
 _get_redis_client = _get_redis_pool_client
 
@@ -203,7 +204,7 @@ async def api_create_user_with_orgid(
     response_model=UserRead,
     tags=["users"],
     summary="Create user with invite code",
-    description="Create a user and attach them to the given organization using an invite code. Only valid when the organization is configured as invite-only.",
+    description="Create a user and attach them to the organization and optional usergroup using a valid invite code.",
     responses={
         200: {"description": "User created and attached via invite code.", "model": UserRead},
         403: {"description": "Organization does not require an invite code"},
@@ -236,19 +237,12 @@ async def api_create_user_with_orgid_and_invite(
             headers={"Retry-After": str(retry_after)},
         )
 
-    # TODO: This is temporary, logic should be moved to service
-    if (
-        await get_org_join_mechanism(request, org_id, current_user, db_session)
-        == "inviteOnly"
-    ):
-        return await create_user_with_invite(
-            request, db_session, current_user, user_object, org_id, invite_code
-        )
-    else:
-        raise HTTPException(
-            status_code=403,
-            detail="This organization does not require an invite code",
-        )
+    # A valid group-linked invite is useful in an open organization too: BBU's
+    # dedicated Bold/CFD links use it to assign access without changing the
+    # public signup mode for everyone else.
+    return await create_user_with_invite(
+        request, db_session, current_user, user_object, org_id, invite_code
+    )
 
 
 @router.post(
