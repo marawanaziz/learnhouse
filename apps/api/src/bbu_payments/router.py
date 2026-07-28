@@ -65,8 +65,24 @@ def _as_dict(obj):
 
 
 def _base_url(request: Request) -> str:
-    # Prefer the configured domain so redirects are correct behind the proxy.
-    domain = os.environ.get("LEARNHOUSE_DOMAIN", request.url.netloc)
+    """Return the public origin for BBU checkout pages and Stripe redirects.
+
+    The primary custom domain remains the default.  A temporary/public fallback
+    can be declared through ``BBU_FALLBACK_PUBLIC_DOMAINS`` (a comma-separated
+    list of hostnames) while DNS changes propagate.  We intentionally do not
+    reflect an arbitrary Host header here: this URL is sent to Stripe as the
+    success/cancel destination.
+    """
+    canonical_domain = os.environ.get("LEARNHOUSE_DOMAIN") or request.url.netloc
+    request_host = request.headers.get("host") or request.url.netloc
+    request_host = request_host.split(",", 1)[0]
+    request_host = request_host.strip().lower().split(":", 1)[0]
+    fallback_domains = {
+        domain.strip().lower()
+        for domain in os.environ.get("BBU_FALLBACK_PUBLIC_DOMAINS", "").split(",")
+        if domain.strip()
+    }
+    domain = request_host if request_host in fallback_domains else canonical_domain
     scheme = "https" if os.environ.get("LEARNHOUSE_SSL", "true") == "true" else "http"
     return f"{scheme}://{domain}"
 
