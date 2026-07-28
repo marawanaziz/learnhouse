@@ -194,8 +194,14 @@ async def status(db: AsyncSession, org_id: int) -> dict:
         "products_in_stripe": sum(1 for p in products if p.stripe_product_id),
         "coupons_total": len(coupons),
         "coupons_active": len(active),
-        "coupons_in_stripe": sum(1 for c in active if c.stripe_promo_id),
+        "coupons_in_stripe": sum(
+            1 for c in active
+            if (c.stripe_coupon_id if coupon_svc.is_automatic_only(c) else c.stripe_promo_id)
+        ),
         "scoped_coupons": sum(1 for c in active
                               if (c.applies_to or "all").lower() != "all"),
-        "not_yet_in_stripe": [c.code for c in active if not c.stripe_promo_id][:25],
+        "not_yet_in_stripe": [
+            c.code for c in active
+            if not (c.stripe_coupon_id if coupon_svc.is_automatic_only(c) else c.stripe_promo_id)
+        ][:25],
     }

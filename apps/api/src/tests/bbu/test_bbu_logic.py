@@ -63,6 +63,11 @@ def test_coupon_applies_to():
     assert C.validate_for(c, 3, 5000)[0] is True      # in list
 
 
+def test_cfd_postpartum_coupon_is_server_applied_only():
+    assert C.is_automatic_only(BBUCoupon(code="CFDPOSTPARTUM50")) is True
+    assert C.is_automatic_only(BBUCoupon(code="SUMMER10")) is False
+
+
 # --------------------------------------------------------------------------- #
 # Credential date math + state machine
 # --------------------------------------------------------------------------- #

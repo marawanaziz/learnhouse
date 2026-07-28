@@ -402,7 +402,7 @@ async def checkout(
             coupon_svc.ensure_stripe_objects(candidate, scope)
             db_session.add(candidate)
             await db_session.commit()
-            if candidate.stripe_promo_id:
+            if candidate.stripe_coupon_id:
                 automatic_coupon = candidate
                 eligible_subtotal = sum(
                     product.price_cents
@@ -420,7 +420,7 @@ async def checkout(
         success_url=success_url,
         cancel_url=redirect_uri or f"{origin}{org_root}/store",
         **(
-            {"discounts": [{"promotion_code": automatic_coupon.stripe_promo_id}]}
+            {"discounts": [{"coupon": automatic_coupon.stripe_coupon_id}]}
             if automatic_coupon
             else {"allow_promotion_codes": True}
         ),

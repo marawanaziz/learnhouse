@@ -6,6 +6,7 @@ from sqlmodel import select
 
 from src.bbu_migration.registration import assign_registration_audience
 from src.bbu_payments.audiences import exclude_owned_products
+from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.models import BBUCoupon, BBUProduct
 from src.bbu_payments.offers_router import _automatic_discount_percent
 from src.db.usergroup_resources import UserGroupResource
@@ -188,3 +189,34 @@ async def test_cfd_postpartum_member_receives_exact_product_discount(
         )
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_server_applied_coupon_redemption_is_recorded(db, org):
+    coupon = BBUCoupon(
+        org_id=org.id,
+        code="CFDPOSTPARTUM50",
+        kind="percent",
+        percent_off=50,
+        applies_to="9",
+        active=True,
+        stripe_coupon_id="coupon_private_123",
+        created_at=str(datetime.now()),
+    )
+    db.add(coupon)
+    await db.commit()
+
+    code, discount = await coupon_svc.record_redemption_from_session(
+        db,
+        org.id,
+        {
+            "discounts": [{"coupon": "coupon_private_123"}],
+            "total_details": {"amount_discount": 4850},
+        },
+    )
+    await db.commit()
+    await db.refresh(coupon)
+
+    assert code == "CFDPOSTPARTUM50"
+    assert discount == 4850
+    assert coupon.times_redeemed == 1

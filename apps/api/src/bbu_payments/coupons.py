@@ -25,9 +25,18 @@ from src.bbu_payments.models import BBUCoupon
 PROMO_API_VERSION = "2023-10-16"
 COUPON_API_VERSION = "2023-10-16"
 
+# These discounts are entitlement-driven by the platform rather than customer
+# marketing codes.  They must exist as Stripe Coupons so Checkout can apply them
+# server-side, but must never get a customer-entered Promotion Code.
+AUTOMATIC_ONLY_CODES = frozenset({"CFDPOSTPARTUM50"})
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def is_automatic_only(coupon: BBUCoupon) -> bool:
+    return (coupon.code or "").strip().upper() in AUTOMATIC_ONLY_CODES
 
 
 def _scope_of(coupon_id: str) -> list:
@@ -100,6 +109,14 @@ def ensure_stripe_objects(coupon: BBUCoupon,
                     f"Stripe did not apply the product scope for {coupon.code} "
                     f"(requested {len(applies_to_products)} products)")
         coupon.stripe_coupon_id = c["id"]
+    if is_automatic_only(coupon):
+        # A promotion code can be entered by anyone at a normal Checkout
+        # Session.  CFD Postpartum eligibility is checked in the app, so this
+        # discount is applied with the private Coupon id instead.
+        if coupon.stripe_promo_id:
+            deactivate_stripe(coupon)
+            coupon.stripe_promo_id = ""
+        return
     if not coupon.stripe_promo_id:
         wanted = (coupon.code or "").upper()
         # A promotion code string must be unique among ACTIVE codes. After a
@@ -206,8 +223,8 @@ async def find_by_code(db: AsyncSession, org_id: int, code: str):
 
 
 async def record_redemption_from_session(db: AsyncSession, org_id: int, session_obj: dict):
-    """After a paid checkout, if a promotion code was applied, bump the matching
-    BBUCoupon's redemption count. Returns (code, discount_cents) for the order."""
+    """After a paid checkout, record either a customer promo code or a
+    server-applied automatic Coupon. Returns (code, discount_cents)."""
     discounts = session_obj.get("discounts") or []
     total_details = session_obj.get("total_details") or {}
     discount_cents = int(total_details.get("amount_discount") or 0)
@@ -228,4 +245,22 @@ async def record_redemption_from_session(db: AsyncSession, org_id: int, session_
             c.times_redeemed = (c.times_redeemed or 0) + 1
             code = c.code
             db.add(c)
+    if not code:
+        coupon_id = ""
+        for d in discounts:
+            direct = d.get("coupon") or (d.get("source") or {}).get("coupon")
+            coupon_id = direct if isinstance(direct, str) else (direct or {}).get("id", "")
+            if coupon_id:
+                break
+        if coupon_id:
+            c = (await db.execute(
+                select(BBUCoupon).where(
+                    BBUCoupon.org_id == org_id,
+                    BBUCoupon.stripe_coupon_id == coupon_id,
+                )
+            )).scalars().first()
+            if c:
+                c.times_redeemed = (c.times_redeemed or 0) + 1
+                code = c.code
+                db.add(c)
     return code, discount_cents
