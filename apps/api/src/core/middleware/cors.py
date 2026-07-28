@@ -34,6 +34,7 @@ def _single_tenancy_origin_regex(config) -> str:
     for cfg_value in (
         config.hosting_config.frontend_domain,
         config.hosting_config.domain,
+        *getattr(config.hosting_config, "allowed_origins", []),
     ):
         host = _host_from(cfg_value)
         # Exclude only the loopback hosts themselves (added separately below).

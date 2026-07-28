@@ -19,6 +19,7 @@ def _config(
     allowed_regexp: str = r"^https?://acme\.test$",
     frontend_domain: str = "app.example.com",
     domain: str = "example.com",
+    allowed_origins: list[str] | None = None,
 ):
     return SimpleNamespace(
         hosting_config=SimpleNamespace(
@@ -26,6 +27,7 @@ def _config(
             allowed_regexp=allowed_regexp,
             frontend_domain=frontend_domain,
             domain=domain,
+            allowed_origins=allowed_origins or [],
         )
     )
 
@@ -52,6 +54,15 @@ class TestGetCorsOriginRegex:
             assert regex == _SINGLE_TENANCY_LOCALHOST_REGEX
             assert re.fullmatch(regex, "http://localhost:3000")
             assert not re.fullmatch(regex, "https://evil.example.org")
+
+    def test_single_tenancy_allows_explicit_public_origins(self):
+        with patch(
+            "src.core.middleware.cors.get_learnhouse_config",
+            return_value=_config("single", allowed_origins=["https://marketing.example.org"]),
+        ):
+            regex = get_cors_origin_regex()
+            assert re.fullmatch(regex, "https://marketing.example.org")
+            assert re.fullmatch(regex, "https://www.marketing.example.org")
 
     def test_multi_tenancy_returns_configured_regex(self):
         configured = r"^https?://(.*\.)?learnhouse\.io$"

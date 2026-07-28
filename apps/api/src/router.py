@@ -168,6 +168,8 @@ from src.bbu_payments import offers_router as bbu_offers_router  # noqa: E402
 v1_router.include_router(bbu_offers_router.router, prefix="/payments", tags=["bbu-offers"])
 from src.bbu_ghl import router as bbu_ghl_router  # noqa: E402
 v1_router.include_router(bbu_ghl_router.router, prefix="/bbu/ghl", tags=["bbu-ghl"])
+from src.bbu_ghl import public_router as bbu_ghl_public_router  # noqa: E402
+v1_router.include_router(bbu_ghl_public_router.router, prefix="/bbu/leads", tags=["bbu-leads"])
 from src.bbu_payments import cert_admin as bbu_cert_admin_router  # noqa: E402
 v1_router.include_router(bbu_cert_admin_router.router, prefix="/bbu/cert-admin", tags=["bbu-cert-admin"])
 from src.bbu_migration import router as bbu_migration_router  # noqa: E402
