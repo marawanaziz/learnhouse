@@ -276,6 +276,17 @@ export default async function proxy(req: NextRequest) {
     return NextResponse.rewrite(new URL(`${pathname}${search}`, req.url))
   }
 
+  // BBU is an authenticated learning portal, not a public course catalog.
+  // Keep the explicit org landing route available, but make either deployed
+  // hostname's root entry point the sign-in screen.
+  if (pathname === '/' && instance.default_org_slug === 'bbu') {
+    const resolved = await resolveTenant(req, instance)
+    const response = NextResponse.redirect(new URL(`/login${search}`, req.url))
+    setOrgCookies(response, resolved, instance)
+    setInstanceCookies(response, instance)
+    return response
+  }
+
   // -------------------------------------------------------------------------
   // 3. Auth pages — resolve tenant for cookie context, rewrite to /auth
   // -------------------------------------------------------------------------
