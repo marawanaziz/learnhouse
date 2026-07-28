@@ -1,9 +1,14 @@
 import { getBackendUrl, getConfig } from '@services/config/config'
 
 function getMediaUrl() {
-  const raw = getConfig('NEXT_PUBLIC_LEARNHOUSE_MEDIA_URL') || getBackendUrl();
+  // Content is served by this application at /content. Keep it relative so a
+  // temporary Railway hostname and the canonical custom domain both load the
+  // same asset from the host the learner actually opened. An explicit media
+  // URL still wins for deployments that intentionally use a separate CDN.
+  const configuredMediaUrl = getConfig('NEXT_PUBLIC_LEARNHOUSE_MEDIA_URL')
+  const raw = configuredMediaUrl || '/'
   // Guarantee a trailing slash so callers can concatenate "content/..." without
-  // producing "https://api.example.iocontent/..." when the base lacks a slash.
+  // producing a malformed path when the base lacks a slash.
   return raw.endsWith('/') ? raw : `${raw}/`;
 }
 
