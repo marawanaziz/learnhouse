@@ -63,7 +63,7 @@ class GHLClient:
                              fields: Optional[dict] = None,
                              tags: Optional[list] = None) -> Optional[str]:
         """Upsert by email. `fields` maps bbu__* field keys -> values; `tags`
-        are added (workflow triggers)."""
+        are added separately so existing contact tags are preserved."""
         body: dict = {"locationId": LOCATION_ID, "email": email}
         if first_name:
             body["firstName"] = first_name
@@ -76,12 +76,24 @@ class GHLClient:
                 {"key": k, "field_value": v} for k, v in fields.items()
                 if v is not None
             ]
-        if tags:
-            body["tags"] = tags
         st, d = await self._req("POST", "/contacts/upsert", json=body)
         if st not in (200, 201):
             raise RuntimeError(f"upsert_contact {st}: {str(d)[:200]}")
-        return (d.get("contact") or {}).get("id")
+        contact_id = (d.get("contact") or {}).get("id")
+        if contact_id and tags:
+            await self.add_tags(contact_id, tags)
+        return contact_id
+
+    async def add_tags(self, contact_id: str, tags: list[str]) -> list:
+        """Add tags without replacing the contact's existing tag list."""
+        safe_tags = [tag for tag in tags if tag]
+        if not contact_id or not safe_tags:
+            return []
+        st, d = await self._req(
+            "POST", f"/contacts/{contact_id}/tags", json={"tags": safe_tags})
+        if st not in (200, 201):
+            raise RuntimeError(f"add_tags {st}: {str(d)[:200]}")
+        return d.get("tags") or []
 
     # ----------------------------------------------------------- sending
     async def find_contact(self, email: str) -> Optional[dict]:
