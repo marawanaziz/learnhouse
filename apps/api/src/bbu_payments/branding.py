@@ -123,7 +123,7 @@ def _cohort_dates(cohorts):
         elif left is not None:
             note, colour = f"{left} seats left", "#1e7d43"
         else:
-            note, colour = "Open", "#1e7d43"
+            note, colour = "Open enrollment", "#1e7d43"
         rows += (
             f"<div style='display:flex;justify-content:space-between;align-items:baseline;"
             f"gap:12px;padding:9px 0;border-bottom:1px solid rgba(17,61,93,.07)"
@@ -137,7 +137,7 @@ def _cohort_dates(cohorts):
         "<div class='eyebrow' style='margin-bottom:6px'>Upcoming dates</div>"
         f"{rows}"
         "<p style='margin-top:8px;font-size:.8rem;color:#6b6f79'>"
-        "You'll be enrolled in the next cohort with an open seat.</p></div>"
+        "You'll be enrolled in the next live cohort.</p></div>"
     )
 
 
@@ -158,7 +158,7 @@ def store_page(products, base):
                 for c in ups[:3]:
                     left = c.get("seats_left")
                     tag = ("full" if c.get("full")
-                           else (f"{left} left" if isinstance(left, int) else "open"))
+                           else (f"{left} left" if isinstance(left, int) else "open enrollment"))
                     bits.append(f"{c.get('start_date','')} &middot; {tag}")
                 cohort_note = (
                     "<div style='font-size:.82rem;color:#3a91c6;margin-top:-4px'>"
