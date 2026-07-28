@@ -3,6 +3,7 @@
 Endpoints (mounted at /api/v1/bbu):
   GET  /store                      BBU-branded storefront (HTML)
   GET  /buy/{course_uuid}          branded checkout landing for one course (HTML)
+  GET  /checkout/{product_id}      create a Stripe Session and redirect immediately
   GET  /success                    post-payment confirmation (HTML)
   GET  /products                   JSON list of purchasable products
   POST /checkout                   create a Stripe Checkout Session -> {url}
@@ -17,10 +18,16 @@ import io
 import json
 import hashlib
 from datetime import datetime, timezone
+from urllib.parse import urlencode, urlsplit
 
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -41,6 +48,12 @@ from src.bbu_payments import affiliates as aff
 from src.bbu_payments import coupons as _coupon_svc
 
 REF_COOKIE = "bbu_ref"
+CHECKOUT_RETURN_HOSTS = {
+    "birthandbabyuniversity.com",
+    "www.birthandbabyuniversity.com",
+    "chicagofamilydoulas.com",
+    "www.chicagofamilydoulas.com",
+}
 
 router = APIRouter()
 
@@ -67,6 +80,27 @@ def _as_dict(obj):
 
 def _base_url(request: Request) -> str:
     return get_bbu_public_base_url(request)
+
+
+def _direct_checkout_cancel_url(request: Request) -> str:
+    """Return a safe marketing-site URL for Stripe's cancel button.
+
+    Landing pages may pass their full URL as ``return_url``. The Referer is a
+    useful fallback, but cross-site browser policy often reduces it to the site
+    origin. Both inputs are allowlisted to avoid turning checkout into an open
+    redirect.
+    """
+    candidates = (
+        (request.query_params.get("return_url") or "").strip(),
+        (request.headers.get("referer") or "").strip(),
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        parsed = urlsplit(candidate)
+        if parsed.scheme == "https" and parsed.hostname in CHECKOUT_RETURN_HOSTS:
+            return candidate
+    return "https://birthandbabyuniversity.com/"
 
 
 async def _list_products(db: AsyncSession, org_id: int = 1):
@@ -613,11 +647,26 @@ async def cohort_waitlist_join(request: Request, db_session: AsyncSession = Depe
         product_id=p.id)
 
 
-@router.post("/checkout")
-async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    body = await request.json()
-    product_id = body.get("product_id")
-    email = (body.get("email") or "").strip()
+async def _create_checkout_session(
+    request: Request,
+    db_session: AsyncSession,
+    *,
+    product_id: int,
+    email: str = "",
+    ref: str = "",
+    coupon_code: str = "",
+    cancel_url: str = "",
+):
+    """Create the Stripe Checkout Session and pending BBU order.
+
+    Both checkout entry points use this function:
+    - POST /checkout returns JSON to the legacy branded buy page.
+    - GET /checkout/{product_id} immediately redirects a landing-page visitor.
+
+    Stripe can collect the buyer's email when ``email`` is empty. Fulfillment
+    copies ``customer_details.email`` onto the pending order before enrollment.
+    """
+    email = (email or "").strip()
     p = (await db_session.execute(select(BBUProduct).where(BBUProduct.id == product_id))).scalars().first()
     if not p:
         raise HTTPException(404, "Product not found")
@@ -641,8 +690,8 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
         if not open_seat:
             return {"waitlist": True, "message": "This cohort is full — join the waitlist and we'll message you the moment a spot opens."}
 
-    # Affiliate attribution: ref from body (JS reads the cookie) or the cookie.
-    ref = (body.get("ref") or request.cookies.get(REF_COOKIE) or "").strip()
+    # Affiliate attribution: explicit query/body ref or the existing cookie.
+    ref = (ref or request.cookies.get(REF_COOKIE) or "").strip()
 
     base = _base_url(request)
     # Reference the persistent Stripe Product, not inline product_data: a
@@ -666,7 +715,7 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
     # but the choice is per session: a link-borne coupon pre-applies the discount,
     # and everyone else still gets the promo box.
     discount_cents, discounts = 0, None
-    code = (body.get("coupon") or "").strip()
+    code = (coupon_code or "").strip()
     if code:
         c = await _coupon_svc.find_by_code(db_session, p.org_id, code)
         ok, reason = (_coupon_svc.validate_for(c, p.id, p.price_cents) if c
@@ -697,7 +746,7 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
         # on the Stripe account (cards incl. HSA/FSA, Klarna, wallets) when
         # payment_method_types is omitted — no per-session flag needed.
         success_url=f"{base}/api/v1/bbu/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{base}/api/v1/bbu/buy/{p.id}",
+        cancel_url=cancel_url or f"{base}/api/v1/bbu/buy/{p.id}",
         metadata={"bbu_product_id": str(p.id), "course_uuids": p.course_uuids,
                   "affiliate_ref": ref},
     )
@@ -712,6 +761,55 @@ async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_s
     db_session.add(order)
     await db_session.commit()
     return {"url": session.url, "session_id": session.id}
+
+
+@router.post("/checkout")
+async def checkout(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    body = await request.json()
+    return await _create_checkout_session(
+        request,
+        db_session,
+        product_id=body.get("product_id"),
+        email=body.get("email") or "",
+        ref=body.get("ref") or "",
+        coupon_code=body.get("coupon") or "",
+    )
+
+
+@router.get("/checkout/{product_id}")
+async def direct_checkout(
+    product_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Send a public landing-page visitor straight to Stripe Checkout.
+
+    Query parameters stay compatible with the existing webinar and affiliate
+    links: ``?coupon=CODE`` pre-applies a BBU coupon and ``?ref=CODE`` records
+    affiliate attribution. Sold-out cohorts still land on the waitlist page.
+    """
+    coupon_code = (request.query_params.get("coupon") or "").strip()
+    ref = (request.query_params.get("ref") or "").strip()
+    result = await _create_checkout_session(
+        request,
+        db_session,
+        product_id=product_id,
+        ref=ref,
+        coupon_code=coupon_code,
+        cancel_url=_direct_checkout_cancel_url(request),
+    )
+    if result.get("waitlist"):
+        query = {
+            key: value
+            for key, value in (("coupon", coupon_code), ("ref", ref))
+            if value
+        }
+        suffix = f"?{urlencode(query)}" if query else ""
+        return RedirectResponse(
+            url=f"{_base_url(request)}/api/v1/bbu/buy/{product_id}{suffix}",
+            status_code=303,
+        )
+    return RedirectResponse(url=result["url"], status_code=303)
 
 
 async def _grant_course_access(db_session: AsyncSession, order, product):
