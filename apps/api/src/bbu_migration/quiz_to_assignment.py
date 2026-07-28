@@ -40,6 +40,10 @@ from src.db.courses.assignments import (
     AssignmentUserSubmission, AssignmentUserSubmissionStatus, AssignmentTaskSubmission,
 )
 from src.db.trail_steps import TrailStep
+from src.services.courses.activities.assignments import (
+    _grade_quiz_task,
+    compute_assignment_grade,
+)
 
 router = APIRouter()
 
@@ -288,6 +292,107 @@ async def _backfill_submissions(db: AsyncSession, course: Course, chapter_id: in
             await db.commit()
     await db.commit()
     return n
+
+
+@router.post("/regrade-native-quizzes")
+async def regrade_native_quizzes(request: Request, db_session: AsyncSession = Depends(get_db_session)):
+    """Recalculate existing BBU native-quiz attempts using per-question scoring.
+
+    This is intentionally admin-key gated and dry-run by default. It updates
+    only automatically graded quiz tasks; instructor overrides remain intact.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    _check(request, body)
+
+    dry_run = str(body.get("dry_run", request.query_params.get("dry_run", "true"))).lower() != "false"
+    quiz_tasks = (await db_session.execute(select(AssignmentTask).where(
+        AssignmentTask.org_id == ORG,
+        AssignmentTask.assignment_type == AssignmentTaskTypeEnum.QUIZ,
+    ))).scalars().all()
+    tasks_by_id = {task.id: task for task in quiz_tasks if task.id is not None}
+    if not tasks_by_id:
+        return {"dry_run": dry_run, "quiz_submissions_checked": 0,
+                "task_scores_changed": 0, "assignment_scores_changed": 0}
+
+    task_submissions = (await db_session.execute(select(AssignmentTaskSubmission).where(
+        AssignmentTaskSubmission.assignment_task_id.in_(list(tasks_by_id)),
+    ))).scalars().all()
+
+    checked = task_changes = assignment_changes = 0
+    affected_assignments: set[tuple[int, int]] = set()
+    regraded_scores: dict[int, int] = {}
+    for task_submission in task_submissions:
+        if task_submission.manually_graded:
+            continue
+        task = tasks_by_id.get(task_submission.assignment_task_id)
+        if not task:
+            continue
+        checked += 1
+        score = _grade_quiz_task(
+            task.contents or {}, task_submission.task_submission or {}, int(task.max_grade_value or 0)
+        )
+        if task_submission.id is not None:
+            regraded_scores[task_submission.id] = score
+        if int(task_submission.grade or 0) == score:
+            continue
+        task_changes += 1
+        affected_assignments.add((task.assignment_id, task_submission.user_id))
+        if not dry_run:
+            task_submission.grade = score
+            task_submission.update_date = _now()
+            db_session.add(task_submission)
+
+    # Recalculate the saved assignment aggregate for every learner whose quiz
+    # task changed. Some assignments can contain multiple tasks, so use the
+    # complete task set rather than assuming quiz-only content.
+    for assignment_id, user_id in affected_assignments:
+        assignment = (await db_session.execute(select(Assignment).where(
+            Assignment.id == assignment_id
+        ))).scalars().first()
+        if not assignment:
+            continue
+        assignment_tasks = (await db_session.execute(select(AssignmentTask).where(
+            AssignmentTask.assignment_id == assignment_id
+        ))).scalars().all()
+        assignment_task_ids = [task.id for task in assignment_tasks if task.id is not None]
+        task_scores = {}
+        if assignment_task_ids:
+            rows = (await db_session.execute(select(AssignmentTaskSubmission).where(
+                AssignmentTaskSubmission.user_id == user_id,
+                AssignmentTaskSubmission.assignment_task_id.in_(assignment_task_ids),
+            ))).scalars().all()
+            task_scores = {
+                row.assignment_task_id: regraded_scores.get(row.id, int(row.grade or 0))
+                for row in rows
+            }
+        raw_grade = sum(task_scores.values())
+        max_grade = sum(int(task.max_grade_value or 0) for task in assignment_tasks)
+        recalculated_grade = compute_assignment_grade(
+            raw_grade, max_grade, assignment.grading_type
+        )["grade"]
+        submission = (await db_session.execute(select(AssignmentUserSubmission).where(
+            AssignmentUserSubmission.assignment_id == assignment_id,
+            AssignmentUserSubmission.user_id == user_id,
+        ))).scalars().first()
+        if submission and int(submission.grade or 0) != recalculated_grade:
+            assignment_changes += 1
+            if not dry_run:
+                submission.grade = recalculated_grade
+                submission.update_date = _now()
+                db_session.add(submission)
+
+    if not dry_run:
+        await db_session.commit()
+    return {
+        "dry_run": dry_run,
+        "quiz_submissions_checked": checked,
+        "task_scores_changed": task_changes,
+        "assignment_scores_changed": assignment_changes,
+    }
 
 
 # --------------------------------------------------- fix the old split course

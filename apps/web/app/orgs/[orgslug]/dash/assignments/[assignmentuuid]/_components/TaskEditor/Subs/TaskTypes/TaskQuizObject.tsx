@@ -410,21 +410,30 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
     async function gradeFC() {
         if (assignmentTaskUUID) {
             const maxPoints = assignmentTaskOutsideProvider?.max_grade_value || 100;
-            const totalOptions = questions.reduce((total, question) => total + question.options.length, 0);
-            let correctAnswers = 0;
+            const gradableQuestions = questions.filter((question) =>
+                !!question.questionUUID && question.options.some((option) => !!option.optionUUID)
+            );
+            const correctQuestions = gradableQuestions.filter((question) => {
+                const expected = new Set(
+                    question.options
+                        .filter((option) => option.optionUUID && option.assigned_right_answer)
+                        .map((option) => option.optionUUID)
+                );
+                const selected = new Set(
+                    userSubmissions.submissions
+                        .filter((submission) =>
+                            submission.questionUUID === question.questionUUID &&
+                            submission.answer &&
+                            question.options.some((option) => option.optionUUID === submission.optionUUID)
+                        )
+                        .map((submission) => submission.optionUUID)
+                );
 
-            questions.forEach((question) => {
-                question.options.forEach((option) => {
-                    const submission = userSubmissions.submissions.find(
-                        (sub) => sub.questionUUID === question.questionUUID && sub.optionUUID === option.optionUUID
-                    );
-                    if (submission?.answer === option.assigned_right_answer) {
-                        correctAnswers++;
-                    }
-                });
-            });
-
-            const finalGrade = Math.round((correctAnswers / totalOptions) * maxPoints);
+                return selected.size === expected.size && [...selected].every((optionUUID) => expected.has(optionUUID));
+            }).length;
+            const finalGrade = gradableQuestions.length
+                ? Math.round((correctQuestions / gradableQuestions.length) * maxPoints)
+                : 0;
 
             // Save the grade to the server
             const values = {

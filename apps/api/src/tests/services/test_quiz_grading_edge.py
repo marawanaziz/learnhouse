@@ -2,11 +2,11 @@
 Edge-case unit tests for ``_grade_quiz_task(contents, submission_data, task_max)``.
 
 ``_grade_quiz_task`` is the server-side mirror of the client ``gradeFC`` in
-``TaskQuizObject.tsx``. Its contract (read straight from the implementation):
+``TaskQuizObject.tsx``. Its contract:
 
-* Every option in every question is worth exactly one point.
-* A point is earned when the student's checkbox state, coerced with ``bool()``,
-  equals ``bool(option.assigned_right_answer)``.
+* Every valid question is worth an equal share of the task score.
+* A question earns credit only when the learner's complete selected-option set
+  exactly matches the answer key.
 * Student answers are indexed by ``(questionUUID, optionUUID)``; a submission
   entry is only indexed when BOTH uuids are truthy. Options with no matching
   submission default to ``False`` ("not checked").
@@ -79,6 +79,16 @@ class TestMultiQuestionMultiOption:
         )
         assert _grade_quiz_task(contents, sub, 100) == 100
 
+    def test_one_wrong_answer_in_twelve_questions_scores_ninety_two(self):
+        """A 12-question quiz with one incorrect answer is 11/12 -> 92%."""
+        questions = []
+        submissions = []
+        for index in range(12):
+            qid = f"q{index}"
+            questions.append(_question(qid, [(f"{qid}-correct", True), (f"{qid}-wrong", False)]))
+            submissions.append(_sub(qid, f"{qid}-correct", index != 11))
+        assert _grade_quiz_task(_contents(*questions), _submission(*submissions), 100) == 92
+
     def test_mixed_correctness_across_questions_is_proportional(self):
         """q1 fully right (3/3), q2 fully wrong (0/3) -> 3/6 of 100 -> 50."""
         contents = _contents(
@@ -121,71 +131,42 @@ class TestMultiQuestionMultiOption:
 # Rounding behavior
 # --------------------------------------------------------------------------- #
 class TestRounding:
-    def _three_option_key_all_true(self):
-        """3 options, all with right answer True; student checks N of them."""
-        return _contents(_question("q1", [("a", True), ("b", True), ("c", True)]))
+    def _question_set(self, count: int):
+        return _contents(*[
+            _question(f"q{i}", [(f"q{i}-right", True), (f"q{i}-wrong", False)])
+            for i in range(count)
+        ])
 
     def test_one_third_of_100_rounds_to_33(self):
-        """1 of 3 options correct -> 1/3 * 100 = 33.33 -> round -> 33."""
-        contents = self._three_option_key_all_true()
+        """One correct question out of three is 33.33%, rounded to 33."""
+        contents = self._question_set(3)
         sub = _submission(
-            _sub("q1", "a", True),   # correct
-            _sub("q1", "b", False),  # wrong (key True)
-            _sub("q1", "c", False),  # wrong (key True)
+            _sub("q0", "q0-right", True),
         )
         assert _grade_quiz_task(contents, sub, 100) == 33
 
     def test_two_thirds_of_100_rounds_to_67(self):
-        """2 of 3 options correct -> 2/3 * 100 = 66.67 -> round -> 67."""
-        contents = self._three_option_key_all_true()
+        """Two correct questions out of three is 66.67%, rounded to 67."""
+        contents = self._question_set(3)
         sub = _submission(
-            _sub("q1", "a", True),
-            _sub("q1", "b", True),
-            _sub("q1", "c", False),
+            _sub("q0", "q0-right", True),
+            _sub("q1", "q1-right", True),
         )
         assert _grade_quiz_task(contents, sub, 100) == 67
 
     def test_bankers_rounding_half_to_even_one_sixth(self):
-        """1 of 6 correct of 3 -> 0.5 exactly; Python round() is banker's rounding.
+        """One correct question out of six with a max score of 3 is 0.5.
 
-        1/6 * 3 = 0.5 -> round(0.5) == 0 (rounds to even). This documents that
-        the function relies on Python's round-half-to-even, not classic 0.5-up.
+        Python rounds 0.5 to the even integer 0.
         """
-        contents = _contents(
-            _question(
-                "q1",
-                [("a", True), ("b", True), ("c", True),
-                 ("d", True), ("e", True), ("f", True)],
-            )
-        )
-        sub = _submission(
-            _sub("q1", "a", True),
-            _sub("q1", "b", False),
-            _sub("q1", "c", False),
-            _sub("q1", "d", False),
-            _sub("q1", "e", False),
-            _sub("q1", "f", False),
-        )
-        # 1/6 * 3 = 0.5 -> banker's rounding -> 0
+        contents = self._question_set(6)
+        sub = _submission(_sub("q0", "q0-right", True))
         assert _grade_quiz_task(contents, sub, 3) == 0
 
     def test_bankers_rounding_half_to_even_one_point_five(self):
-        """3 of 6 correct, task_max 3 -> 3/6 * 3 = 1.5 -> round -> 2 (even)."""
-        contents = _contents(
-            _question(
-                "q1",
-                [("a", True), ("b", True), ("c", True),
-                 ("d", True), ("e", True), ("f", True)],
-            )
-        )
-        sub = _submission(
-            _sub("q1", "a", True),
-            _sub("q1", "b", True),
-            _sub("q1", "c", True),
-            _sub("q1", "d", False),
-            _sub("q1", "e", False),
-            _sub("q1", "f", False),
-        )
+        """One correct question out of two with a max score of 3 is 1.5 -> 2."""
+        contents = self._question_set(2)
+        sub = _submission(_sub("q0", "q0-right", True))
         assert _grade_quiz_task(contents, sub, 3) == 2
 
 
@@ -194,11 +175,13 @@ class TestRounding:
 # --------------------------------------------------------------------------- #
 class TestOddTaskMax:
     def _two_opt_one_correct(self):
-        """2 options, student gets exactly 1 of 2 right (50%)."""
-        contents = _contents(_question("q1", [("a", True), ("b", False)]))
+        """Two questions, exactly one answered correctly (50%)."""
+        contents = _contents(
+            _question("q1", [("a", True), ("b", False)]),
+            _question("q2", [("c", True), ("d", False)]),
+        )
         sub = _submission(
             _sub("q1", "a", True),   # correct
-            _sub("q1", "b", True),   # wrong (key False)
         )
         return contents, sub
 
@@ -283,43 +266,42 @@ class TestSubmissionJunk:
         """Repeated (questionUUID, optionUUID) entries overwrite; the LAST wins.
 
         q1/a key True. Two entries: first answer=True (would be correct), then
-        answer=False (wrong). Last-write-wins -> a counts as wrong.
-        q1/b key False defaults unchecked correct. So 1/2 -> 50.
+        answer=False (wrong). Last-write-wins, so the full question is wrong.
         """
         contents = _contents(_question("q1", [("a", True), ("b", False)]))
         sub = _submission(
             _sub("q1", "a", True),
             _sub("q1", "a", False),  # later entry overwrites the earlier one
         )
-        assert _grade_quiz_task(contents, sub, 100) == 50
+        assert _grade_quiz_task(contents, sub, 100) == 0
 
     def test_submission_missing_question_uuid_is_skipped(self):
         """Entry with falsy questionUUID is not indexed -> option defaults False.
 
         q1/a key True; the only submission for it omits questionUUID, so 'a' is
-        treated as unchecked (wrong). q1/b key False defaults correct. 1/2 -> 50.
+        treated as unchecked and the full question is wrong.
         """
         contents = _contents(_question("q1", [("a", True), ("b", False)]))
         sub = _submission(
             {"optionUUID": "a", "answer": True},  # no questionUUID
         )
-        assert _grade_quiz_task(contents, sub, 100) == 50
+        assert _grade_quiz_task(contents, sub, 100) == 0
 
     def test_submission_missing_option_uuid_is_skipped(self):
         """Entry with falsy optionUUID is not indexed -> 'a' stays unchecked.
 
-        Same accounting as above -> 1/2 -> 50.
+        The required answer stays unchecked, so the question is incorrect.
         """
         contents = _contents(_question("q1", [("a", True), ("b", False)]))
         sub = _submission(
             {"questionUUID": "q1", "answer": True},  # no optionUUID
         )
-        assert _grade_quiz_task(contents, sub, 100) == 50
+        assert _grade_quiz_task(contents, sub, 100) == 0
 
     def test_submission_with_empty_string_uuids_is_skipped(self):
         """Empty-string UUIDs are falsy, so the guard skips them.
 
-        'a' stays unchecked/wrong -> 1/2 -> 50.
+        'a' stays unchecked, so the question is wrong.
         """
         contents = _contents(_question("q1", [("a", True), ("b", False)]))
         sub = _submission(
@@ -327,7 +309,7 @@ class TestSubmissionJunk:
             {"questionUUID": "q1", "optionUUID": "", "answer": True},
             {"questionUUID": "", "optionUUID": "a", "answer": True},
         )
-        assert _grade_quiz_task(contents, sub, 100) == 50
+        assert _grade_quiz_task(contents, sub, 100) == 0
 
     def test_non_dict_submission_entries_are_skipped(self):
         """Strings / ints / None / lists in submissions are skipped gracefully.
@@ -498,11 +480,10 @@ class TestMissingTopLevelKeys:
     def test_submission_missing_submissions_key_treats_all_unchecked(self):
         """No 'submissions' key -> every option defaults to unchecked (False).
 
-        Key: a=True (unchecked -> wrong), b=False (unchecked -> correct).
-        1/2 -> 50.
+        The required answer is unchecked, so the full question is incorrect.
         """
         contents = _contents(_question("q1", [("a", True), ("b", False)]))
-        assert _grade_quiz_task(contents, {}, 100) == 50
+        assert _grade_quiz_task(contents, {}, 100) == 0
 
     def test_questions_value_explicitly_none_returns_zero(self):
         """questions=None -> `or []` -> 0 options -> 0."""

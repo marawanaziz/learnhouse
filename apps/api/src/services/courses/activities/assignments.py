@@ -297,10 +297,10 @@ def _grade_quiz_task(contents: dict, submission_data: dict, task_max: int) -> in
     """
     Server-side mirror of TaskQuizObject.tsx > gradeFC.
 
-    Each option in each question is worth one point. The student earns a
-    point for that option when their checkbox state (true / false) matches
-    ``option.assigned_right_answer``. Missing submissions are treated as
-    ``False`` (the student didn't check the option), which matches what the
+    Each question is worth one equal share of the task score. The learner gets
+    credit for a question only when their complete set of selected options
+    exactly matches the answer key. Missing submissions are treated as
+    ``False`` (the learner didn't select the option), which matches what the
     client does in submitFC when it fills in unsubmitted options.
 
     Returns a grade in [0, task_max], rounded.
@@ -319,26 +319,43 @@ def _grade_quiz_task(contents: dict, submission_data: dict, task_max: int) -> in
         if q_uuid and o_uuid:
             answer_by_key[(q_uuid, o_uuid)] = bool(sub.get("answer"))
 
-    total_options = 0
-    correct_options = 0
+    total_questions = 0
+    correct_questions = 0
     for question in questions:
         if not isinstance(question, dict):
             continue
         q_uuid = question.get("questionUUID")
         options = question.get("options") or []
+        if not q_uuid or not isinstance(options, list):
+            continue
+
+        valid_option_ids: set = set()
+        answer_key: set = set()
+        selected: set = set()
         for option in options:
             if not isinstance(option, dict):
                 continue
-            total_options += 1
             o_uuid = option.get("optionUUID")
-            expected = bool(option.get("assigned_right_answer"))
-            student_answer = answer_by_key.get((q_uuid, o_uuid), False)
-            if student_answer == expected:
-                correct_options += 1
+            if not o_uuid:
+                continue
+            valid_option_ids.add(o_uuid)
+            if bool(option.get("assigned_right_answer")):
+                answer_key.add(o_uuid)
+            if answer_by_key.get((q_uuid, o_uuid), False):
+                selected.add(o_uuid)
 
-    if total_options == 0 or task_max <= 0:
+        # Empty/malformed questions are not gradable and therefore do not
+        # dilute the learner's score.
+        if not valid_option_ids:
+            continue
+
+        total_questions += 1
+        if selected == answer_key:
+            correct_questions += 1
+
+    if total_questions == 0 or task_max <= 0:
         return 0
-    return round(correct_options / total_options * task_max)
+    return round(correct_questions / total_questions * task_max)
 
 
 def _grade_form_task(contents: dict, submission_data: dict, task_max: int) -> int:

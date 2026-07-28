@@ -156,10 +156,10 @@ class TestGradeQuizTask:
         sub = _quiz_submission({"a": True, "b": False})
         assert _grade_quiz_task(_quiz_contents(), sub, 100) == 100
 
-    def test_partial_earns_proportional(self):
-        # 'a' correct, 'b' wrongly checked → 1 of 2 options correct → 50
+    def test_any_extra_selected_option_makes_the_question_incorrect(self):
+        # A question is correct only when the complete answer selection matches.
         sub = _quiz_submission({"a": True, "b": True})
-        assert _grade_quiz_task(_quiz_contents(), sub, 100) == 50
+        assert _grade_quiz_task(_quiz_contents(), sub, 100) == 0
 
     def test_all_wrong_earns_zero(self):
         # 'a' unchecked (wrong), 'b' checked (wrong) → 0 of 2 correct
@@ -167,9 +167,8 @@ class TestGradeQuizTask:
         assert _grade_quiz_task(_quiz_contents(), sub, 100) == 0
 
     def test_missing_submission_treated_as_unchecked(self):
-        # No submissions at all: 'a' should be checked but isn't (wrong),
-        # 'b' should be unchecked and is (correct) → 1 of 2 → 50
-        assert _grade_quiz_task(_quiz_contents(), {"submissions": []}, 100) == 50
+        # No submissions means the question's required answer was not selected.
+        assert _grade_quiz_task(_quiz_contents(), {"submissions": []}, 100) == 0
 
     def test_zero_options_returns_zero(self):
         assert _grade_quiz_task({"questions": []}, {"submissions": []}, 100) == 0

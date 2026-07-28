@@ -67,7 +67,9 @@ interface LearnHousePlayerProps {
   noSkip?: boolean
 }
 
-const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
+// BBU policy: learners may slow down or modestly speed up a lesson, but
+// faster speeds compromise the instructional content and CEU integrity.
+const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25]
 
 /**
  * Video.js-based player (default skin): adaptive HLS with an automatic quality
