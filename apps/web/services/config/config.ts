@@ -141,8 +141,22 @@ const isOnCustomDomain = (): boolean => {
   return !isSubdomainOf(hostname, domain) && !isSameHost(hostname, domain) && !isLocalhostCheck(hostname)
 }
 
+// The browser must use the public, same-origin API host so its auth cookies
+// remain scoped to the domain a learner opened. Server-side rendering, however,
+// should not depend on public DNS: during a custom-domain cutover it may still
+// resolve to the previous host. Railway runs the API alongside the web process,
+// so an optional private URL keeps both public domains usable throughout that
+// transition.
+const getInternalAPIUrl = (): string => {
+  if (typeof window !== 'undefined') return ''
+  const internalUrl = getConfig('LEARNHOUSE_INTERNAL_API_URL').trim()
+  return internalUrl ? `${internalUrl.replace(/\/+$/, '')}/` : ''
+}
+
 // Derive API URL from backend URL (with backward compat for NEXT_PUBLIC_LEARNHOUSE_API_URL)
 const deriveAPIUrl = (): string => {
+  const internalApiUrl = getInternalAPIUrl()
+  if (internalApiUrl) return internalApiUrl
   // Backward compat: if explicit API URL is set, use it
   const explicitApiUrl = getConfig('NEXT_PUBLIC_LEARNHOUSE_API_URL')
   if (explicitApiUrl) return explicitApiUrl
@@ -401,7 +415,6 @@ export const getDefaultOrg = () => {
   // 3. Default
   return 'default'
 }
-
 
 
 
