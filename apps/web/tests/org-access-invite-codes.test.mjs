@@ -24,4 +24,15 @@ describe("organization invite-code management", () => {
       /Invite codes also work in open organizations/
     );
   });
+
+  test("renders and copies an absolute public signup URL", () => {
+    assert.match(
+      orgAccessSource,
+      /getUriWithoutOrg\(`\/signup\?inviteCode=\$\{invite\.invite_code\}`\)/
+    );
+    assert.doesNotMatch(
+      orgAccessSource,
+      /getUriWithOrg\(org\.slug, `\/signup\?inviteCode=/
+    );
+  });
 });
