@@ -23,6 +23,8 @@ from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
+from src.security.auth import get_current_user, resolve_acting_user_id
+from src.db.users import User, AnonymousUser
 from src.bbu_payments.models import (
     BBUAffiliate, BBUCommission, BBUPayout, BBUReferralClick, BBUOrder, BBUProduct,
 )
@@ -107,8 +109,11 @@ async def join_post(request: Request, db_session: AsyncSession = Depends(get_db_
         if not affiliate.name and name:
             affiliate.name = name
     else:
+        ref_code = aff.gen_ref_code(name)
+        while await aff.get_affiliate_by_ref(db_session, ref_code):
+            ref_code = aff.gen_ref_code(name)
         affiliate = BBUAffiliate(
-            org_id=1, name=name, email=email, ref_code=aff.gen_ref_code(name),
+            org_id=1, name=name, email=email, ref_code=ref_code,
             status="pending", portal_token=aff.gen_token(), created_at=aff._iso(_now()),
         )
         db_session.add(affiliate)
@@ -182,8 +187,94 @@ async def portal(token: str, request: Request, db_session: AsyncSession = Depend
     if not affiliate:
         raise HTTPException(404, "Portal not found")
     e = await _earnings(db_session, affiliate.id)
+    e["details"] = await _commission_details(db_session, e["rows"])
     payouts = (await db_session.execute(
         select(BBUPayout).where(BBUPayout.affiliate_id == affiliate.id).order_by(BBUPayout.id.desc())
+    )).scalars().all()
+    return HTMLResponse(portal_page(affiliate, e, payouts, _base_url(request)))
+
+
+async def _commission_details(db_session: AsyncSession, commissions: list[BBUCommission]):
+    """Build the member-facing referral ledger from the order attached to each
+    commission. Historical Circle affiliate sales are restored as BBUOrder rows,
+    so legacy and new referrals use the same display path."""
+    order_ids = [c.order_id for c in commissions if c.order_id]
+    orders = {}
+    products = {}
+    if order_ids:
+        order_rows = (await db_session.execute(
+            select(BBUOrder).where(BBUOrder.id.in_(order_ids))
+        )).scalars().all()
+        orders = {o.id: o for o in order_rows}
+        product_ids = {o.product_id for o in order_rows if o.product_id}
+        if product_ids:
+            product_rows = (await db_session.execute(
+                select(BBUProduct).where(BBUProduct.id.in_(product_ids))
+            )).scalars().all()
+            products = {p.id: p.name for p in product_rows}
+
+    details = []
+    for commission in sorted(
+        commissions, key=lambda row: row.created_at or "", reverse=True
+    ):
+        order = orders.get(commission.order_id)
+        extra = (order.extra or {}) if order else {}
+        details.append({
+            "date": (commission.created_at or "")[:10],
+            "customer": (
+                extra.get("customer_name")
+                or (order.email if order else "")
+                or "Referral"
+            ),
+            "product": (
+                products.get(order.product_id, "") if order else ""
+            ) or extra.get("product_name", ""),
+            "sale_amount_cents": order.amount_cents if order else commission.basis_cents,
+            "commission_amount_cents": commission.amount_cents,
+            "status": commission.status,
+        })
+    return details
+
+
+@router.get("/me", response_class=HTMLResponse)
+async def my_affiliate_portal(
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    user=Depends(get_current_user),
+):
+    """Open the signed-in learner's affiliate dashboard by account email.
+
+    This restores the account-level dashboard Circle affiliates previously had;
+    they no longer need an admin to locate or resend a private portal token.
+    Non-affiliates see the normal join flow.
+    """
+    uid = (
+        resolve_acting_user_id(user)
+        if user and not isinstance(user, AnonymousUser)
+        else 0
+    )
+    if not uid:
+        raise HTTPException(401, "Sign in required")
+    account = (await db_session.execute(
+        select(User).where(User.id == uid)
+    )).scalars().first()
+    if not account:
+        raise HTTPException(404, "Account not found")
+    affiliate = (await db_session.execute(
+        select(BBUAffiliate).where(
+            BBUAffiliate.org_id == 1,
+            BBUAffiliate.email == account.email.strip().lower(),
+        )
+    )).scalars().first()
+    if not affiliate:
+        return HTMLResponse(join_page(_base_url(request)))
+
+    e = await _earnings(db_session, affiliate.id)
+    e["details"] = await _commission_details(db_session, e["rows"])
+    payouts = (await db_session.execute(
+        select(BBUPayout).where(
+            BBUPayout.affiliate_id == affiliate.id
+        ).order_by(BBUPayout.id.desc())
     )).scalars().all()
     return HTMLResponse(portal_page(affiliate, e, payouts, _base_url(request)))
 
@@ -320,6 +411,7 @@ async def admin_detail(aff_id: int, request: Request, db_session: AsyncSession =
     # clicks + payouts
     clicks = (await db_session.execute(select(_func.count()).select_from(BBUReferralClick).where(
         BBUReferralClick.affiliate_id == aff_id))).scalar() or 0
+    clicks += a.legacy_visitors_count or 0
     payouts = (await db_session.execute(select(BBUPayout).where(
         BBUPayout.affiliate_id == aff_id).order_by(BBUPayout.id.desc()))).scalars().all()
     payout_rows = [{"amount": round((p.amount_cents or 0) / 100, 2), "status": p.status,
@@ -330,7 +422,8 @@ async def admin_detail(aff_id: int, request: Request, db_session: AsyncSession =
         "referral_link": f"{base}/api/v1/bbu/r/{a.ref_code}",
         "portal_link": (f"{base}/api/v1/bbu/affiliate/portal/{a.portal_token}" if a.portal_token else ""),
         "join_link": f"{base}/api/v1/bbu/affiliate/join",
-        "clicks": int(clicks), "converted": len(referred),
+        "clicks": int(clicks), "leads": int(a.legacy_leads_count or 0),
+        "converted": len(referred),
         "earned": {k: round(v / 100, 2) for k, v in earned.items()},
         "referred": referred, "commissions": commissions, "payouts": payout_rows,
     }
@@ -351,7 +444,7 @@ async def admin_create(request: Request, db_session: AsyncSession = Depends(get_
     if existing:
         return {"ok": True, "id": existing.id, "already": True, "ref_code": existing.ref_code}
     code = aff.gen_ref_code(name or email)
-    while (await db_session.execute(select(BBUAffiliate).where(BBUAffiliate.ref_code == code))).scalars().first():
+    while await aff.get_affiliate_by_ref(db_session, code):
         code = aff.gen_ref_code(name or email)
     rate = body.get("commission_rate")
     a = BBUAffiliate(org_id=1, name=name, email=email, ref_code=code,
@@ -389,15 +482,17 @@ async def admin_import(request: Request, db_session: AsyncSession = Depends(get_
         try:
             ex = (await db_session.execute(select(BBUAffiliate).where(
                 BBUAffiliate.org_id == 1,
-                (BBUAffiliate.email == email) | (BBUAffiliate.ref_code == code)))).scalars().first()
+                BBUAffiliate.email == email,
+            ))).scalars().first()
+            if not ex and code:
+                ex = await aff.get_affiliate_by_ref(db_session, code)
             if ex:
                 existing += 1
                 continue
             if not code:
                 code = aff.gen_ref_code(name or email)
             # avoid ref_code collisions with a different affiliate
-            while (await db_session.execute(select(BBUAffiliate).where(
-                    BBUAffiliate.ref_code == code))).scalars().first():
+            while await aff.get_affiliate_by_ref(db_session, code):
                 code = aff.gen_ref_code(name or email)
             if dry:
                 created += 1

@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.bbu_payments.models import (
-    BBUAffiliate, BBUAffiliateSettings, BBUCommission, BBUReferralClick, BBUOrder,
+    BBUAffiliate, BBUAffiliateRefAlias, BBUAffiliateSettings, BBUCommission,
+    BBUReferralClick, BBUOrder,
 )
 
 
@@ -49,9 +50,25 @@ def gen_token() -> str:
 async def get_affiliate_by_ref(db: AsyncSession, ref_code: str, org_id: int = 1):
     if not ref_code:
         return None
-    return (await db.execute(
+    affiliate = (await db.execute(
         select(BBUAffiliate).where(
             BBUAffiliate.ref_code == ref_code, BBUAffiliate.org_id == org_id
+        )
+    )).scalars().first()
+    if affiliate:
+        return affiliate
+    alias = (await db.execute(
+        select(BBUAffiliateRefAlias).where(
+            BBUAffiliateRefAlias.ref_code == ref_code,
+            BBUAffiliateRefAlias.org_id == org_id,
+        )
+    )).scalars().first()
+    if not alias:
+        return None
+    return (await db.execute(
+        select(BBUAffiliate).where(
+            BBUAffiliate.id == alias.affiliate_id,
+            BBUAffiliate.org_id == org_id,
         )
     )).scalars().first()
 

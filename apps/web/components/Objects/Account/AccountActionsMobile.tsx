@@ -1,7 +1,7 @@
 'use client'
 import React from 'react'
 import Link from 'next/link'
-import { User, Lock, ShoppingBag, Settings } from 'lucide-react'
+import { BadgeDollarSign, User, Lock, ShoppingBag, Settings } from 'lucide-react'
 import { getUriWithOrg } from '@services/config/config'
 import { useTranslation } from 'react-i18next'
 
@@ -11,10 +11,11 @@ interface AccountActionsMobileProps {
 }
 
 const NAV_ITEMS = [
-  { id: 'general', icon: Settings, labelKey: 'account.general' },
-  { id: 'profile', icon: User, labelKey: 'account.profile' },
-  { id: 'security', icon: Lock, labelKey: 'account.security' },
-  { id: 'purchases', icon: ShoppingBag, labelKey: 'account.purchases' },
+  { id: 'general', icon: Settings, labelKey: 'account.general', label: '' },
+  { id: 'profile', icon: User, labelKey: 'account.profile', label: '' },
+  { id: 'security', icon: Lock, labelKey: 'account.security', label: '' },
+  { id: 'purchases', icon: ShoppingBag, labelKey: 'account.purchases', label: '' },
+  { id: 'affiliate', icon: BadgeDollarSign, labelKey: '', label: 'Affiliate' },
 ]
 
 export function AccountActionsMobile({ orgslug, currentSubpage }: AccountActionsMobileProps) {
@@ -39,7 +40,7 @@ export function AccountActionsMobile({ orgslug, currentSubpage }: AccountActions
               >
                 <Icon size={18} />
                 <span className="text-[10px] font-medium truncate max-w-[60px]">
-                  {t(item.labelKey)}
+                  {item.label || t(item.labelKey)}
                 </span>
               </Link>
             )

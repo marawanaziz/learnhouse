@@ -38,7 +38,7 @@ def join_page(base):
         f"const r=await fetch('{base}/api/v1/bbu/affiliate/join',{{method:'POST',"
         f"headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{name,email}})}});"
         f"const d=await r.json();"
-        f"if(d.onboarding_url){{window.location=d.onboarding_url}}else{{b.textContent='Error — try again';b.disabled=false}}"
+        f"if(d.onboarding_url){{window.top.location=d.onboarding_url}}else{{b.textContent='Error — try again';b.disabled=false}}"
         f"}};"
         f"</script>"
     )
@@ -72,6 +72,15 @@ def portal_page(affiliate, earnings, payouts, base):
         f"<tr><td style='padding:8px 4px'>{p.period or '—'}</td><td>{_money(p.amount_cents)}</td>"
         f"<td><span class='pill'>{p.status}</span></td></tr>" for p in payouts
     ) or "<tr><td colspan='3' style='padding:12px 4px;color:#6b6f79'>No payouts yet — they'll appear here after your first monthly run.</td></tr>"
+    referral_rows = "".join(
+        f"<tr><td style='padding:8px 4px'>{row.get('date') or '—'}</td>"
+        f"<td>{row.get('customer') or 'Referral'}</td>"
+        f"<td>{row.get('product') or '—'}</td>"
+        f"<td>{_money(row.get('sale_amount_cents'))}</td>"
+        f"<td>{_money(row.get('commission_amount_cents'))}</td>"
+        f"<td><span class='pill'>{row.get('status') or 'pending'}</span></td></tr>"
+        for row in earnings.get("details", [])
+    ) or "<tr><td colspan='6' style='padding:12px 4px;color:#6b6f79'>No referred sales yet.</td></tr>"
 
     inner = (
         f"<div class='wrap' style='max-width:900px;margin:44px auto'>"
@@ -86,6 +95,12 @@ def portal_page(affiliate, earnings, payouts, base):
         f"<button class='btn' style='padding:12px 20px' onclick=\"navigator.clipboard.writeText('{link}');this.textContent='Copied!'\">Copy</button>"
         f"</div></div>"
         f"{stats}"
+        f"<div class='card' style='padding:22px;margin-bottom:22px;overflow-x:auto'>"
+        f"<h3 style='font-size:1.1rem;margin-bottom:10px'>Referral history</h3>"
+        f"<table style='width:100%;border-collapse:collapse;font-size:.92rem;min-width:700px'>"
+        f"<thead><tr style='text-align:left;color:#6b6f79;font-family:League Spartan;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase'>"
+        f"<th style='padding:6px 4px'>Date</th><th>Customer</th><th>Product</th><th>Sale</th><th>Commission</th><th>Status</th></tr></thead>"
+        f"<tbody>{referral_rows}</tbody></table></div>"
         f"<div class='card' style='padding:22px'>"
         f"<h3 style='font-size:1.1rem;margin-bottom:10px'>Payout history</h3>"
         f"<table style='width:100%;border-collapse:collapse;font-size:.92rem'>"
@@ -125,6 +140,7 @@ async function openDetail(id){
     +'<div style="padding:20px 22px">'
     +'<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">'
     +'<div style="'+STAT+'"><div style="font-size:.7rem;color:#6b6f79;text-transform:uppercase">Clicks</div><div style="font-size:1.4rem;font-weight:700;color:#113d5d">'+d.clicks+'</div></div>'
+    +'<div style="'+STAT+'"><div style="font-size:.7rem;color:#6b6f79;text-transform:uppercase">Leads</div><div style="font-size:1.4rem;font-weight:700;color:#113d5d">'+(d.leads||0)+'</div></div>'
     +'<div style="'+STAT+'"><div style="font-size:.7rem;color:#6b6f79;text-transform:uppercase">Enrolled</div><div style="font-size:1.4rem;font-weight:700;color:#113d5d">'+d.converted+'</div></div>'
     +'<div style="'+STAT+'"><div style="font-size:.7rem;color:#6b6f79;text-transform:uppercase">Earned</div><div style="font-size:1.4rem;font-weight:700;color:#113d5d">$'+totalEarned+'</div></div></div>'
     +'<div style="'+CARD+'"><h3 style="margin:0 0 8px;font-size:1rem;color:#113d5d">Their links — copy &amp; send</h3>'+linkRow('Referral link (share this)',d.referral_link)+linkRow('Private earnings portal',d.portal_link)+'</div>'

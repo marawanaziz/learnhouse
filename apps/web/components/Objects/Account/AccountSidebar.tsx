@@ -2,7 +2,7 @@
 import React from 'react'
 import Link from 'next/link'
 import { useTranslation } from 'react-i18next'
-import { User, Lock, ShoppingBag, Settings } from 'lucide-react'
+import { BadgeDollarSign, User, Lock, ShoppingBag, Settings } from 'lucide-react'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import UserAvatar from '@components/Objects/UserAvatar'
 import { getUriWithOrg } from '@services/config/config'
@@ -13,10 +13,11 @@ interface AccountSidebarProps {
 }
 
 const NAV_ITEMS = [
-  { id: 'general', icon: Settings, labelKey: 'account.general' },
-  { id: 'profile', icon: User, labelKey: 'account.profile' },
-  { id: 'security', icon: Lock, labelKey: 'account.security' },
-  { id: 'purchases', icon: ShoppingBag, labelKey: 'account.purchases' },
+  { id: 'general', icon: Settings, labelKey: 'account.general', label: '' },
+  { id: 'profile', icon: User, labelKey: 'account.profile', label: '' },
+  { id: 'security', icon: Lock, labelKey: 'account.security', label: '' },
+  { id: 'purchases', icon: ShoppingBag, labelKey: 'account.purchases', label: '' },
+  { id: 'affiliate', icon: BadgeDollarSign, labelKey: '', label: 'Affiliate Dashboard' },
 ]
 
 export function AccountSidebar({ orgslug, currentSubpage }: AccountSidebarProps) {
@@ -71,7 +72,7 @@ export function AccountSidebar({ orgslug, currentSubpage }: AccountSidebarProps)
                   }`}
                 >
                   <Icon size={18} className={isActive ? 'text-white' : 'text-gray-500'} />
-                  <span className="text-sm font-medium">{t(item.labelKey)}</span>
+                  <span className="text-sm font-medium">{item.label || t(item.labelKey)}</span>
                 </Link>
               )
             })}

@@ -157,8 +157,36 @@ class BBUAffiliate(SQLModel, table=True):
     commission_rate: Optional[float] = Field(default=None)
     commissionable_events: Optional[str] = Field(default=None, sa_column=Column(String(120)))
     legacy_source: str = Field(default="", sa_column=Column(String(24)))  # thrivecart|circle|""
+    legacy_external_id: str = Field(default="", sa_column=Column(String(64), index=True))
+    legacy_status: str = Field(default="", sa_column=Column(String(24)))
+    legacy_payout_email: str = Field(default="", sa_column=Column(String(320)))
+    legacy_visitors_count: int = Field(default=0)
+    legacy_leads_count: int = Field(default=0)
+    legacy_conversions_count: int = Field(default=0)
     portal_token: str = Field(default="", sa_column=Column(String(64), index=True))  # magic link to portal
     created_at: str = Field(default="", sa_column=Column(String(40)))
+
+
+class BBUAffiliateRefAlias(SQLModel, table=True):
+    """A legacy referral code that resolves to an affiliate's primary code.
+
+    Circle and ThriveCart sometimes assigned different codes to the same
+    person. Keeping those codes as aliases preserves every historical link
+    without overwriting the affiliate's current primary identity.
+    """
+    __tablename__ = "bbu_affiliate_ref_alias"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    affiliate_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    ref_code: str = Field(
+        default="", sa_column=Column(String(64), nullable=False, unique=True, index=True)
+    )
+    source: str = Field(default="", sa_column=Column(String(24)))
+    legacy_external_id: str = Field(default="", sa_column=Column(String(64), index=True))
+    created_at: str = Field(default="", sa_column=Column(String(40)))
+    extra: Optional[dict] = Field(default=None, sa_column=Column(JSON))
 
 
 class BBUReferralClick(SQLModel, table=True):
