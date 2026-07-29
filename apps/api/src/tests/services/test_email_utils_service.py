@@ -40,6 +40,7 @@ def _config(**overrides):
         smtp_use_tls=overrides.pop("smtp_use_tls", True),
     )
     return SimpleNamespace(
+        site_name=overrides.pop("site_name", "Birth & Baby University"),
         hosting_config=hosting,
         general_config=general,
         mailing_config=mailing,
@@ -295,7 +296,7 @@ class TestEmailUtilsService:
         assert result == {"id": "msg-1"}
         assert send_email.__module__ == "src.services.email.utils"
         assert mock_resend_send.call_args.args[0] == {
-            "from": "LearnHouse <system@test.com>",
+            "from": "Birth & Baby University <system@test.com>",
             "to": ["to@test.com"],
             "subject": "Hello",
             "html": "<p>Body</p>",

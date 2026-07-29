@@ -13,8 +13,6 @@ import { AlertTriangle, Mail, User } from 'lucide-react'
 import Link from 'next/link'
 import { signup } from '@services/auth/auth'
 import { useOrg } from '@components/Contexts/OrgContext'
-import { signIn } from '@components/Contexts/AuthContext'
-import { getLEARNHOUSE_TOP_DOMAIN_VAL } from '@services/config/config'
 import { useTranslation } from 'react-i18next'
 import { PasswordStrengthIndicator, validatePasswordStrength } from '@components/Auth/PasswordStrengthIndicator'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
@@ -112,30 +110,6 @@ function OpenSignUpComponent() {
   })
 
   useEffect(() => { }, [org])
-
-  const handleGoogleSignIn = () => {
-    if (isBbu && !formik.values.bbu_audience) {
-      formik.setFieldTouched('bbu_audience', true)
-      setError('Please answer the doula or perinatal professional question before continuing.')
-      return
-    }
-    track(AnalyticsEvent.SignupGoogleClicked)
-    // Store org context in cookies before OAuth redirect
-    if (org?.slug) {
-      const topDomain = getLEARNHOUSE_TOP_DOMAIN_VAL();
-      const isSecure = window.location.protocol === 'https:';
-      const secureAttr = isSecure ? '; secure' : '';
-      const baseAttributes = `; path=/; SameSite=Lax${secureAttr}`;
-      const domainAttr = topDomain === 'localhost' ? '' : `; domain=.${topDomain}`;
-      document.cookie = `LH_oauth_orgslug=${org.slug}${baseAttributes}${domainAttr}`;
-      document.cookie = `LH_oauth_org_id=${org.id}${baseAttributes}${domainAttr}`;
-      if (isBbu) {
-        document.cookie = `LH_bbu_audience=${formik.values.bbu_audience}${baseAttributes}${domainAttr}`;
-      }
-    }
-    // Use absolute URL with current origin for custom domain support
-    signIn('google', { callbackUrl: `${window.location.origin}/redirect_from_auth` });
-  };
 
   return (
     <div className="m-auto w-full max-w-sm px-6 py-8 sm:py-0">
@@ -316,24 +290,6 @@ function OpenSignUpComponent() {
           </div>
         </FormLayout>
 
-        {/* Divider */}
-        <div className="relative my-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-200"></div>
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-3 bg-white text-gray-400">{t('common.or')}</span>
-          </div>
-        </div>
-
-        {/* Google Sign In */}
-        <button
-          onClick={handleGoogleSignIn}
-          className="flex items-center justify-center gap-2 w-full py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
-        >
-          <img src="https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg" alt="" className="w-4 h-4" />
-          <span>{t('auth.sign_in_with_google')}</span>
-        </button>
       </div>
 
       {/* Login Link */}

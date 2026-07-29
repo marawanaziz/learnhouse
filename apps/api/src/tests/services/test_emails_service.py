@@ -74,6 +74,12 @@ class TestEmailsService:
         second_body = send_email.call_args_list[1].kwargs["body"]
         assert "reset?email=user%2Btag%40test.com&amp;resetCode=code%20123" in first_body
         assert "reset-password?email=user%2Btag%40test.com&amp;resetCode=code%20123" in second_body
+        for body in (first_body, second_body):
+            assert "Birth &amp; Baby University" in body
+            assert "birth-and-baby-logo-tm.png" in body
+            assert "#113d5d" in body
+            assert "#6da0db" in body
+            assert "<svg" not in body
 
     def test_send_invitation_role_change_and_verification_email(self):
         with patch("src.services.users.emails.send_email", return_value=True) as send_email:
