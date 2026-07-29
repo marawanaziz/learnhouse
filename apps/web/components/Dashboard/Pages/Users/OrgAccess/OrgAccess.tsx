@@ -166,8 +166,9 @@ function OrgAccess() {
                 status="info"
               />
             </div>
-            {/* Invite codes section */}
-            <div className={joinMethod == 'open' ? 'opacity-20 pointer-events-none' : 'pointer-events-auto'}>
+            {/* Invite codes also work in open organizations. Group-linked codes
+                assign access without disabling the public signup flow. */}
+            <div>
               <div className="px-4 sm:px-6 py-4 border-t border-gray-100">
                 <h2 className="font-bold text-lg text-gray-800">{t('dashboard.users.signups.invite_codes.title')}</h2>
                 <p className="text-sm text-gray-500 mt-0.5">{t('dashboard.users.signups.invite_codes.subtitle')}</p>
