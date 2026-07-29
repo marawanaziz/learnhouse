@@ -4,11 +4,18 @@ Reuses the shell + brand tokens from branding.py so the affiliate pages match
 the storefront/checkout. Self-contained (inline CSS/JS) so nothing depends on
 the Next.js frontend build.
 """
+from html import escape
+from urllib.parse import quote
+
 from src.bbu_payments.branding import _shell, _price, NAVY, STEEL, ICE
 
 
 def _money(cents):
     return _price(cents or 0)
+
+
+def _h(value) -> str:
+    return escape(str(value or ""), quote=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -46,15 +53,126 @@ def join_page(base):
 
 
 # --------------------------------------------------------------------------- #
-def portal_page(affiliate, earnings, payouts, base):
-    link = f"{base}/api/v1/bbu/r/{affiliate.ref_code}"
-    active = affiliate.status == "active"
-    status_banner = "" if active else (
-        f"<div class='card' style='padding:18px;margin-bottom:22px;background:{ICE}'>"
-        f"<b>Finish setup:</b> connect your bank to start earning. "
-        f"<a style='color:{STEEL};font-weight:600' href='{base}/api/v1/bbu/affiliate/onboard/{affiliate.ref_code}'>Complete Stripe onboarding →</a>"
+def member_join_page(name: str, email: str, base: str, orgslug: str):
+    """Enrollment screen for a signed-in learner."""
+    onboarding_url = (
+        f"{base}/api/v1/bbu/affiliate/me/onboarding"
+        f"?orgslug={quote(orgslug or '')}"
+    )
+    inner = (
+        f"<div class='checkout'>"
+        f"<span class='eyebrow'>Affiliate Program</span>"
+        f"<h1 style='font-size:2rem;margin:12px 0 6px'>Earn 50% for every referral</h1>"
+        f"<p style='color:#4a5b68;margin-bottom:18px'>Share Birth &amp; Baby University's "
+        f"trainings and classes and earn commission on every enrollment you send.</p>"
+        f"<div class='card' style='padding:18px;margin-bottom:20px;background:{ICE}'>"
+        f"<div style='font-weight:700;color:{NAVY}'>{_h(name or email)}</div>"
+        f"<div style='color:#6b6f79;font-size:.9rem;margin-top:3px'>{_h(email)}</div>"
+        f"</div>"
+        f"<a class='btn' style='width:100%;display:block;text-align:center' "
+        f"target='_top' href='{_h(onboarding_url)}'>Become an affiliate &amp; set up payouts →</a>"
+        f"<div class='methods'>Your referral account is created using your signed-in profile. "
+        f"Stripe securely handles identity verification and bank details.</div>"
         f"</div>"
     )
+    return _shell("Affiliate Program", inner)
+
+
+# --------------------------------------------------------------------------- #
+def portal_page(
+    affiliate,
+    earnings,
+    payouts,
+    base,
+    *,
+    connect_state=None,
+    onboarding_url="",
+    dashboard_url="",
+):
+    link = f"{base}/api/v1/bbu/r/{affiliate.ref_code}"
+    state = connect_state or {
+        "status": "connected" if affiliate.payouts_enabled else "not_started",
+        "currently_due_count": 0,
+    }
+    connect_status = state.get("status") or "not_started"
+    if not onboarding_url:
+        onboarding_url = (
+            f"{base}/api/v1/bbu/affiliate/portal/"
+            f"{affiliate.portal_token}/onboarding"
+        )
+
+    if connect_status == "connected":
+        manage = (
+            f"<a class='btn' style='display:inline-block;padding:10px 16px;margin-top:12px' "
+            f"target='_top' href='{_h(dashboard_url)}'>Manage payout account →</a>"
+            if dashboard_url
+            else ""
+        )
+        status_banner = (
+            "<div class='card' style='padding:18px;margin-bottom:22px;"
+            "background:#edf8f2;border:1px solid #c7e8d3'>"
+            f"<b style='color:#176b3a'>Payout account connected</b>"
+            "<div style='color:#4a5b68;margin-top:5px'>Stripe has confirmed that this "
+            f"account can receive payouts.</div>{manage}</div>"
+        )
+    else:
+        due_count = int(state.get("currently_due_count") or 0)
+        if connect_status == "restricted":
+            heading = "Stripe needs additional information"
+            detail = (
+                "Your referrals and commissions are still being tracked, but Stripe "
+                "must resolve an account requirement before payouts can be sent."
+            )
+            button = "Resolve payout requirements →"
+            background = "#fff6ec"
+        elif connect_status == "pending_review":
+            heading = "Payout account is under review"
+            detail = (
+                "Stripe has your information and is reviewing the account. You can "
+                "reopen setup if Stripe asks for anything else."
+            )
+            button = "Review payout setup →"
+            background = ICE
+        elif connect_status == "incomplete":
+            heading = "Finish your payout setup"
+            suffix = (
+                f" Stripe currently needs {due_count} more item"
+                f"{'s' if due_count != 1 else ''}."
+                if due_count
+                else ""
+            )
+            detail = (
+                "Your referral link already works and commissions will continue "
+                f"accumulating. Complete Stripe onboarding before we can pay you.{suffix}"
+            )
+            button = "Continue Stripe onboarding →"
+            background = ICE
+        elif connect_status == "unavailable":
+            heading = "Stripe status is temporarily unavailable"
+            detail = (
+                "Your affiliate history and commissions are safe. You can retry "
+                "payout setup now or return to this page in a few minutes."
+            )
+            button = "Retry payout setup →"
+            background = ICE
+        else:
+            heading = "Set up your payouts"
+            detail = (
+                "Your referral link already works and commissions will continue "
+                "accumulating. Connect with Stripe so we can send your payouts."
+            )
+            button = "Connect your payout account →"
+            background = ICE
+        status_banner = (
+            f"<div class='card' style='padding:18px;margin-bottom:22px;background:{background}'>"
+            f"<b style='color:{NAVY}'>{heading}</b>"
+            f"<div style='color:#4a5b68;margin-top:5px'>{detail}</div>"
+            f"<a class='btn' style='display:inline-block;padding:10px 16px;margin-top:12px' "
+            f"target='_top' href='{_h(onboarding_url)}'>{button}</a>"
+            f"<div style='color:#6b6f79;font-size:.82rem;margin-top:9px'>"
+            f"Available balance: <b>{_money(earnings['available'])}</b></div></div>"
+        )
+
     stat = lambda label, val: (
         f"<div class='card' style='padding:22px'><div style='font-family:League Spartan;"
         f"font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:#6b6f79'>{label}</div>"
@@ -69,30 +187,34 @@ def portal_page(affiliate, earnings, payouts, base):
         + "</div>"
     )
     payout_rows = "".join(
-        f"<tr><td style='padding:8px 4px'>{p.period or '—'}</td><td>{_money(p.amount_cents)}</td>"
-        f"<td><span class='pill'>{p.status}</span></td></tr>" for p in payouts
+        f"<tr><td style='padding:8px 4px'>{_h(p.period or '—')}</td><td>{_money(p.amount_cents)}</td>"
+        f"<td><span class='pill'>{_h(p.status)}</span></td></tr>" for p in payouts
     ) or "<tr><td colspan='3' style='padding:12px 4px;color:#6b6f79'>No payouts yet — they'll appear here after your first monthly run.</td></tr>"
     referral_rows = "".join(
-        f"<tr><td style='padding:8px 4px'>{row.get('date') or '—'}</td>"
-        f"<td>{row.get('customer') or 'Referral'}</td>"
-        f"<td>{row.get('product') or '—'}</td>"
+        f"<tr><td style='padding:8px 4px'>{_h(row.get('date') or '—')}</td>"
+        f"<td>{_h(row.get('customer') or 'Referral')}</td>"
+        f"<td>{_h(row.get('product') or '—')}</td>"
         f"<td>{_money(row.get('sale_amount_cents'))}</td>"
         f"<td>{_money(row.get('commission_amount_cents'))}</td>"
-        f"<td><span class='pill'>{row.get('status') or 'pending'}</span></td></tr>"
+        f"<td><span class='pill'>{_h(row.get('status') or 'pending')}</span></td></tr>"
         for row in earnings.get("details", [])
     ) or "<tr><td colspan='6' style='padding:12px 4px;color:#6b6f79'>No referred sales yet.</td></tr>"
 
     inner = (
         f"<div class='wrap' style='max-width:900px;margin:44px auto'>"
         f"<span class='eyebrow'>Affiliate Dashboard</span>"
-        f"<h1 style='font-size:2rem;margin:10px 0 4px'>Welcome{', ' + affiliate.name if affiliate.name else ''}</h1>"
-        f"<p style='color:#4a5b68'>Status: <b style='color:{NAVY}'>{affiliate.status}</b> · Commission: <b>{int((affiliate.commission_rate or 0.5)*100)}%</b></p>"
+        f"<h1 style='font-size:2rem;margin:10px 0 4px'>Welcome"
+        f"{', ' + _h(affiliate.name) if affiliate.name else ''}</h1>"
+        f"<p style='color:#4a5b68'>Status: <b style='color:{NAVY}'>{_h(affiliate.status)}</b> "
+        f"· Commission: <b>{int((affiliate.commission_rate or 0.5)*100)}%</b></p>"
         f"<div style='height:22px'></div>{status_banner}"
         f"<div class='card' style='padding:22px'>"
         f"<div style='font-family:League Spartan;font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:#6b6f79;margin-bottom:8px'>Your referral link</div>"
         f"<div style='display:flex;gap:10px;align-items:center'>"
-        f"<input id='reflink' readonly value='{link}' style='flex:1'>"
-        f"<button class='btn' style='padding:12px 20px' onclick=\"navigator.clipboard.writeText('{link}');this.textContent='Copied!'\">Copy</button>"
+        f"<input id='reflink' readonly value='{_h(link)}' style='flex:1'>"
+        f"<button class='btn' style='padding:12px 20px' "
+        f"onclick=\"navigator.clipboard.writeText(document.getElementById('reflink').value);"
+        f"this.textContent='Copied!'\">Copy</button>"
         f"</div></div>"
         f"{stats}"
         f"<div class='card' style='padding:22px;margin-bottom:22px;overflow-x:auto'>"

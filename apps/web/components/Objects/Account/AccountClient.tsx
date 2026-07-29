@@ -62,7 +62,12 @@ const AccountClient = ({ orgslug, org_id, subpage }: AccountClientProps) => {
       case 'purchases':
         return <AccountPurchases orgId={org_id} orgslug={orgslug} />
       case 'affiliate':
-        return <BBUEmbed path="bbu/affiliate/me" title="Affiliate Dashboard" />
+        return (
+          <BBUEmbed
+            path={`bbu/affiliate/me?orgslug=${encodeURIComponent(orgslug)}`}
+            title="Affiliate Dashboard"
+          />
+        )
       default:
         return <AccountGeneral />
     }
