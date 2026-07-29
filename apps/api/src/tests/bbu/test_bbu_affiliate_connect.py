@@ -205,7 +205,7 @@ def test_member_redirect_rejects_untrusted_org_path(monkeypatch):
 
     assert url == (
         "https://learn.birthandbabyuniversity.com/"
-        "birth-and-baby-university/account/affiliate?stripe=connected"
+        "account/affiliate?stripe=connected"
     )
 
 

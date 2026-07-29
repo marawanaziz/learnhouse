@@ -85,7 +85,10 @@ def _safe_orgslug(value: str) -> str:
 
 
 def _member_account_url(request: Request, orgslug: str, result: str = "") -> str:
-    path = f"/{_safe_orgslug(orgslug)}/account/affiliate"
+    # The learner-facing app keeps account routes relative to the active
+    # tenant/custom domain. Prefixing the organization slug here produces a
+    # non-existent route on BBU's custom domain after Stripe returns.
+    path = "/account/affiliate"
     if result:
         path += "?" + urlencode({"stripe": result})
     return f"{_base_url(request)}{path}"
