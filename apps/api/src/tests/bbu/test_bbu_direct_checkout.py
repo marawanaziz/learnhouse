@@ -192,3 +192,69 @@ async def test_wordpress_checkout_slug_resolves_to_product(db, org):
     )
 
     assert product_id == 1
+
+
+@pytest.mark.asyncio
+async def test_every_published_wordpress_checkout_alias_resolves(db, org):
+    products = [
+        (1, "Certified Birth Doula Training"),
+        (5, "Intro to Childbirth"),
+        (6, "Breastfeeding"),
+        (7, "Birth + Postpartum Doula Training Bundle"),
+        (11, "Preparing for Your Hospital Birth"),
+        (12, "Comfort Measures"),
+        (14, "Bringing Home Baby"),
+        (25, "Doula Mentorship"),
+        (26, "Doula Agency Owner Mentorship"),
+        (27, "Agency Owner Package"),
+        (29, "Preparing for Your Hospital Birth in Chicago"),
+    ]
+    for product_id, name in products:
+        db.add(BBUProduct(id=product_id, org_id=org.id, name=name))
+    await db.commit()
+
+    expected_ids = {
+        "august-2026-doula-mentorship": 25,
+        "breastfeeding-virtual": 6,
+        "bringing-home-baby-virtual": 14,
+        "certified-birth-and-postpartum-doula-training": 7,
+        "certified-birth-doula-training-virtual": 1,
+        "comfort-measures-virtual": 12,
+        "february-2026-doula-mentorship-program": 25,
+        "intro-to-childbirth-virtual": 5,
+        "jump-start-or-grow-your-doula-agency-package": 27,
+        "march-2026-doula-agency-owner-mentorship-program": 26,
+        "march-2026-doula-mentorship-program": 25,
+        "preparing-for-you-hospital-birth-in-chicago-virtual": 29,
+        "preparing-for-you-hospital-birth-virtual": 11,
+        "september-2026-doula-agency-owner-mentorship-program": 26,
+    }
+
+    for checkout_slug, product_id in expected_ids.items():
+        assert await payments_router._resolve_checkout_product_id(
+            db,
+            checkout_slug,
+        ) == product_id
+
+
+@pytest.mark.asyncio
+async def test_checkout_head_validates_without_creating_stripe_session(
+    db, org
+):
+    db.add(
+        BBUProduct(
+            id=6,
+            org_id=org.id,
+            name="Breastfeeding",
+            price_cents=4700,
+        )
+    )
+    await db.commit()
+
+    response = await payments_router.direct_checkout_head(
+        "breastfeeding-virtual",
+        db,
+    )
+
+    assert response.status_code == 204
+    assert response.headers["cache-control"] == "no-store"

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
 import stripe
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -55,6 +55,40 @@ CHECKOUT_RETURN_HOSTS = {
     "www.birthandbabyuniversity.com",
     "chicagofamilydoulas.com",
     "www.chicagofamilydoulas.com",
+}
+
+# WordPress has used several customer-facing checkout slugs that intentionally
+# differ from the catalogue product names (for example, adding "-virtual" or a
+# cohort month). Keep those published links stable while resolving them to the
+# current product. Values are canonical product-name slugs, not database ids, so
+# the mapping remains valid if products are ever reseeded with different ids.
+CHECKOUT_PRODUCT_ALIASES = {
+    "august-2026-doula-mentorship": "doula-mentorship",
+    "breastfeeding-virtual": "breastfeeding",
+    "bringing-home-baby-virtual": "bringing-home-baby",
+    "certified-birth-and-postpartum-doula-training": (
+        "birth-postpartum-doula-training-bundle"
+    ),
+    "certified-birth-doula-training-virtual": (
+        "certified-birth-doula-training"
+    ),
+    "comfort-measures-virtual": "comfort-measures",
+    "february-2026-doula-mentorship-program": "doula-mentorship",
+    "intro-to-childbirth-virtual": "intro-to-childbirth",
+    "jump-start-or-grow-your-doula-agency-package": "agency-owner-package",
+    "march-2026-doula-agency-owner-mentorship-program": (
+        "doula-agency-owner-mentorship"
+    ),
+    "march-2026-doula-mentorship-program": "doula-mentorship",
+    "preparing-for-you-hospital-birth-in-chicago-virtual": (
+        "preparing-for-your-hospital-birth-in-chicago"
+    ),
+    "preparing-for-you-hospital-birth-virtual": (
+        "preparing-for-your-hospital-birth"
+    ),
+    "september-2026-doula-agency-owner-mentorship-program": (
+        "doula-agency-owner-mentorship"
+    ),
 }
 
 router = APIRouter()
@@ -129,6 +163,7 @@ async def _resolve_checkout_product_id(
     ref = (product_ref or "").strip()
     if ref.isdigit():
         return int(ref)
+    ref = CHECKOUT_PRODUCT_ALIASES.get(ref, ref)
 
     products = (
         await db_session.execute(
@@ -848,6 +883,16 @@ async def direct_checkout(
             status_code=303,
         )
     return RedirectResponse(url=result["url"], status_code=303)
+
+
+@router.head("/checkout/{product_ref}")
+async def direct_checkout_head(
+    product_ref: str,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Validate a public checkout link without creating a Stripe Session."""
+    await _resolve_checkout_product_id(db_session, product_ref)
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 async def _grant_course_access(db_session: AsyncSession, order, product):
