@@ -1,6 +1,6 @@
 from typing import Optional, TYPE_CHECKING
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlmodel import Field, SQLModel
 from sqlalchemy import JSON, Column, Index
 from sqlalchemy.dialects.postgresql import JSONB
@@ -55,6 +55,25 @@ class UserRead(UserBase):
     last_login_at: Optional[str] = None
     signup_method: Optional[str] = None
     is_superadmin: bool = False
+
+    @field_validator("extra_metadata", mode="before")
+    @classmethod
+    def normalize_legacy_extra_metadata(cls, value):
+        """Read legacy metadata arrays without breaking user serialization.
+
+        A historical migration appended metadata values to the JSONB column,
+        leaving a small number of rows shaped like ``[null, {...}, {...}]``.
+        Current write models remain strict dictionaries; only the read model
+        repairs that legacy shape by merging its dictionary entries.
+        """
+        if not isinstance(value, list):
+            return value
+
+        merged = {}
+        for item in value:
+            if isinstance(item, dict):
+                merged.update(item)
+        return merged or None
 
 
 class UserReadPublic(SQLModel):

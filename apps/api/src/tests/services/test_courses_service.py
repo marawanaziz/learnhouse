@@ -30,7 +30,7 @@ from src.db.resource_authors import (
     ResourceAuthorshipEnum,
     ResourceAuthorshipStatusEnum,
 )
-from src.db.users import APITokenUser, AnonymousUser
+from src.db.users import APITokenUser, AnonymousUser, User
 from src.security.rbac import AccessAction, AccessContext
 from src.services.courses.courses import (
     clone_course,
@@ -499,6 +499,49 @@ class TestGetCoursesOrgslug:
 
         assert len(result) == 1
         assert len(result[0].authors) >= 2
+
+    @pytest.mark.asyncio
+    async def test_get_courses_orgslug_normalizes_legacy_author_metadata(
+        self, db, org, course, regular_user, admin_user, mock_request, bypass_rbac
+    ):
+        # A historical migration produced JSONB arrays such as
+        # [null, {"circle_migration": {...}}]. One malformed author must not
+        # make the entire dashboard course list return HTTP 500.
+        author_row = await db.get(User, regular_user.id)
+        assert author_row is not None
+        author_row.extra_metadata = [  # type: ignore[assignment]
+            None,
+            {"circle_migration": {"public_uid": "legacy-user"}},
+        ]
+        db.add(author_row)
+        db.add(
+            ResourceAuthor(
+                resource_uuid=course.course_uuid,
+                user_id=regular_user.id,
+                authorship=ResourceAuthorshipEnum.CONTRIBUTOR,
+                authorship_status=ResourceAuthorshipStatusEnum.ACTIVE,
+                creation_date=str(datetime.now()),
+                update_date=str(datetime.now()),
+            )
+        )
+        await db.commit()
+
+        with patch(
+            "src.services.courses.courses.is_user_superadmin", return_value=False
+        ):
+            result = await get_courses_orgslug(
+                mock_request, admin_user, "test-org", db
+            )
+
+        assert len(result) == 1
+        author = next(
+            entry.user
+            for entry in result[0].authors
+            if entry.user.id == regular_user.id
+        )
+        assert author.extra_metadata == {
+            "circle_migration": {"public_uid": "legacy-user"}
+        }
 
 
 class TestGetCoursesCountOrgslug:
