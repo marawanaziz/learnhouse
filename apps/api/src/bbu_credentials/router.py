@@ -12,7 +12,12 @@ from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
-from src.db.users import AnonymousUser, APITokenUser, User
+from src.db.users import (
+    AnonymousUser,
+    APITokenUser,
+    SuperadminAPITokenUser,
+    User,
+)
 from src.db.user_organizations import UserOrganization
 from src.db.courses.courses import Course
 from src.db.courses.certifications import CertificateUser, Certifications
@@ -56,7 +61,9 @@ async def _user_by_email(db: AsyncSession, email: str) -> User:
 
 async def _member_user(request: Request, db: AsyncSession) -> User:
     principal = await get_current_user(request, db)
-    if isinstance(principal, (AnonymousUser, APITokenUser)):
+    if isinstance(
+        principal, (AnonymousUser, APITokenUser, SuperadminAPITokenUser)
+    ):
         raise HTTPException(401, "A signed-in member account is required.")
     user_id = resolve_acting_user_id(principal)
     membership = (
@@ -350,7 +357,9 @@ async def application_document_download(
     db_session: AsyncSession = Depends(get_db_session),
 ):
     principal = await get_current_user(request, db_session)
-    if isinstance(principal, (AnonymousUser, APITokenUser)):
+    if isinstance(
+        principal, (AnonymousUser, APITokenUser, SuperadminAPITokenUser)
+    ):
         raise HTTPException(401, "Sign in required.")
     actor_user_id = resolve_acting_user_id(principal)
     application = (
