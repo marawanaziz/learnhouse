@@ -294,8 +294,8 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       player.on('dispose', clearWatchdog)
       armWatchdog()
 
-      // Insert the ±15s seek buttons right after the play button. In no-skip
-      // (integrity) mode the FORWARD button is omitted — you can rewind, not skip.
+      // Insert the ±15s seek buttons right after the play button. In tested
+      // doula-training mode the FORWARD button is omitted — you can rewind, not skip.
       try {
         const bar = player.getChild('ControlBar')
         if (bar && !bar.getChild('LhSeekBack')) {
@@ -306,7 +306,7 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
         /* seek buttons are best-effort */
       }
 
-      // Anti-skip enforcement (cert/CEU courses): track the furthest point the
+      // Anti-skip enforcement (tested doula-training courses): track the furthest point the
       // learner has actually reached via normal playback, and snap any forward
       // seek beyond it back. Rewinding and changing speed remain allowed, so this
       // guarantees a certificate reflects a genuinely watched video without

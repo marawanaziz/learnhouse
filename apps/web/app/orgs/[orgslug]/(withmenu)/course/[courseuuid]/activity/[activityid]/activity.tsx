@@ -296,10 +296,10 @@ function ActivityClient(props: ActivityClientProps) {
   const prevActivity = currentIndex > 0 ? allActivities[currentIndex - 1] : null;
   const nextActivity = currentIndex < allActivities.length - 1 ? allActivities[currentIndex + 1] : null;
 
-  // Sequential progression lock (cert/CEU integrity courses): a learner can only
+  // Sequential progression lock (tested doula-training courses): a learner can only
   // reach an activity once every earlier activity is complete — no skipping ahead
-  // to a later class or quiz. Contributors/admins are exempt. This render-level
-  // gate covers ALL navigation paths (next button, timeline, dropdown, direct URL).
+  // to a later class or quiz. This render-level gate covers ALL learner-reader
+  // navigation paths (next button, timeline, dropdown, direct URL).
   const [noSkipCourse, setNoSkipCourse] = React.useState(false);
   React.useEffect(() => {
     let alive = true;
@@ -312,9 +312,9 @@ function ActivityClient(props: ActivityClientProps) {
   }, [course?.course_uuid]);
 
   const sequentialGate = useMemo(() => {
-    // NOTE: course authors are intentionally NOT exempt. Every BBU course is
-    // authored by @admin, so exempting contributors silently disabled the gate
-    // for every admin/owner account — making it look like it wasn't working.
+    // NOTE: course authors are intentionally NOT exempt. The doula-training
+    // courses are authored by @admin, so exempting contributors would silently
+    // disable their learner-path gate for admin/owner accounts.
     // Admins edit content through the editor route, not the learner reader.
     if (!noSkipCourse) return { locked: false, firstIncomplete: null as any };
     if (!trailData || !course?.course_uuid || currentIndex < 0) return { locked: false, firstIncomplete: null };

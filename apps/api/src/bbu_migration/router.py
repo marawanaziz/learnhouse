@@ -25,7 +25,7 @@ from src.db.user_organizations import UserOrganization
 from src.db.organizations import Organization
 from src.db.roles import Role
 from src.db.courses.courses import Course
-from src.db.courses.activities import Activity
+from src.db.courses.activities import Activity, ActivityTypeEnum
 from src.db.trails import Trail
 from src.db.trail_runs import TrailRun
 from src.db.trail_steps import TrailStep
@@ -965,17 +965,51 @@ async def import_thumbnails(request: Request, db_session: AsyncSession = Depends
 # right credential/CEUs. Idempotent (merge, not replace).
 # =========================================================================== #
 # name -> flags. Kept explicit (not inferred) so the mapping is auditable.
-# bbu_no_skip: integrity-critical courses (professional cert + CEU) where video
-# fast-forward past the max-watched point is disabled so completion is genuine.
+# bbu_no_skip: tested doula-certification courses where video fast-forward past
+# the max-watched point is disabled so professional completion is genuine.
 CREDENTIAL_TAGS = {
     "Certified Birth Doula Training":                  {"bbu_credential_type": "birth", "bbu_no_skip": True},
     "Certified Postpartum Doula Training":             {"bbu_credential_type": "postpartum", "bbu_no_skip": True},
     "Cross Certification Birth Doula Training":         {"bbu_credential_type": "birth", "bbu_is_cross_cert": True, "bbu_no_skip": True},
     "Cross Certification Postpartum Doula Training":    {"bbu_credential_type": "postpartum", "bbu_is_cross_cert": True, "bbu_no_skip": True},
-    "Breastfeeding for Perinatal Professionals":       {"bbu_ceu_value": 3, "bbu_no_skip": True},
-    "Comfort Measures for Perinatal Professionals":    {"bbu_ceu_value": 3, "bbu_no_skip": True},
-    "Newborn Care for Perinatal Professionals":        {"bbu_ceu_value": 3, "bbu_no_skip": True},
+    "BOLD-Certified Birth Doula Training":             {"bbu_credential_type": "birth", "bbu_no_skip": True},
+    "BOLD-Certified Postpartum Doula Training":        {"bbu_credential_type": "postpartum", "bbu_no_skip": True},
+    "Breastfeeding for Perinatal Professionals":       {"bbu_ceu_value": 3, "bbu_no_skip": False},
+    "Comfort Measures for Perinatal Professionals":    {"bbu_ceu_value": 3, "bbu_no_skip": False},
+    "Newborn Care for Perinatal Professionals":        {"bbu_ceu_value": 3, "bbu_no_skip": False},
 }
+
+
+def _is_doula_training_no_skip(
+    course_name: str,
+    certification_config: dict | None,
+    *,
+    has_tests: bool,
+) -> bool:
+    """Return whether a tested doula-certification course must prevent skipping.
+
+    The credential metadata is authoritative when available. The
+    certification-layout/name fallback covers the BOLD copies that predate the
+    explicit ``bbu_credential_type`` tag. Requiring assignment-based tests keeps
+    family education, mentorships, and shorter perinatal-professional courses
+    seekable even if they retain a legacy ``bbu_no_skip`` flag.
+    """
+    if not has_tests:
+        return False
+
+    config = certification_config or {}
+    if config.get("bbu_credential_type") in {"birth", "postpartum"}:
+        return True
+
+    labels = (
+        course_name,
+        str(config.get("certification_name") or ""),
+    )
+    return (
+        config.get("bbu_layout") == "certification"
+        and config.get("certification_type") == "professional"
+        and any("doula" in label.lower() for label in labels)
+    )
 
 
 @router.get("/communities")
@@ -1317,20 +1351,41 @@ async def fix_certificate_dates(request: Request, db_session: AsyncSession = Dep
 
 @router.get("/no-skip-courses")
 async def no_skip_courses(db_session: AsyncSession = Depends(get_db_session)):
-    """Public: course_uuids where video forward-seek is disabled and lessons must be
-    completed in order.
+    """Public: tested doula-training courses that enforce watched-through video
+    progression and sequential lessons.
 
-    BBU policy: this applies to EVERY course — a student should never be able to
-    skip a video or jump ahead, regardless of whether the course carries a
-    certificate. A course can opt OUT by setting bbu_allow_skip=true on its
-    Certifications.config (nothing does today)."""
+    Family education and perinatal-professional short courses intentionally
+    remain seekable, including courses with completion certificates or legacy
+    ``bbu_no_skip`` metadata.
+    """
     from src.db.courses.certifications import Certifications
     org_id = 1
     certs = (await db_session.execute(select(Certifications))).scalars().all()
-    opted_out = {c.course_id for c in certs if (c.config or {}).get("bbu_allow_skip")}
+    cert_by_course = {cert.course_id: cert.config or {} for cert in certs}
+    tested_course_ids = set(
+        (await db_session.execute(
+            select(Activity.course_id)
+            .where(
+                Activity.org_id == org_id,
+                Activity.activity_type == ActivityTypeEnum.TYPE_ASSIGNMENT,
+            )
+            .distinct()
+        )).scalars().all()
+    )
     courses = (await db_session.execute(select(Course).where(
         Course.org_id == org_id))).scalars().all()
-    return {"course_uuids": [c.course_uuid for c in courses if c.id not in opted_out]}
+    return {
+        "course_uuids": [
+            course.course_uuid
+            for course in courses
+            if course.id in tested_course_ids
+            and _is_doula_training_no_skip(
+                course.name,
+                cert_by_course.get(course.id),
+                has_tests=True,
+            )
+        ]
+    }
 
 
 @router.post("/tag-credential-courses")

@@ -145,7 +145,7 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
   const [hlsMeta, setHlsMeta] = React.useState<any>(
     (initialBlockObject as any)?.content?.hls ?? null
   )
-  // Whether this block's course disables forward-seek (cert/CEU integrity).
+  // Whether this block's tested doula-training course disables forward-seek.
   const [noSkipCourse, setNoSkipCourse] = React.useState(false)
 
   // Update block object when size changes
@@ -298,7 +298,7 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
     src: videoUrl || '',
     isHls: !!hlsMasterUrl,
     fallbackSrc: hlsMasterUrl && mp4Url ? mp4Url : undefined,
-    // Enforce forward-seek lock in the reader for integrity-flagged courses.
+    // Enforce forward-seek lock in tested doula-training course readers.
     noSkip: !isEditable && noSkipCourse,
     playbackProgress:
       !isEditable && activityUuid && blockObject?.block_uuid && fileId
