@@ -14,6 +14,7 @@ import AccountGeneral from '@components/Objects/Account/subpages/AccountGeneral'
 import AccountProfile from '@components/Objects/Account/subpages/AccountProfile'
 import AccountSecurity from '@components/Objects/Account/subpages/AccountSecurity'
 import AccountPurchases from '@components/Objects/Account/subpages/AccountPurchases'
+import AccountCredentials from '@components/Objects/Account/subpages/AccountCredentials'
 import BBUEmbed from '@components/Dashboard/Pages/BBUEmbed/BBUEmbed'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
 
@@ -29,6 +30,7 @@ const getSubpageTitle = (subpage: string, t: (_key: string) => string): string =
     'profile': t('account.profile'),
     'security': t('account.security'),
     'purchases': t('account.purchases'),
+    'credentials': 'Credentials',
     'affiliate': 'Affiliate Dashboard',
   }
   return titles[subpage] || t('account.title')
@@ -61,6 +63,8 @@ const AccountClient = ({ orgslug, org_id, subpage }: AccountClientProps) => {
         return <AccountSecurity />
       case 'purchases':
         return <AccountPurchases orgId={org_id} orgslug={orgslug} />
+      case 'credentials':
+        return <AccountCredentials orgslug={orgslug} />
       case 'affiliate':
         return (
           <BBUEmbed

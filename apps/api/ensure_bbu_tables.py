@@ -14,7 +14,15 @@ from src.bbu_payments.models import (  # noqa: F401
 )
 from src.bbu_ghl.models import BBUGHLSync  # noqa: F401
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember, BBUCohortWaitlist  # noqa: F401
-from src.bbu_credentials.models import BBUCredential, BBUCeuLedger  # noqa: F401
+from src.bbu_credentials.models import (  # noqa: F401
+    BBUCredential,
+    BBUCeuLedger,
+    BBUCredentialIssuance,
+    BBUCredentialApplication,
+    BBUCredentialApplicationItem,
+    BBUCredentialApplicationDocument,
+    BBUCredentialAuditEvent,
+)
 from src.bbu_seats.models import BBUSeatCode  # noqa: F401
 from src.bbu_people.models import BBUQuizSubmission  # noqa: F401
 from src.db.video_playback_progress import VideoPlaybackProgress  # noqa: F401
@@ -37,6 +45,23 @@ ALTERS = [
     "ALTER TABLE bbu_cohort ADD COLUMN IF NOT EXISTS weekly_prompts VARCHAR DEFAULT ''",
     "ALTER TABLE bbu_cohort ADD COLUMN IF NOT EXISTS zoom_meeting_id VARCHAR(40) DEFAULT ''",
     "ALTER TABLE bbu_credential ADD COLUMN IF NOT EXISTS last_reminder_days INTEGER DEFAULT 0",
+    "ALTER TABLE bbu_credential_application ADD COLUMN IF NOT EXISTS "
+    "submission_member_notified_at VARCHAR(40) DEFAULT ''",
+    "ALTER TABLE bbu_credential_application ADD COLUMN IF NOT EXISTS "
+    "submission_admin_notified_at VARCHAR(40) DEFAULT ''",
+    "ALTER TABLE bbu_credential_application ADD COLUMN IF NOT EXISTS "
+    "notification_attempts INTEGER DEFAULT 0",
+    "ALTER TABLE bbu_credential_application ADD COLUMN IF NOT EXISTS "
+    "notification_error TEXT DEFAULT ''",
+    # A member may have only one editable/in-review application for a
+    # credential type. Finalized applications remain unlimited history.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_bbu_credential_application_open "
+    "ON bbu_credential_application (org_id, user_id, credential_type) "
+    "WHERE status IN ('draft', 'submitted')",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_bbu_credential_issuance_source_ref "
+    "ON bbu_credential_issuance "
+    "(org_id, user_id, credential_type, source, source_ref) "
+    "WHERE source_ref <> ''",
     "CREATE INDEX IF NOT EXISTS ix_bbu_order_download_token ON bbu_order (download_token)",
 ]
 
@@ -52,6 +77,11 @@ def main():
         BBUGHLSync.__table__,
         BBUCohort.__table__, BBUCohortMember.__table__, BBUCohortWaitlist.__table__,
         BBUCredential.__table__, BBUCeuLedger.__table__,
+        BBUCredentialIssuance.__table__,
+        BBUCredentialApplication.__table__,
+        BBUCredentialApplicationItem.__table__,
+        BBUCredentialApplicationDocument.__table__,
+        BBUCredentialAuditEvent.__table__,
         BBUSeatCode.__table__,
         BBUQuizSubmission.__table__,
         VideoPlaybackProgress.__table__,

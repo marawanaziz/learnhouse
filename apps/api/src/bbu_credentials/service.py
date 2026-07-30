@@ -62,7 +62,12 @@ async def award_ceu(db: AsyncSession, org_id: int, user_id: int, count: int,
                     source: str = "course", source_ref: str = "",
                     approved: bool = True) -> BBUCeuLedger:
     """Add CEUs. Idempotent per (user, source_ref) when source_ref is set so a
-    re-fired course completion doesn't double-count."""
+    re-fired course completion doesn't double-count.
+
+    Recording CEUs deliberately does *not* change a professional credential.
+    A credential transition requires an approved CEU application, mentorship
+    completion, a configured course rule, or an explicit audited admin action.
+    """
     if source_ref:
         existing = (await db.execute(select(BBUCeuLedger).where(
             BBUCeuLedger.org_id == org_id, BBUCeuLedger.user_id == user_id,
@@ -76,8 +81,6 @@ async def award_ceu(db: AsyncSession, org_id: int, user_id: int, count: int,
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    if approved:
-        await maybe_upgrade_on_ceu(db, org_id, user_id)
     return row
 
 
@@ -98,10 +101,24 @@ async def issue_provisional(db: AsyncSession, org_id: int, user_id: int,
     never downgrades an existing full credential."""
     cred = await _active_credential(db, org_id, user_id, credential_type)
     now = _now_dt()
+    prior = None
+    from src.bbu_credentials import applications as app_svc
+
     if cred:
         if cred.status in ("full", "provisional"):
+            # Imported/pre-history credentials still need one immutable
+            # issuance, but an idempotent course hook must not make duplicates.
+            from src.bbu_credentials.models import BBUCredentialIssuance
+            existing_history = (await db.execute(select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.org_id == org_id,
+                BBUCredentialIssuance.user_id == user_id,
+                BBUCredentialIssuance.credential_type == credential_type,
+            ))).scalars().first()
+            if not existing_history:
+                await app_svc.reconcile_legacy_credential(db, cred)
             return cred          # already active — don't reset the clock
         # lapsed/expired -> re-issue provisional afresh
+        prior = await app_svc.reconcile_legacy_credential(db, cred)
         cred.status = "provisional"
         cred.issued_at = now.isoformat()
         cred.provisional_expires_at = _iso_in_years(PROVISIONAL_YEARS, now)
@@ -119,6 +136,13 @@ async def issue_provisional(db: AsyncSession, org_id: int, user_id: int,
     db.add(cred)
     await db.commit()
     await db.refresh(cred)
+    await app_svc.create_issuance(
+        db, org_id=org_id, user_id=user_id, credential_type=credential_type,
+        credential_level="one_year_provisional", effective_at=cred.issued_at,
+        expires_at=cred.provisional_expires_at, source="training",
+        source_ref=f"{source_ref or 'credential'}:{cred.issued_at}",
+        supersedes_issuance_id=prior.id if prior else None,
+    )
     return cred
 
 
@@ -126,7 +150,38 @@ async def issue_full_direct(db: AsyncSession, org_id: int, user_id: int,
                             credential_type: str, source: str = "cross_cert",
                             source_ref: str = "") -> BBUCredential:
     """Cross-cert → full (3yr) immediately."""
+    from src.bbu_credentials.models import BBUCredentialIssuance
+    if source_ref:
+        already_issued = (await db.execute(select(BBUCredentialIssuance).where(
+            BBUCredentialIssuance.org_id == org_id,
+            BBUCredentialIssuance.user_id == user_id,
+            BBUCredentialIssuance.credential_type == credential_type,
+            BBUCredentialIssuance.source == source,
+            BBUCredentialIssuance.source_ref == source_ref,
+        ))).scalars().first()
+        if already_issued:
+            existing_cred = await _active_credential(
+                db, org_id, user_id, credential_type)
+            if existing_cred:
+                return existing_cred
     cred = await _active_credential(db, org_id, user_id, credential_type)
+    from src.bbu_credentials import applications as app_svc
+    prior = None
+    if cred:
+        existing_history = (await db.execute(select(BBUCredentialIssuance).where(
+            BBUCredentialIssuance.org_id == org_id,
+            BBUCredentialIssuance.user_id == user_id,
+            BBUCredentialIssuance.credential_type == credential_type,
+        ))).scalars().all()
+        if existing_history:
+            prior = max(existing_history, key=lambda row: row.id or 0)
+        elif (cred.source or "") == source and (cred.source_ref or "") == source_ref:
+            # The current row already represents this exact event; copy its
+            # original dates instead of restarting the clock.
+            await app_svc.reconcile_legacy_credential(db, cred)
+            return cred
+        else:
+            prior = await app_svc.reconcile_legacy_credential(db, cred)
     now = _now_dt()
     if not cred:
         cred = BBUCredential(org_id=org_id, user_id=user_id,
@@ -143,11 +198,30 @@ async def issue_full_direct(db: AsyncSession, org_id: int, user_id: int,
     db.add(cred)
     await db.commit()
     await db.refresh(cred)
+    await app_svc.create_issuance(
+        db, org_id=org_id, user_id=user_id, credential_type=credential_type,
+        credential_level="three_year_full", effective_at=cred.full_effective_at,
+        expires_at=cred.full_expires_at, source=source,
+        source_ref=source_ref or f"credential:{cred.id}:{cred.full_effective_at}",
+        supersedes_issuance_id=prior.id if prior else None,
+        directory_opt_in=bool(cred.directory_opt_in),
+    )
     return cred
 
 
 async def upgrade_to_full(db: AsyncSession, cred: BBUCredential,
-                          effective_at: datetime = None) -> BBUCredential:
+                          effective_at: datetime = None,
+                          source: str = "mentorship",
+                          source_ref: str = "") -> BBUCredential:
+    from src.bbu_credentials import applications as app_svc
+    from src.bbu_credentials.models import BBUCredentialIssuance
+    history = (await db.execute(select(BBUCredentialIssuance).where(
+        BBUCredentialIssuance.org_id == cred.org_id,
+        BBUCredentialIssuance.user_id == cred.user_id,
+        BBUCredentialIssuance.credential_type == cred.credential_type,
+    ))).scalars().all()
+    prior = (max(history, key=lambda row: row.id or 0)
+             if history else await app_svc.reconcile_legacy_credential(db, cred))
     now = effective_at or _now_dt()
     cred.status = "full"
     cred.full_effective_at = now.isoformat()
@@ -157,20 +231,26 @@ async def upgrade_to_full(db: AsyncSession, cred: BBUCredential,
     db.add(cred)
     await db.commit()
     await db.refresh(cred)
+    await app_svc.create_issuance(
+        db, org_id=cred.org_id, user_id=cred.user_id,
+        credential_type=cred.credential_type,
+        credential_level="three_year_full", effective_at=cred.full_effective_at,
+        expires_at=cred.full_expires_at, source=source,
+        source_ref=source_ref or f"credential:{cred.id}:{cred.full_effective_at}",
+        supersedes_issuance_id=prior.id if prior else None,
+        directory_opt_in=bool(cred.directory_opt_in),
+    )
     return cred
 
 
 async def maybe_upgrade_on_ceu(db: AsyncSession, org_id: int, user_id: int):
-    """If the user has any provisional credential and >=15 approved CEUs, upgrade."""
-    total = await approved_ceu_total(db, org_id, user_id)
-    if total < CEU_THRESHOLD:
-        return
-    creds = (await db.execute(select(BBUCredential).where(
-        BBUCredential.org_id == org_id, BBUCredential.user_id == user_id,
-        BBUCredential.status == "provisional",
-    ))).scalars().all()
-    for c in creds:
-        await upgrade_to_full(db, c)
+    """Compatibility no-op.
+
+    Older hooks called this after adding a CEU ledger row. The approved client
+    workflow now requires an application and explicit admin decision, so a
+    ledger total alone must never issue a credential.
+    """
+    return []
 
 
 async def on_mentorship_completion(db: AsyncSession, org_id: int, user_id: int,
@@ -193,7 +273,9 @@ async def on_mentorship_completion(db: AsyncSession, org_id: int, user_id: int,
     creds = (await db.execute(q)).scalars().all()
     upgraded = []
     for c in creds:
-        await upgrade_to_full(db, c, effective_at=effective_at)
+        await upgrade_to_full(
+            db, c, effective_at=effective_at, source="mentorship",
+            source_ref=cohort_ref or f"mentorship:{c.id}:{effective_at or _now()}")
         upgraded.append(c)
     return upgraded
 
@@ -205,6 +287,15 @@ async def renew(db: AsyncSession, cred: BBUCredential) -> tuple:
     earned = total - int(cred.renewal_ceu_baseline or 0)
     if earned < CEU_THRESHOLD:
         return False, f"Needs {CEU_THRESHOLD} CEUs to renew (has {max(0, earned)})."
+    from src.bbu_credentials import applications as app_svc
+    from src.bbu_credentials.models import BBUCredentialIssuance
+    history = (await db.execute(select(BBUCredentialIssuance).where(
+        BBUCredentialIssuance.org_id == cred.org_id,
+        BBUCredentialIssuance.user_id == cred.user_id,
+        BBUCredentialIssuance.credential_type == cred.credential_type,
+    ))).scalars().all()
+    prior = (max(history, key=lambda row: row.id or 0)
+             if history else await app_svc.reconcile_legacy_credential(db, cred))
     now = _now_dt()
     cred.status = "full"
     cred.full_effective_at = now.isoformat()
@@ -214,6 +305,15 @@ async def renew(db: AsyncSession, cred: BBUCredential) -> tuple:
     db.add(cred)
     await db.commit()
     await db.refresh(cred)
+    await app_svc.create_issuance(
+        db, org_id=cred.org_id, user_id=cred.user_id,
+        credential_type=cred.credential_type,
+        credential_level="three_year_full", effective_at=cred.full_effective_at,
+        expires_at=cred.full_expires_at, source="manual_renewal",
+        source_ref=f"credential:{cred.id}:{cred.full_effective_at}",
+        supersedes_issuance_id=prior.id if prior else None,
+        directory_opt_in=bool(cred.directory_opt_in),
+    )
     return True, ""
 
 

@@ -11,20 +11,31 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
 from src.db.users import User
+from src.db.user_organizations import UserOrganization
 from src.db.courses.courses import Course
+from src.db.courses.certifications import CertificateUser, Certifications
 from src.db.communities.communities import Community
+from src.security.auth import get_current_user, resolve_acting_user_id
 from src.bbu_admin.auth import authorize_admin
 from src.bbu_payments.models import BBUCoupon, BBUProduct, BBUOrder, BBUCircleRedemption
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_cohorts.models import BBUCohort, BBUCohortWaitlist
 from src.bbu_cohorts import service as cohort_svc
-from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
+from src.bbu_credentials.models import (
+    BBUCredential,
+    BBUCeuLedger,
+    BBUCredentialApplication,
+    BBUCredentialApplicationItem,
+    BBUCredentialAuditEvent,
+    BBUCredentialIssuance,
+)
 from src.bbu_credentials import service as cred_svc
+from src.bbu_credentials import applications as credential_app_svc
 from src.bbu_seats.models import BBUSeatCode
 from src.bbu_seats.router import _gen_code
 from src.bbu_payments.branding import NAVY, SKY, STEEL, ICE, PAPER, LOGO, _FONTS
@@ -47,6 +58,15 @@ async def _user(db: AsyncSession, email: str) -> User:
     if not u:
         raise HTTPException(404, "User not found")
     return u
+
+
+async def _admin_actor_id(request: Request, db: AsyncSession) -> int:
+    try:
+        principal = await get_current_user(request, db)
+        return int(resolve_acting_user_id(principal) or 0)
+    except Exception:
+        # Script/admin-key actions are still audited with actor 0.
+        return 0
 
 
 # ===========================================================================
@@ -428,6 +448,560 @@ async def cohorts_action(cid: int, request: Request, db_session: AsyncSession = 
 # ===========================================================================
 # Credentials
 # ===========================================================================
+@router.get("/credentials/members")
+async def credential_member_search(
+    request: Request,
+    q: str = "",
+    limit: int = 20,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Search the org roster, then let every subsequent action use user_id."""
+    await _auth(request, db_session)
+    query = (
+        select(User)
+        .join(UserOrganization, UserOrganization.user_id == User.id)
+        .where(UserOrganization.org_id == ORG)
+    )
+    needle = (q or "").strip()
+    if needle:
+        conditions = [
+            User.email.ilike(f"%{needle}%"),
+            User.first_name.ilike(f"%{needle}%"),
+            User.last_name.ilike(f"%{needle}%"),
+            User.username.ilike(f"%{needle}%"),
+        ]
+        if needle.isdigit():
+            conditions.append(User.id == int(needle))
+        query = query.where(or_(*conditions))
+    users = (
+        await db_session.execute(
+            query.order_by(User.last_name, User.first_name, User.id).limit(
+                max(1, min(50, limit))
+            )
+        )
+    ).scalars().all()
+    return {
+        "results": [
+            {
+                "user_id": user.id,
+                "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username,
+                "email": str(user.email),
+                "username": user.username,
+            }
+            for user in users
+        ]
+    }
+
+
+@router.get("/credentials/member/{user_id}")
+async def credential_member_record(
+    user_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    await _auth(request, db_session)
+    user = (
+        await db_session.execute(
+            select(User)
+            .join(UserOrganization, UserOrganization.user_id == User.id)
+            .where(User.id == user_id, UserOrganization.org_id == ORG)
+        )
+    ).scalars().first()
+    if not user:
+        raise HTTPException(404, "Member not found in this organization")
+
+    issuances = await credential_app_svc.list_user_issuances(
+        db_session, ORG, user.id
+    )
+    applications = await credential_app_svc.list_user_applications(
+        db_session, ORG, user.id
+    )
+    ledger = (
+        await db_session.execute(
+            select(BBUCeuLedger).where(
+                BBUCeuLedger.org_id == ORG, BBUCeuLedger.user_id == user.id
+            )
+        )
+    ).scalars().all()
+    cert_rows = (
+        await db_session.execute(
+            select(CertificateUser, Certifications, Course)
+            .join(
+                Certifications,
+                Certifications.id == CertificateUser.certification_id,
+            )
+            .join(Course, Course.id == Certifications.course_id)
+            .where(CertificateUser.user_id == user.id, Course.org_id == ORG)
+        )
+    ).all()
+    training_certificates = []
+    for certificate_user, certification, course in cert_rows:
+        cfg = certification.config or {}
+        training_certificates.append(
+            {
+                "id": certificate_user.id,
+                "course": course.name,
+                "issued_at": certificate_user.created_at,
+                "uuid": certificate_user.user_certification_uuid,
+                "credential_type": (
+                    cfg.get("bbu_credential_type") or ""
+                ).strip().lower(),
+                "is_cross_cert": bool(cfg.get("bbu_is_cross_cert")),
+                "verify_url": (
+                    f"/certificates/{certificate_user.user_certification_uuid}/verify"
+                ),
+            }
+        )
+    eligibility = {
+        credential_type: await credential_app_svc.eligibility_for(
+            db_session, ORG, user.id, credential_type
+        )
+        for credential_type in credential_app_svc.CREDENTIAL_TYPES
+    }
+    return {
+        "member": {
+            "user_id": user.id,
+            "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
+            or user.username,
+            "email": str(user.email),
+            "username": user.username,
+        },
+        "training_certificates": training_certificates,
+        "issuances": [
+            credential_app_svc.issuance_to_dict(row) for row in issuances
+        ],
+        "applications": [
+            await credential_app_svc.serialize_application(
+                db_session, row, include_internal=True
+            )
+            for row in applications
+        ],
+        "eligibility": eligibility,
+        "ceu_total": await cred_svc.approved_ceu_total(
+            db_session, ORG, user.id
+        ),
+        "ledger": [
+            {
+                "id": row.id,
+                "ceu": row.ceu_count,
+                "source": row.source,
+                "ref": row.source_ref,
+                "approved": row.approved,
+                "submitted_at": row.submitted_at,
+                "approved_at": row.approved_at,
+            }
+            for row in ledger
+        ],
+    }
+
+
+async def _admin_application(
+    db: AsyncSession, application_id: int, *, for_update: bool = False
+) -> BBUCredentialApplication:
+    query = select(BBUCredentialApplication).where(
+        BBUCredentialApplication.id == application_id,
+        BBUCredentialApplication.org_id == ORG,
+    )
+    if for_update:
+        query = query.with_for_update()
+    application = (
+        await db.execute(query)
+    ).scalars().first()
+    if not application:
+        raise HTTPException(404, "Credential application not found")
+    return application
+
+
+@router.get("/credential-applications")
+async def credential_application_queue(
+    request: Request,
+    status: str = "",
+    ctype: str = "",
+    q: str = "",
+    page: int = 1,
+    per_page: int = 50,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    await _auth(request, db_session)
+    query = (
+        select(BBUCredentialApplication, User)
+        .join(User, User.id == BBUCredentialApplication.user_id)
+        .where(BBUCredentialApplication.org_id == ORG)
+    )
+    if status:
+        query = query.where(BBUCredentialApplication.status == status)
+    if ctype:
+        query = query.where(BBUCredentialApplication.credential_type == ctype)
+    needle = (q or "").strip()
+    if needle:
+        query = query.where(
+            or_(
+                User.email.ilike(f"%{needle}%"),
+                User.first_name.ilike(f"%{needle}%"),
+                User.last_name.ilike(f"%{needle}%"),
+            )
+        )
+    rows = (await db_session.execute(query)).all()
+    rows = sorted(rows, key=lambda pair: pair[0].id or 0, reverse=True)
+    counts_rows = (
+        await db_session.execute(
+            select(
+                BBUCredentialApplication.status,
+                func.count(BBUCredentialApplication.id),
+            )
+            .where(BBUCredentialApplication.org_id == ORG)
+            .group_by(BBUCredentialApplication.status)
+        )
+    ).all()
+    summary = {status_name: count for status_name, count in counts_rows}
+    summary["total"] = sum(summary.values())
+    per_page = max(1, min(200, per_page))
+    total = len(rows)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    start = (page - 1) * per_page
+    payload = []
+    for application, user in rows[start : start + per_page]:
+        payload.append(
+            {
+                "id": application.id,
+                "public_uuid": application.public_uuid,
+                "user_id": user.id,
+                "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username,
+                "email": str(user.email),
+                "credential_type": application.credential_type,
+                "status": application.status,
+                "claimed_ceu_total": application.claimed_ceu_total,
+                "approved_ceu_total": application.approved_ceu_total,
+                "submitted_at": application.submitted_at,
+                "reviewed_at": application.reviewed_at,
+                "notification_error": application.notification_error,
+            }
+        )
+    return {
+        "summary": summary,
+        "rows": payload,
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "per_page": per_page,
+    }
+
+
+@router.get("/credential-applications/{application_id}")
+async def credential_application_detail(
+    application_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    await _auth(request, db_session)
+    application = await _admin_application(db_session, application_id)
+    member = await credential_member_record(
+        application.user_id, request, db_session
+    )
+    payload = await credential_app_svc.serialize_application(
+        db_session, application, include_internal=True
+    )
+    payload["member_record"] = member
+    events = (
+        await db_session.execute(
+            select(BBUCredentialAuditEvent).where(
+                BBUCredentialAuditEvent.org_id == ORG,
+                or_(
+                    (
+                        BBUCredentialAuditEvent.target_type == "application"
+                    )
+                    & (
+                        BBUCredentialAuditEvent.target_id == application.id
+                    ),
+                    (
+                        BBUCredentialAuditEvent.target_type
+                        == "application_item"
+                    )
+                    & BBUCredentialAuditEvent.target_id.in_(
+                        [
+                            item["id"]
+                            for item in payload.get("items", [])
+                        ]
+                        or [-1]
+                    ),
+                ),
+            )
+        )
+    ).scalars().all()
+    payload["audit"] = [
+        {
+            "id": event.id,
+            "actor_user_id": event.actor_user_id,
+            "action": event.action,
+            "reason": event.reason,
+            "created_at": event.created_at,
+        }
+        for event in sorted(events, key=lambda row: row.id or 0)
+    ]
+    return payload
+
+
+@router.post(
+    "/credential-applications/{application_id}/items/{item_id}/review"
+)
+async def credential_application_review_item(
+    application_id: int,
+    item_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    body = await request.json()
+    await _auth(request, db_session, body)
+    application = await _admin_application(
+        db_session, application_id, for_update=True
+    )
+    item = (
+        await db_session.execute(
+            select(BBUCredentialApplicationItem).where(
+                BBUCredentialApplicationItem.id == item_id,
+                BBUCredentialApplicationItem.application_id == application.id,
+            )
+        )
+    ).scalars().first()
+    if not item:
+        raise HTTPException(404, "CEU item not found")
+    reviewed = await credential_app_svc.review_application_item(
+        db_session,
+        application,
+        item,
+        approved_ceu=int(body.get("approved_ceu") or 0),
+        admin_note=body.get("admin_note", ""),
+        reviewer_user_id=await _admin_actor_id(request, db_session),
+    )
+    return {
+        "ok": True,
+        "id": reviewed.id,
+        "approved_ceu": reviewed.approved_ceu,
+        "admin_note": reviewed.admin_note,
+    }
+
+
+@router.post("/credential-applications/{application_id}/decision")
+async def credential_application_decision(
+    application_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    body = await request.json()
+    await _auth(request, db_session, body)
+    application = await _admin_application(
+        db_session, application_id, for_update=True
+    )
+    actor_id = await _admin_actor_id(request, db_session)
+    decision = (body.get("decision") or "").strip().lower()
+    issuance = None
+    if decision == "approve":
+        issuance = await credential_app_svc.approve_application(
+            db_session,
+            application,
+            reviewer_user_id=actor_id,
+            effective_at=body.get("effective_at") or None,
+        )
+    elif decision == "decline":
+        await credential_app_svc.decline_application(
+            db_session,
+            application,
+            reviewer_user_id=actor_id,
+            reason=body.get("reason", ""),
+        )
+    else:
+        raise HTTPException(400, "Decision must be approve or decline")
+
+    user = (
+        await db_session.execute(
+            select(User).where(User.id == application.user_id)
+        )
+    ).scalars().first()
+    if user:
+        try:
+            from src.bbu_credentials.notifications import notify_decision
+
+            await notify_decision(
+                request,
+                db_session,
+                application,
+                user,
+                credential_id=(
+                    issuance.public_credential_id if issuance else ""
+                ),
+            )
+        except Exception:
+            pass
+    return {
+        "ok": True,
+        "status": application.status,
+        "issuance": (
+            credential_app_svc.issuance_to_dict(issuance) if issuance else None
+        ),
+        "decline_reason": application.decline_reason,
+        "notification_error": application.notification_error,
+    }
+
+
+@router.post("/credential-applications/{application_id}/retry-notification")
+async def credential_application_retry_notification(
+    application_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    body = await request.json()
+    await _auth(request, db_session, body)
+    application = await _admin_application(db_session, application_id)
+    user = (
+        await db_session.execute(
+            select(User).where(User.id == application.user_id)
+        )
+    ).scalars().first()
+    if not user:
+        raise HTTPException(404, "Member account not found")
+    from src.bbu_credentials.notifications import (
+        notify_decision,
+        notify_submission,
+    )
+
+    if application.status == "submitted":
+        await notify_submission(request, db_session, application, user)
+    elif application.status in ("approved", "declined"):
+        credential_id = ""
+        if application.approved_issuance_id:
+            issuance = (
+                await db_session.execute(
+                    select(BBUCredentialIssuance).where(
+                        BBUCredentialIssuance.id
+                        == application.approved_issuance_id
+                    )
+                )
+            ).scalars().first()
+            credential_id = (
+                issuance.public_credential_id if issuance else ""
+            )
+        await notify_decision(
+            request,
+            db_session,
+            application,
+            user,
+            credential_id=credential_id,
+        )
+    else:
+        raise HTTPException(409, "Draft applications do not have notifications.")
+    return {
+        "ok": True,
+        "notification_error": application.notification_error,
+        "notification_attempts": application.notification_attempts,
+    }
+
+
+@router.post("/credentials/member/{user_id}/manual-issue")
+async def credential_manual_issue(
+    user_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    body = await request.json()
+    await _auth(request, db_session, body)
+    user = (
+        await db_session.execute(
+            select(User)
+            .join(UserOrganization, UserOrganization.user_id == User.id)
+            .where(User.id == user_id, UserOrganization.org_id == ORG)
+        )
+    ).scalars().first()
+    if not user:
+        raise HTTPException(404, "Member not found in this organization")
+    reason = (body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "An audit reason is required")
+    credential_type = (body.get("credential_type") or "").strip().lower()
+    level = (body.get("credential_level") or "").strip()
+    current = (
+        await db_session.execute(
+            select(BBUCredential).where(
+                BBUCredential.org_id == ORG,
+                BBUCredential.user_id == user.id,
+                BBUCredential.credential_type == credential_type,
+            )
+        )
+    ).scalars().first()
+    prior_rows = (
+        await db_session.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.org_id == ORG,
+                BBUCredentialIssuance.user_id == user.id,
+                BBUCredentialIssuance.credential_type == credential_type,
+            )
+        )
+    ).scalars().all()
+    prior = max(prior_rows, key=lambda row: row.id or 0) if prior_rows else None
+    if current and not prior:
+        prior = await credential_app_svc.reconcile_legacy_credential(
+            db_session, current, commit=False
+        )
+    actor_id = await _admin_actor_id(request, db_session)
+    issuance = await credential_app_svc.create_issuance(
+        db_session,
+        org_id=ORG,
+        user_id=user.id,
+        credential_type=credential_type,
+        credential_level=level,
+        effective_at=body.get("effective_at") or None,
+        source="manual",
+        source_ref=f"manual:{user.id}:{_now()}",
+        supersedes_issuance_id=prior.id if prior else None,
+        issued_by_user_id=actor_id,
+        directory_opt_in=bool(prior and prior.directory_opt_in),
+        commit=False,
+    )
+    if not current:
+        current = BBUCredential(
+            org_id=ORG,
+            user_id=user.id,
+            credential_type=credential_type,
+        )
+    if level == "one_year_provisional":
+        current.status = "provisional"
+        current.issued_at = issuance.effective_at
+        current.provisional_expires_at = issuance.expires_at
+        current.full_effective_at = ""
+        current.full_expires_at = ""
+    elif level == "three_year_full":
+        current.status = "full"
+        if not current.issued_at:
+            current.issued_at = issuance.effective_at
+        current.full_effective_at = issuance.effective_at
+        current.full_expires_at = issuance.expires_at
+    else:
+        raise HTTPException(400, "Invalid credential level")
+    current.source = "manual"
+    current.source_ref = reason[:120]
+    current.updated_at = _now()
+    db_session.add(current)
+    await credential_app_svc.add_audit_event(
+        db_session,
+        org_id=ORG,
+        actor_user_id=actor_id,
+        action="manual_credential_issued",
+        target_type="credential_issuance",
+        target_id=issuance.id,
+        after_data=credential_app_svc.issuance_to_dict(issuance),
+        reason=reason,
+        commit=False,
+    )
+    await db_session.commit()
+    await db_session.refresh(issuance)
+    return {
+        "ok": True,
+        "issuance": credential_app_svc.issuance_to_dict(issuance),
+    }
+
+
 @router.get("/credentials")
 async def credentials_user(request: Request, email: str, db_session: AsyncSession = Depends(get_db_session)):
     await _auth(request, db_session)
@@ -935,11 +1509,28 @@ button.ghost:hover{{background:#dbecf8}}
   </div>
 
   <div class="panel" id=p-credentials>
-    <div class=card><h2>Look up a member's credentials</h2>
-      <div class=row><input id=cr-email placeholder="member email" style="width:280px"><button onclick=loadCred()>Look up</button></div>
-      <div id=cr-out></div>
+    <div class=card><h2>CEU applications</h2>
+      <p class=muted style="margin-top:-.6rem">Review itemized trainings and supporting documents. A three-year credential is issued only after every item is reviewed and at least 15 CEUs are approved.</p>
+      <div id=ca-summary class=row style="gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
+      <div class=row style="flex-wrap:wrap;gap:.4rem">
+        <select id=ca-status onchange="CAPAGE=1;loadCredentialApplications()"><option value=submitted>Submitted</option><option value="">All statuses</option><option value=draft>Draft</option><option value=approved>Approved</option><option value=declined>Declined</option></select>
+        <select id=ca-type onchange="CAPAGE=1;loadCredentialApplications()"><option value="">Any credential</option><option value=birth>Birth Doula</option><option value=postpartum>Postpartum</option></select>
+        <input id=ca-q placeholder="search member name or email" style="width:230px" onkeyup="if(event.key==='Enter'){{CAPAGE=1;loadCredentialApplications()}}">
+        <button onclick="CAPAGE=1;loadCredentialApplications()">Filter</button>
+      </div>
+      <div style="max-height:420px;overflow:auto;margin-top:.6rem">
+        <table id=t-ca><thead><tr><th>Member</th><th>Credential</th><th>Claimed CEUs</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class=row id=ca-pager style="justify-content:space-between;align-items:center;margin-top:.6rem"></div>
+      <div id=ca-detail style="display:none;margin-top:1rem"></div>
     </div>
-    <div class=card><h2>Credential registry — who's certified &amp; who's expiring</h2>
+    <div class=card><h2>Find and manage a member</h2>
+      <p class=muted style="margin-top:-.6rem">Search once, select the correct account, and manage it by member ID. Training certificates and professional credentials are shown separately.</p>
+      <div class=row><input id=cm-q placeholder="name, email, username, or member ID" style="width:340px" onkeyup="if(event.key==='Enter')searchCredentialMembers()"><button onclick=searchCredentialMembers()>Search</button></div>
+      <div id=cm-results style="margin-top:.5rem"></div>
+      <div id=cm-record style="display:none;margin-top:1rem"></div>
+    </div>
+    <div class=card><h2>Credential registry — certified and expiring</h2>
       <div id=cr-summary class=row style="gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
       <div class=row style="flex-wrap:wrap;gap:.4rem">
         <input id=rq placeholder="search name or email" style="width:220px" onkeyup="if(event.key==='Enter')loadRoster()">
@@ -952,20 +1543,9 @@ button.ghost:hover{{background:#dbecf8}}
         <button class=ghost onclick=exportRoster()>⬇ Export CSV (all matching)</button>
       </div>
       <div style="max-height:520px;overflow:auto;margin-top:.6rem">
-        <table id=t-credroster><thead><tr><th>Member</th><th>Credential</th><th>Track</th><th>Status</th><th>Valid through</th><th>Days left</th></tr></thead><tbody></tbody></table>
+        <table id=t-credroster><thead><tr><th>Member</th><th>Credential</th><th>Track</th><th>Status</th><th>Valid through</th><th>Days left</th><th></th></tr></thead><tbody></tbody></table>
       </div>
       <div class=row id=rpager style="justify-content:space-between;align-items:center;margin-top:.6rem"></div>
-    </div>
-    <div class=card><h2>Actions</h2>
-      <div class=row>
-        <input id=cra-email placeholder="member email">
-        <select id=cra-type><option value=birth>birth</option><option value=postpartum>postpartum</option></select>
-        <button onclick="credAct('issue','provisional')">Issue provisional</button>
-        <button class=ghost onclick="credAct('issue','full')">Issue full</button>
-        <button class=ghost onclick="credAct('renew')">Renew</button>
-      </div>
-      <div class=row><input id=cra-ceu type=number placeholder="CEUs" style="width:90px"><button class=ghost onclick="credAct('award_ceu')">Award CEUs</button></div>
-      <div class=muted id=cra-msg></div>
     </div>
   </div>
 
@@ -1055,15 +1635,16 @@ button.ghost:hover{{background:#dbecf8}}
 </div>
 <script>
 const API='/api/v1/bbu/admin';
+const CREDAPI='/api/v1/bbu/credentials';
 const j=(u,o)=>fetch(API+u,Object.assign({{credentials:'include',headers:{{'Content-Type':'application/json'}}}},o||{{}})).then(r=>r.json());
-function esc(s){{return String(s==null?'':s).replace(/[&<>]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]))}}
+function esc(s){{return String(s==null?'':s).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]))}}
 // tabs
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); document.getElementById('p-'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
-  if(t.dataset.t==='credentials')loadCredRoster();
+  if(t.dataset.t==='credentials'){{loadCredentialApplications();loadCredRoster();}}
   if(t.dataset.t==='circlehist')loadCircleHist();
   if(t.dataset.t==='sponsors')loadSponsors();
 }});
@@ -1380,6 +1961,128 @@ function closeCohort(){{
   j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:'close'}})}}).then(()=>{{loadRoster();loadCohorts();}});
 }}
 // Credentials
+let CAPAGE=1, CURRENT_CREDENTIAL_MEMBER=0, CURRENT_APPLICATION=0;
+const credLabel=t=>t==='birth'?'Birth Doula':'Postpartum';
+const levelLabel=l=>l==='one_year_provisional'?'One-year provisional':'Three-year full';
+const statusBadge=s=>`<span style="padding:.18rem .6rem;border-radius:999px;font-size:.75rem;font-weight:700;background:${{s==='approved'||s==='full'?'#dff5e6':(s==='submitted'||s==='provisional'?'#fff2d6':(s==='draft'?'#eaf2f9':'#fde8e8'))}}">${{esc(s)}}</span>`;
+function loadCredentialApplications(){{
+  const p=new URLSearchParams({{page:String(CAPAGE),per_page:'50'}});
+  const st=document.getElementById('ca-status').value;if(st)p.set('status',st);
+  const ty=document.getElementById('ca-type').value;if(ty)p.set('ctype',ty);
+  const q=document.getElementById('ca-q').value.trim();if(q)p.set('q',q);
+  j('/credential-applications?'+p.toString()).then(d=>{{
+    const s=d.summary||{{}};
+    const chip=(l,v,c)=>`<span style="background:${{c}};border-radius:999px;padding:.25rem .7rem;font-size:.8rem;font-weight:700">${{l}}: ${{v||0}}</span>`;
+    document.getElementById('ca-summary').innerHTML=chip('Submitted',s.submitted,'#fff2d6')+
+      chip('Approved',s.approved,'#dff5e6')+chip('Declined',s.declined,'#fde8e8')+chip('Draft',s.draft,'#eaf2f9');
+    document.querySelector('#t-ca tbody').innerHTML=(d.rows||[]).map(a=>`<tr>
+      <td><b>${{esc(a.name)}}</b><br><span class=muted style="font-size:.8rem">${{esc(a.email)}}</span></td>
+      <td>${{credLabel(a.credential_type)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{statusBadge(a.status)}}</td>
+      <td class=muted style="font-size:.8rem">${{esc((a.submitted_at||'—').slice(0,10))}}</td>
+      <td><button class=ghost onclick="openCredentialApplication(${{a.id}})">Review</button></td></tr>`).join('')
+      ||'<tr><td colspan=6 class=muted>No applications match these filters.</td></tr>';
+    document.getElementById('ca-pager').innerHTML=d.pages>1
+      ? `<button class=ghost ${{d.page<=1?'disabled':''}} onclick="CAPAGE--;loadCredentialApplications()">‹ Prev</button><span class=muted>Page ${{d.page}} of ${{d.pages}}</span><button class=ghost ${{d.page>=d.pages?'disabled':''}} onclick="CAPAGE++;loadCredentialApplications()">Next ›</button>`:'';
+  }});
+}}
+function openCredentialApplication(id){{
+  CURRENT_APPLICATION=id;
+  const out=document.getElementById('ca-detail');out.style.display='block';out.innerHTML='<p class=muted>Loading application…</p>';
+  j('/credential-applications/'+id).then(a=>{{
+    if(a.detail){{out.innerHTML=`<p class=muted>${{esc(a.detail)}}</p>`;return;}}
+    const member=a.member_record.member||{{}};
+    CURRENT_CREDENTIAL_MEMBER=member.user_id||0;
+    const prior=(a.member_record.issuances||[]).map(i=>`<li>${{credLabel(i.credential_type)}} · ${{levelLabel(i.credential_level)}} · ${{esc(i.status)}} · ${{esc((i.effective_at||'').slice(0,10))}} to ${{esc((i.expires_at||'').slice(0,10))}}</li>`).join('')||'<li>No professional credential history</li>';
+    const items=(a.items||[]).map(i=>{{
+      const docs=(i.documents||[]).map(d=>`<a class=ghost style="display:inline-block;margin:.12rem" target=_blank href="${{CREDAPI}}/applications/${{encodeURIComponent(a.public_uuid)}}/documents/${{d.id}}">${{esc(d.filename)}}</a>`).join('')||'<span class=muted>No document</span>';
+      const review=a.status==='submitted'?`<div class=row style="margin-top:.35rem"><input id="ceu-${{i.id}}" type=number min=0 max="${{i.claimed_ceu}}" value="${{i.approved_ceu==null?i.claimed_ceu:i.approved_ceu}}" style="width:86px" title="approved CEUs"><input id="note-${{i.id}}" value="${{esc(i.admin_note||'')}}" placeholder="internal note (optional)" style="width:230px"><button class=ghost onclick="reviewCredentialItem(${{a.id}},${{i.id}})">Save review</button></div>`:`<b>${{i.approved_ceu==null?'—':i.approved_ceu}} approved</b>`;
+      return `<tr><td><b>${{esc(i.training_title)}}</b><br><span class=muted>${{esc(i.provider)}} · ${{esc(i.completion_date)}}</span></td><td>${{i.claimed_ceu}}</td><td>${{docs}}</td><td>${{review}}</td></tr>`;
+    }}).join('');
+    const today=new Date().toISOString().slice(0,10);
+    const decision=a.status==='submitted'?`<div class=card style="margin-top:.8rem;background:#f8fbfd">
+      <h3 style="margin-top:0">Decision</h3><div class=row style="align-items:flex-start;flex-wrap:wrap">
+      <label class=muted>Effective date<br><input id=ca-effective type=date max="${{today}}" value="${{today}}"></label>
+      <button onclick="decideCredentialApplication('approve')">Approve and issue three-year credential</button>
+      <textarea id=ca-reason placeholder="Required reason if declining" style="width:290px;height:70px"></textarea>
+      <button class=ghost style="color:#a3261e" onclick="decideCredentialApplication('decline')">Decline</button></div>
+      <div id=ca-msg class=muted></div></div>`:`<p><b>Decision:</b> ${{statusBadge(a.status)}} ${{a.decline_reason?'<br><span class=muted>'+esc(a.decline_reason)+'</span>':''}}</p>`;
+    const notification=a.notification_error
+      ? `<div style="margin-top:.7rem;padding:.7rem;border-radius:8px;background:#fff2d6;color:#6b4b00"><b>Email needs attention:</b> ${{esc(a.notification_error)}} <button class=ghost onclick="retryCredentialNotification(${{a.id}})">Retry email</button></div>`
+      : `<p class=muted style="font-size:.82rem">Email notification status: ${{a.status==='submitted'?(a.submission_member_notified_at&&a.submission_admin_notified_at?'member and admin notified':'pending'):(a.decision_notified_at?'member notified':'pending')}}</p>`;
+    out.innerHTML=`<hr style="border:0;border-top:1px solid #e4edf4;margin:1rem 0">
+      <div class=row style="justify-content:space-between"><div><h2 style="margin:.2rem 0">${{esc(member.name)}} · ${{credLabel(a.credential_type)}}</h2>
+      <p class=muted style="margin:.2rem 0">${{esc(member.email)}} · Claimed ${{a.claimed_ceu_total}} CEUs · ${{statusBadge(a.status)}}</p></div>
+      <button class=ghost onclick="openCredentialMember(${{member.user_id}})">Open full member record</button></div>
+      <details><summary style="cursor:pointer;font-weight:700">Prior credential history</summary><ul>${{prior}}</ul></details>
+      <table style="margin-top:.7rem"><thead><tr><th>Training</th><th>Claimed</th><th>Documents</th><th>Review</th></tr></thead><tbody>${{items}}</tbody></table>${{decision}}${{notification}}`;
+    out.scrollIntoView({{behavior:'smooth',block:'nearest'}});
+  }});
+}}
+function reviewCredentialItem(appId,itemId){{
+  const body={{approved_ceu:+document.getElementById('ceu-'+itemId).value||0,admin_note:document.getElementById('note-'+itemId).value}};
+  j('/credential-applications/'+appId+'/items/'+itemId+'/review',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{
+    if(r.detail)alert(r.detail);else openCredentialApplication(appId);}});
+}}
+function decideCredentialApplication(decision){{
+  const reason=(document.getElementById('ca-reason')||{{value:''}}).value.trim();
+  if(decision==='decline'&&!reason){{document.getElementById('ca-msg').textContent='Enter a decline reason first.';return;}}
+  if(!confirm(decision==='approve'?'Approve this application and issue a new three-year credential?':'Decline this application?'))return;
+  const body={{decision:decision,reason:reason,effective_at:decision==='approve'?document.getElementById('ca-effective').value:''}};
+  document.getElementById('ca-msg').textContent='Saving decision…';
+  j('/credential-applications/'+CURRENT_APPLICATION+'/decision',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{
+    if(r.detail){{document.getElementById('ca-msg').textContent=r.detail;return;}}
+    loadCredentialApplications();openCredentialApplication(CURRENT_APPLICATION);
+    if(r.issuance&&CURRENT_CREDENTIAL_MEMBER)openCredentialMember(CURRENT_CREDENTIAL_MEMBER);
+  }});
+}}
+function retryCredentialNotification(appId){{
+  j('/credential-applications/'+appId+'/retry-notification',{{method:'POST',body:'{{}}'}}).then(r=>{{
+    if(r.detail)alert(r.detail);else openCredentialApplication(appId);
+  }});
+}}
+function searchCredentialMembers(){{
+  const q=document.getElementById('cm-q').value.trim();
+  if(!q){{document.getElementById('cm-results').innerHTML='<span class=muted>Enter a name, email, username, or member ID.</span>';return;}}
+  j('/credentials/members?q='+encodeURIComponent(q)).then(d=>{{
+    document.getElementById('cm-results').innerHTML=(d.results||[]).map(m=>`<button class=ghost style="margin:.15rem" onclick="openCredentialMember(${{m.user_id}})"><b>${{esc(m.name)}}</b> · ${{esc(m.email)}} · #${{m.user_id}}</button>`).join('')
+      ||'<span class=muted>No members matched. Try the member’s current account email or name.</span>';
+  }});
+}}
+function openCredentialMember(userId){{
+  if(!userId)return;CURRENT_CREDENTIAL_MEMBER=+userId;
+  const out=document.getElementById('cm-record');out.style.display='block';out.innerHTML='<p class=muted>Loading member record…</p>';
+  j('/credentials/member/'+userId).then(d=>{{
+    if(d.detail){{out.innerHTML=`<p class=muted>${{esc(d.detail)}}</p>`;return;}}
+    const m=d.member;
+    const training=(d.training_certificates||[]).map(c=>`<tr><td>${{esc(c.course)}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{c.is_cross_cert?'Cross-certification':'Full training'}}</td><td>${{esc((c.issued_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{esc(c.verify_url)}}">Open</a></td></tr>`).join('')
+      ||'<tr><td colspan=5 class=muted>No mapped training certificates.</td></tr>';
+    const issues=(d.issuances||[]).map(i=>`<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a></td></tr>`).join('')
+      ||'<tr><td colspan=6 class=muted>No professional credential issuances.</td></tr>';
+    const apps=(d.applications||[]).map(a=>`<tr><td>${{credLabel(a.credential_type)}}</td><td>${{statusBadge(a.status)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{esc((a.submitted_at||a.created_at||'').slice(0,10))}}</td><td><button class=ghost onclick="openCredentialApplication(${{a.id}})">Open</button></td></tr>`).join('')
+      ||'<tr><td colspan=5 class=muted>No CEU applications.</td></tr>';
+    const today=new Date().toISOString().slice(0,10);
+    out.innerHTML=`<hr style="border:0;border-top:1px solid #e4edf4;margin:1rem 0"><h2 style="margin-bottom:.1rem">${{esc(m.name)}}</h2>
+      <p class=muted style="margin-top:0">${{esc(m.email)}} · member #${{m.user_id}} · <b>${{d.ceu_total||0}} approved CEUs</b></p>
+      <h3>Training certificates</h3><table><thead><tr><th>Course</th><th>Maps to</th><th>Training path</th><th>Issued</th><th></th></tr></thead><tbody>${{training}}</tbody></table>
+      <h3>Professional credential history</h3><table><thead><tr><th>Credential</th><th>Level</th><th>Status</th><th>Effective</th><th>Expires</th><th></th></tr></thead><tbody>${{issues}}</tbody></table>
+      <h3>CEU applications</h3><table><thead><tr><th>Credential</th><th>Status</th><th>Claimed</th><th>Date</th><th></th></tr></thead><tbody>${{apps}}</tbody></table>
+      <details style="margin-top:1rem"><summary style="cursor:pointer;font-weight:700">Manual credential correction / exception</summary>
+      <p class=muted>Use only for a documented support or backfill exception. This creates a new history row and never replaces an old certificate.</p>
+      <div class=row style="flex-wrap:wrap"><select id=mi-type><option value=birth>Birth Doula</option><option value=postpartum>Postpartum</option></select>
+      <select id=mi-level><option value=one_year_provisional>One-year provisional</option><option value=three_year_full>Three-year full</option></select>
+      <input id=mi-date type=date max="${{today}}" value="${{today}}"><input id=mi-reason placeholder="Required audit reason" style="width:300px">
+      <button class=ghost onclick=manualCredentialIssue()>Create issuance</button></div><div id=mi-msg class=muted></div></details>`;
+    out.scrollIntoView({{behavior:'smooth',block:'nearest'}});
+  }});
+}}
+function manualCredentialIssue(){{
+  const reason=document.getElementById('mi-reason').value.trim();
+  if(!reason){{document.getElementById('mi-msg').textContent='Enter an audit reason.';return;}}
+  if(!confirm('Create a new credential issuance for this member?'))return;
+  const body={{credential_type:document.getElementById('mi-type').value,credential_level:document.getElementById('mi-level').value,effective_at:document.getElementById('mi-date').value,reason:reason}};
+  j('/credentials/member/'+CURRENT_CREDENTIAL_MEMBER+'/manual-issue',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{
+    if(r.detail)document.getElementById('mi-msg').textContent=r.detail;else openCredentialMember(CURRENT_CREDENTIAL_MEMBER);}});
+}}
 function rosterQS(){{
   const p=new URLSearchParams();
   const q=document.getElementById('rq').value.trim(); if(q)p.set('q',q);
@@ -1407,8 +2110,9 @@ function loadCredRoster(){{
       return `<tr><td><b>${{esc(r.name)}}</b><br><span class=muted style="font-size:.8rem">${{esc(r.email)}}</span></td>`
         +`<td>${{esc(r.type)}}</td><td style="font-size:.82rem">${{esc(r.track)}}</td><td>${{badge}}</td>`
         +`<td>${{esc(r.expires||'—')}}</td>`
-        +`<td style="color:${{col}};font-weight:700">${{dl===null?'—':(dl<0?Math.abs(dl)+'d ago':dl+'d')}}</td></tr>`;
-    }}).join('')||'<tr><td colspan=6 class=muted>No credentials match those filters.</td></tr>';
+        +`<td style="color:${{col}};font-weight:700">${{dl===null?'—':(dl<0?Math.abs(dl)+'d ago':dl+'d')}}</td>`
+        +`<td><button class=ghost onclick="openCredentialMember(${{r.user_id}})">Manage</button></td></tr>`;
+    }}).join('')||'<tr><td colspan=7 class=muted>No credentials match those filters.</td></tr>';
     const pg=document.getElementById('rpager');
     if(!d.total){{pg.innerHTML='';return;}}
     const btn=(lbl,n,dis)=>`<button class=ghost ${{dis?'disabled style="opacity:.4;cursor:default"':''}} ${{dis?'':'onclick=goPage('+n+')'}}>${{lbl}}</button>`;
@@ -1426,19 +2130,6 @@ function loadCredRoster(){{
 function exportRoster(){{
   const qs=rosterQS(); window.open(API+'/credentials/roster?fmt=csv'+(qs?'&'+qs:''),'_blank');
 }}
-function loadCred(){{
-  j('/credentials?email='+encodeURIComponent(document.getElementById('cr-email').value)).then(d=>{{
-    if(d.detail){{document.getElementById('cr-out').innerHTML='<span class=muted>'+esc(d.detail)+'</span>';return;}}
-    const creds=(d.credentials||[]).map(c=>`<tr><td>${{esc(c.credential_type)}}</td><td><span class="badge on-b">${{esc(c.status)}}</span></td><td>${{(c.issued_at||'').slice(0,10)}}</td><td>${{(c.full_expires_at||c.provisional_expires_at||'').slice(0,10)}}</td></tr>`).join('');
-    document.getElementById('cr-out').innerHTML=`<p class=muted>CEU total: <b>${{d.ceu_total}}</b></p><table><thead><tr><th>Type</th><th>Status</th><th>Issued</th><th>Valid through</th></tr></thead><tbody>${{creds||'<tr><td colspan=4 class=muted>No credentials</td></tr>'}}</tbody></table>`;
-  }});
-}}
-function credAct(action,mode){{
-  const body={{action:action,mode:mode,email:document.getElementById('cra-email').value,
-    credential_type:document.getElementById('cra-type').value,count:+document.getElementById('cra-ceu').value||0}};
-  j('/credentials/action',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{
-    document.getElementById('cra-msg').textContent=r.ok?('Done ✓'+(r.ceu_total!=null?' (CEU: '+r.ceu_total+')':'')):(r.reason||r.detail||'Error');}});
-}}
 // Seats
 function loadSeats(){{
   j('/courses').then(cs=>{{document.getElementById('s-course').innerHTML='<option value="">— course —</option>'+cs.map(c=>`<option value="${{c.course_uuid}}">${{esc(c.name)}}</option>`).join('')}});
@@ -1451,5 +2142,11 @@ function genSeats(){{
     if(r.codes){{document.getElementById('s-msg').innerHTML='Generated '+r.count+' codes:<br><code>'+r.codes.join('  ')+'</code>';loadSeats();}}
     else document.getElementById('s-msg').textContent=r.detail||'Error';}});
 }}
-loadCoupons(); loadStripeSync();
+const initialCredentialApplication=new URLSearchParams(location.search).get('credential_application');
+if(initialCredentialApplication&&/^\\d+$/.test(initialCredentialApplication)){{
+  document.querySelector('.tab[data-t="credentials"]').click();
+  window.setTimeout(()=>openCredentialApplication(+initialCredentialApplication),50);
+}}else{{
+  loadCoupons(); loadStripeSync();
+}}
 </script></body></html>"""

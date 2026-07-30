@@ -1,7 +1,7 @@
 'use client'
 import React from 'react'
 import Link from 'next/link'
-import { BadgeDollarSign, User, Lock, ShoppingBag, Settings } from 'lucide-react'
+import { Award, BadgeDollarSign, User, Lock, ShoppingBag, Settings } from 'lucide-react'
 import { getUriWithOrg } from '@services/config/config'
 import { useTranslation } from 'react-i18next'
 
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { id: 'profile', icon: User, labelKey: 'account.profile', label: '' },
   { id: 'security', icon: Lock, labelKey: 'account.security', label: '' },
   { id: 'purchases', icon: ShoppingBag, labelKey: 'account.purchases', label: '' },
+  { id: 'credentials', icon: Award, labelKey: '', label: 'Credentials' },
   { id: 'affiliate', icon: BadgeDollarSign, labelKey: '', label: 'Affiliate' },
 ]
 
@@ -24,7 +25,7 @@ export function AccountActionsMobile({ orgslug, currentSubpage }: AccountActions
   return (
     <nav aria-label="Account mobile actions" className="fixed bottom-0 left-0 right-0 z-50 md:hidden">
       <div className="mx-3 mb-4 bg-white/95 backdrop-blur-sm rounded-xl nice-shadow p-2">
-        <div className="flex items-center justify-around">
+        <div className="flex items-center justify-start gap-1 overflow-x-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
             const isActive = currentSubpage === item.id

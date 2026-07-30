@@ -20,8 +20,13 @@ export async function generateMetadata(props: MetadataProps): Promise<Metadata> 
   }
 }
 
-async function OperationsDashPage() {
-  return <BBUEmbed path="bbu/admin/" title="Operations Console" />
+async function OperationsDashPage(props: {
+  searchParams: Promise<{ credential_application?: string }>
+}) {
+  const searchParams = await props.searchParams
+  const applicationId = String(searchParams.credential_application || '').replace(/\D/g, '')
+  const query = applicationId ? `?credential_application=${applicationId}` : ''
+  return <BBUEmbed path={`bbu/admin/${query}`} title="Operations Console" />
 }
 
 export default OperationsDashPage

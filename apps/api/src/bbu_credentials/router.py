@@ -1,19 +1,33 @@
 """BBU credentials — admin + hook API (admin-key gated).
 Mounted at /api/v1/bbu/credentials."""
+import html
+import io
 import os
+import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, HTTPException, Depends, File, UploadFile
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
-from src.db.users import User
+from src.db.users import AnonymousUser, APITokenUser, User
+from src.db.user_organizations import UserOrganization
 from src.db.courses.courses import Course
-from src.db.courses.certifications import Certifications
-from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
+from src.db.courses.certifications import CertificateUser, Certifications
+from src.security.auth import get_current_user, resolve_acting_user_id
+from src.security.org_auth import is_org_admin
+from src.bbu_credentials.models import (
+    BBUCredential,
+    BBUCeuLedger,
+    BBUCredentialApplication,
+    BBUCredentialApplicationDocument,
+    BBUCredentialApplicationItem,
+    BBUCredentialIssuance,
+)
 from src.bbu_credentials import service as svc
+from src.bbu_credentials import applications as app_svc
 
 router = APIRouter()
 ADMIN_KEY = os.environ.get("BBU_MIGRATION_KEY") or os.environ.get("BBU_AFFILIATE_ADMIN_KEY", "")
@@ -38,6 +52,517 @@ async def _user_by_email(db: AsyncSession, email: str) -> User:
     if not u:
         raise HTTPException(404, "User not found")
     return u
+
+
+async def _member_user(request: Request, db: AsyncSession) -> User:
+    principal = await get_current_user(request, db)
+    if isinstance(principal, (AnonymousUser, APITokenUser)):
+        raise HTTPException(401, "A signed-in member account is required.")
+    user_id = resolve_acting_user_id(principal)
+    membership = (
+        await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.org_id == 1,
+                UserOrganization.user_id == user_id,
+            )
+        )
+    ).scalars().first()
+    if not membership:
+        raise HTTPException(403, "Birth & Baby University membership is required.")
+    user = (
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalars().first()
+    if not user:
+        raise HTTPException(404, "Member account not found.")
+    return user
+
+
+async def _owned_application(
+    db: AsyncSession, public_uuid: str, user_id: int
+) -> BBUCredentialApplication:
+    application = (
+        await db.execute(
+            select(BBUCredentialApplication).where(
+                BBUCredentialApplication.public_uuid == public_uuid,
+                BBUCredentialApplication.user_id == user_id,
+                BBUCredentialApplication.org_id == 1,
+            )
+        )
+    ).scalars().first()
+    if not application:
+        raise HTTPException(404, "Credential application not found.")
+    return application
+
+
+async def _application_item(
+    db: AsyncSession, application_id: int, item_id: int
+) -> BBUCredentialApplicationItem:
+    item = (
+        await db.execute(
+            select(BBUCredentialApplicationItem).where(
+                BBUCredentialApplicationItem.id == item_id,
+                BBUCredentialApplicationItem.application_id == application_id,
+            )
+        )
+    ).scalars().first()
+    if not item:
+        raise HTTPException(404, "CEU training not found.")
+    return item
+
+
+# ===========================================================================
+# Signed-in member credential hub + CEU applications
+# ===========================================================================
+@router.get("/me")
+async def member_credential_hub(
+    request: Request, db_session: AsyncSession = Depends(get_db_session)
+):
+    user = await _member_user(request, db_session)
+    issuances = await app_svc.list_user_issuances(db_session, 1, user.id)
+    applications = await app_svc.list_user_applications(db_session, 1, user.id)
+    eligibility = {
+        credential_type: await app_svc.eligibility_for(
+            db_session, 1, user.id, credential_type
+        )
+        for credential_type in app_svc.CREDENTIAL_TYPES
+    }
+    cert_rows = (
+        await db_session.execute(
+            select(CertificateUser, Certifications, Course)
+            .join(
+                Certifications,
+                Certifications.id == CertificateUser.certification_id,
+            )
+            .join(Course, Course.id == Certifications.course_id)
+            .where(CertificateUser.user_id == user.id, Course.org_id == 1)
+        )
+    ).all()
+    training_certificates = []
+    for certificate_user, certification, course in cert_rows:
+        cfg = certification.config or {}
+        training_certificates.append(
+            {
+                "id": certificate_user.id,
+                "uuid": certificate_user.user_certification_uuid,
+                "course": course.name,
+                "issued_at": certificate_user.created_at,
+                "credential_type": (
+                    cfg.get("bbu_credential_type") or ""
+                ).strip().lower(),
+                "is_cross_cert": bool(cfg.get("bbu_is_cross_cert")),
+                "verify_url": (
+                    f"/certificates/{certificate_user.user_certification_uuid}/verify"
+                ),
+            }
+        )
+    return {
+        "member": {
+            "id": user.id,
+            "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
+            or user.username,
+            "email": str(user.email),
+        },
+        "training_certificates": training_certificates,
+        "issuances": [app_svc.issuance_to_dict(row) for row in issuances],
+        "eligibility": eligibility,
+        "applications": [
+            await app_svc.serialize_application(db_session, row)
+            for row in applications
+        ],
+        "ceu_total": await svc.approved_ceu_total(db_session, 1, user.id),
+        "ceu_threshold": app_svc.CEU_THRESHOLD,
+    }
+
+
+@router.post("/applications")
+async def member_create_application(
+    request: Request, db_session: AsyncSession = Depends(get_db_session)
+):
+    user = await _member_user(request, db_session)
+    body = await request.json()
+    application = await app_svc.create_application(
+        db_session,
+        org_id=1,
+        user_id=user.id,
+        credential_type=body.get("credential_type", ""),
+    )
+    return await app_svc.serialize_application(db_session, application)
+
+
+@router.get("/applications/{public_uuid}")
+async def member_get_application(
+    public_uuid: str,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    return await app_svc.serialize_application(db_session, application)
+
+
+@router.post("/applications/{public_uuid}/items")
+async def member_add_application_item(
+    public_uuid: str,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    body = await request.json()
+    item = await app_svc.add_application_item(
+        db_session,
+        application,
+        training_title=body.get("training_title", ""),
+        provider=body.get("provider", ""),
+        completion_date=body.get("completion_date", ""),
+        claimed_ceu=int(body.get("claimed_ceu") or 0),
+    )
+    return {"id": item.id, "ok": True}
+
+
+@router.put("/applications/{public_uuid}/items/{item_id}")
+async def member_update_application_item(
+    public_uuid: str,
+    item_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    item = await _application_item(db_session, application.id, item_id)
+    body = await request.json()
+    updated = await app_svc.update_application_item(
+        db_session,
+        application,
+        item,
+        training_title=body.get("training_title", ""),
+        provider=body.get("provider", ""),
+        completion_date=body.get("completion_date", ""),
+        claimed_ceu=int(body.get("claimed_ceu") or 0),
+    )
+    return {"id": updated.id, "ok": True}
+
+
+@router.delete("/applications/{public_uuid}/items/{item_id}")
+async def member_delete_application_item(
+    public_uuid: str,
+    item_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    app_svc._require_draft(application)
+    item = await _application_item(db_session, application.id, item_id)
+    documents = (
+        await db_session.execute(
+            select(BBUCredentialApplicationDocument).where(
+                BBUCredentialApplicationDocument.application_item_id == item.id
+            )
+        )
+    ).scalars().all()
+    for document in documents:
+        await db_session.delete(document)
+    await db_session.delete(item)
+    await db_session.commit()
+    return {"ok": True}
+
+
+@router.post("/applications/{public_uuid}/items/{item_id}/documents")
+async def member_upload_application_document(
+    public_uuid: str,
+    item_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    item = await _application_item(db_session, application.id, item_id)
+    app_svc._require_draft(application)
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png"}
+    allowed_content_types = {
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+    }
+    if extension not in allowed_extensions or file.content_type not in allowed_content_types:
+        raise HTTPException(400, "Upload a PDF, JPG, JPEG, or PNG file.")
+    from src.services.utils.upload_content import upload_file
+
+    stored_name = await upload_file(
+        file,
+        directory=f"credential-applications/{application.public_uuid}",
+        type_of_dir="users",
+        uuid=user.user_uuid,
+        allowed_types=["image", "document"],
+        filename_prefix=f"ceu_{item.id}",
+        max_size=10 * 1024 * 1024,
+    )
+    document = await app_svc.add_document_record(
+        db_session,
+        application,
+        item,
+        storage_key=stored_name,
+        original_filename=file.filename or stored_name,
+        content_type=file.content_type or "application/octet-stream",
+        byte_size=int(getattr(file, "size", 0) or 0),
+    )
+    return {
+        "id": document.id,
+        "filename": document.original_filename,
+        "content_type": document.content_type,
+        "byte_size": document.byte_size,
+    }
+
+
+@router.delete("/applications/{public_uuid}/documents/{document_id}")
+async def member_delete_application_document(
+    public_uuid: str,
+    document_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    app_svc._require_draft(application)
+    document = (
+        await db_session.execute(
+            select(BBUCredentialApplicationDocument).where(
+                BBUCredentialApplicationDocument.id == document_id,
+                BBUCredentialApplicationDocument.application_id == application.id,
+            )
+        )
+    ).scalars().first()
+    if not document:
+        raise HTTPException(404, "Document not found.")
+    await db_session.delete(document)
+    await db_session.commit()
+    return {"ok": True}
+
+
+@router.get("/applications/{public_uuid}/documents/{document_id}")
+async def application_document_download(
+    public_uuid: str,
+    document_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    principal = await get_current_user(request, db_session)
+    if isinstance(principal, (AnonymousUser, APITokenUser)):
+        raise HTTPException(401, "Sign in required.")
+    actor_user_id = resolve_acting_user_id(principal)
+    application = (
+        await db_session.execute(
+            select(BBUCredentialApplication).where(
+                BBUCredentialApplication.public_uuid == public_uuid,
+                BBUCredentialApplication.org_id == 1,
+            )
+        )
+    ).scalars().first()
+    if not application:
+        raise HTTPException(404, "Credential application not found.")
+    if actor_user_id != application.user_id and not await is_org_admin(
+        actor_user_id, 1, db_session
+    ):
+        raise HTTPException(403, "Forbidden")
+    document = (
+        await db_session.execute(
+            select(BBUCredentialApplicationDocument).where(
+                BBUCredentialApplicationDocument.id == document_id,
+                BBUCredentialApplicationDocument.application_id == application.id,
+            )
+        )
+    ).scalars().first()
+    if not document:
+        raise HTTPException(404, "Document not found.")
+    owner = (
+        await db_session.execute(select(User).where(User.id == application.user_id))
+    ).scalars().first()
+    if not owner:
+        raise HTTPException(404, "Member account not found.")
+    from src.services.utils.upload_content import read_content
+
+    content = await read_content(
+        directory=f"credential-applications/{application.public_uuid}",
+        type_of_dir="users",
+        uuid=owner.user_uuid,
+        file_and_format=document.storage_key,
+    )
+    await app_svc.add_audit_event(
+        db_session,
+        org_id=1,
+        actor_user_id=actor_user_id,
+        action="application_document_viewed",
+        target_type="application_document",
+        target_id=document.id,
+        commit=True,
+    )
+    safe_name = re.sub(r"[\r\n\"/\\\\]+", "_", document.original_filename)
+    return Response(
+        content,
+        media_type=document.content_type,
+        headers={"Content-Disposition": f'inline; filename="{safe_name}"'},
+    )
+
+
+@router.post("/applications/{public_uuid}/submit")
+async def member_submit_application(
+    public_uuid: str,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    user = await _member_user(request, db_session)
+    application = await _owned_application(db_session, public_uuid, user.id)
+    submitted = await app_svc.submit_application(db_session, application)
+    try:
+        from src.bbu_credentials.notifications import notify_submission
+
+        await notify_submission(request, db_session, submitted, user)
+    except Exception:
+        # The saved application is authoritative. Email failures are retried
+        # from the admin queue and must never roll back or duplicate submission.
+        pass
+    return await app_svc.serialize_application(db_session, submitted)
+
+
+# ===========================================================================
+# Public professional credential verification
+# ===========================================================================
+async def _verified_issuance(
+    db: AsyncSession, verification_token: str
+) -> tuple[BBUCredentialIssuance, User]:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,100}", verification_token or ""):
+        raise HTTPException(404, "Credential not found.")
+    issuance = (
+        await db.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.verification_token == verification_token,
+                BBUCredentialIssuance.org_id == 1,
+            )
+        )
+    ).scalars().first()
+    if not issuance:
+        raise HTTPException(404, "Credential not found.")
+    user = (
+        await db.execute(select(User).where(User.id == issuance.user_id))
+    ).scalars().first()
+    if not user:
+        raise HTTPException(404, "Credential holder not found.")
+    return issuance, user
+
+
+@router.get("/verify/{verification_token}")
+async def verify_credential(
+    verification_token: str,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    issuance, user = await _verified_issuance(db_session, verification_token)
+    return {
+        "valid": app_svc.issuance_effective_status(issuance)
+        in ("provisional", "full"),
+        "holder_name": f"{user.first_name or ''} {user.last_name or ''}".strip()
+        or user.username,
+        "credential_type": issuance.credential_type,
+        "credential_level": issuance.credential_level,
+        "term_years": issuance.term_years,
+        "status": app_svc.issuance_effective_status(issuance),
+        "effective_at": issuance.effective_at,
+        "expires_at": issuance.expires_at,
+        "public_credential_id": issuance.public_credential_id,
+    }
+
+
+@router.get("/verify/{verification_token}/page", response_class=HTMLResponse)
+async def verify_credential_page(
+    verification_token: str,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    issuance, user = await _verified_issuance(db_session, verification_token)
+    name = html.escape(
+        f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username
+    )
+    credential_name = (
+        "Certified Birth Doula"
+        if issuance.credential_type == "birth"
+        else "Certified Postpartum Doula"
+    )
+    level = (
+        "One-year provisional"
+        if issuance.credential_level == "one_year_provisional"
+        else "Three-year full"
+    )
+    status = app_svc.issuance_effective_status(issuance)
+    status_color = "#1c7a41" if status in ("provisional", "full") else "#8a4b13"
+    return HTMLResponse(
+        f"""<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Verify {html.escape(issuance.public_credential_id)} · Birth &amp; Baby University</title>
+<style>
+*{{box-sizing:border-box}}body{{margin:0;background:#ebf7ff;color:#1b2733;
+font-family:Arial,sans-serif;padding:32px 16px}}.card{{max-width:680px;margin:auto;
+background:#fff;border-radius:22px;border:1px solid #cfe3f1;overflow:hidden;
+box-shadow:0 18px 50px rgba(17,61,93,.12)}}.head{{background:#113d5d;color:#fff;
+padding:34px;text-align:center}}.head h1{{font-family:Georgia,serif;margin:0 0 8px;
+font-size:28px}}.body{{padding:34px}}.status{{display:inline-block;padding:7px 13px;
+border-radius:999px;background:{status_color}18;color:{status_color};font-weight:700}}
+dl{{display:grid;grid-template-columns:170px 1fr;gap:14px;margin:28px 0 0}}
+dt{{color:#6b6f79}}dd{{margin:0;font-weight:700}}@media(max-width:520px){{
+dl{{grid-template-columns:1fr;gap:5px}}dd{{margin-bottom:10px}}}}</style></head>
+<body><main class=card><div class=head><h1>Birth &amp; Baby University</h1>
+<div>Professional Credential Verification</div></div><div class=body>
+<span class=status>{html.escape(status.title())}</span>
+<dl><dt>Credential holder</dt><dd>{name}</dd>
+<dt>Credential</dt><dd>{credential_name}</dd>
+<dt>Level</dt><dd>{level}</dd>
+<dt>Credential ID</dt><dd>{html.escape(issuance.public_credential_id)}</dd>
+<dt>Effective date</dt><dd>{html.escape(issuance.effective_at[:10])}</dd>
+<dt>Valid through</dt><dd>{html.escape(issuance.expires_at[:10])}</dd></dl>
+</div></main></body></html>"""
+    )
+
+
+@router.get("/verify/{verification_token}/qr")
+async def verification_qr(
+    verification_token: str,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    await _verified_issuance(db_session, verification_token)
+    try:
+        import segno
+    except ImportError as exc:
+        raise HTTPException(503, "QR generation unavailable") from exc
+    from src.bbu_payments.public_url import get_bbu_public_base_url
+
+    base = get_bbu_public_base_url(request).rstrip("/")
+    verify_url = (
+        f"{base}/api/v1/bbu/credentials/verify/{verification_token}/page"
+    )
+    buf = io.BytesIO()
+    segno.make(verify_url, error="m").save(
+        buf, kind="svg", scale=8, dark="#113d5d", light=None, xmldecl=False
+    )
+    return Response(
+        buf.getvalue(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.post("/reconciliation")
+async def reconcile_credential_history(
+    request: Request, db_session: AsyncSession = Depends(get_db_session)
+):
+    """Dry-run or apply the idempotent legacy-to-history credential backfill."""
+    _check(request)
+    body = await request.json()
+    org_id = int(body.get("org_id", 1))
+    apply = bool(body.get("apply", False))
+    return await app_svc.reconciliation_report(
+        db_session, org_id, apply=apply
+    )
 
 
 @router.get("")
@@ -123,9 +648,13 @@ async def approve_ceu(request: Request, db_session: AsyncSession = Depends(get_d
     row.approved_at = _now()
     db_session.add(row)
     await db_session.commit()
-    await svc.maybe_upgrade_on_ceu(db_session, row.org_id, row.user_id)
     total = await svc.approved_ceu_total(db_session, row.org_id, row.user_id)
-    return {"approved": True, "ceu_total": total}
+    return {
+        "approved": True,
+        "ceu_total": total,
+        "credential_changed": False,
+        "note": "Credential changes require an approved CEU application.",
+    }
 
 
 @router.post("/renew")
@@ -177,6 +706,19 @@ async def set_directory(credential_id: int, request: Request, db_session: AsyncS
     c.directory_opt_in = bool(b.get("opt_in", True))
     c.updated_at = _now()
     db_session.add(c)
+    issuance_rows = (
+        await db_session.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.org_id == c.org_id,
+                BBUCredentialIssuance.user_id == c.user_id,
+                BBUCredentialIssuance.credential_type == c.credential_type,
+            )
+        )
+    ).scalars().all()
+    if issuance_rows:
+        latest = max(issuance_rows, key=lambda row: row.id or 0)
+        latest.directory_opt_in = c.directory_opt_in
+        db_session.add(latest)
     await db_session.commit()
     return {"id": c.id, "directory_opt_in": c.directory_opt_in}
 
@@ -349,6 +891,7 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
             best[key] = {"rank": rank, "tier": tier, "ctype": ctype, "it": it}
 
     created = updated = unmatched = ceu_awarded = 0
+    imported_credentials: list[BBUCredential] = []
     unmatched_emails = []
     for (email, ctype), rec in best.items():
         user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
@@ -384,6 +927,7 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
             cred.full_expires_at = ""
         cred.updated_at = svc._now()
         db_session.add(cred)
+        imported_credentials.append(cred)
 
     # 2) CEU-bearing professional courses -> ledger (idempotent per accredible id)
     for email, grp, it in ceu_rows:
@@ -399,6 +943,8 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
 
     if not dry:
         await db_session.commit()
+        for credential in imported_credentials:
+            await app_svc.reconcile_legacy_credential(db_session, credential)
     return {"dry_run": dry, "input_rows": len(items),
             "people_with_credentials": len(best),
             "created": created, "updated": updated,
