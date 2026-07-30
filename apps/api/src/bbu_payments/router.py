@@ -220,17 +220,63 @@ async def _upcoming_cohorts(db: AsyncSession, org_id: int, program: str = "") ->
         for c in (await db.execute(q)).scalars().all():
             if c.end_date and c.end_date < today:
                 continue
-            taken = await cohort_svc.active_count(db, c.id)
-            out.append({
-                "id": c.id, "name": c.name, "program": c.program,
-                "start_date": c.start_date, "end_date": c.end_date,
-                "seats_left": (c.capacity - taken) if c.capacity else None,
-                "full": bool(c.capacity and taken >= c.capacity),
-            })
+            out.append(await _cohort_summary(db, c))
         out.sort(key=lambda x: (x["start_date"] or "9999"))
     except Exception:
         return []
     return out
+
+
+async def _cohort_summary(db: AsyncSession, cohort: BBUCohort) -> dict:
+    from src.bbu_cohorts import service as cohort_svc
+
+    taken = await cohort_svc.active_count(db, cohort.id)
+    return {
+        "id": cohort.id,
+        "name": cohort.name,
+        "program": cohort.program,
+        "start_date": cohort.start_date,
+        "end_date": cohort.end_date,
+        "seats_left": (cohort.capacity - taken) if cohort.capacity else None,
+        "full": bool(cohort.capacity and taken >= cohort.capacity),
+    }
+
+
+async def _product_upcoming_cohorts(
+    db: AsyncSession,
+    product: BBUProduct,
+) -> list:
+    """Return only the cohort dates this exact offer can enroll someone into.
+
+    Program-level offers intentionally roll into the next open cohort. A dated
+    offer with ``cohort_id`` must show only that pinned cohort; showing every
+    program date made an October link look like it could enroll into August.
+    """
+    from datetime import date as _date
+
+    pinned = getattr(product, "cohort_id", None)
+    if pinned:
+        cohort = (
+            await db.execute(
+                select(BBUCohort).where(
+                    BBUCohort.id == pinned,
+                    BBUCohort.org_id == product.org_id,
+                )
+            )
+        ).scalars().first()
+        today = _date.today().isoformat()
+        if (
+            not cohort
+            or cohort.status not in ("open", "full")
+            or (cohort.end_date and cohort.end_date < today)
+        ):
+            return []
+        return [await _cohort_summary(db, cohort)]
+
+    program = getattr(product, "cohort_program", "") or ""
+    if not program:
+        return []
+    return await _upcoming_cohorts(db, product.org_id, program)
 
 
 @router.get("/cert-template/{name}")
@@ -280,24 +326,18 @@ async def products(request: Request, audience: str = "",
     rows = await _visible_products(request, db_session, rows, audience)
     # Buyers of a cohort product need to see which dates they can actually join
     # before they pay, not a single yes/no availability flag afterwards.
-    programs = {getattr(p, "cohort_program", "") or "" for p in rows}
-    cohorts_by_program = {}
-    for prog in programs:
-        if prog:
-            cohorts_by_program[prog] = await _upcoming_cohorts(db_session, 1, prog)
-    return [
-        {
+    result = []
+    for p in rows:
+        result.append({
             "id": p.id, "name": p.name, "kind": p.kind,
             "price_cents": p.price_cents, "currency": p.currency,
             "description": p.description, "image_url": p.image_url,
             "course_uuids": [u for u in p.course_uuids.split(",") if u],
             "cohort_program": getattr(p, "cohort_program", "") or "",
-            "upcoming_cohorts": cohorts_by_program.get(
-                getattr(p, "cohort_program", "") or "", []
-            ) if (getattr(p, "cohort_program", "") or getattr(p, "cohort_id", None)) else [],
-        }
-        for p in rows
-    ]
+            "cohort_id": getattr(p, "cohort_id", None),
+            "upcoming_cohorts": await _product_upcoming_cohorts(db_session, p),
+        })
+    return result
 
 
 def _ip_hash(request: Request) -> str:
@@ -372,7 +412,10 @@ async def store(request: Request, audience: str = "",
         prog = getattr(p, "cohort_program", "") or ""
         if prog or getattr(p, "cohort_id", None):
             try:
-                p._upcoming_cohorts = await _upcoming_cohorts(db_session, 1, prog)
+                p._upcoming_cohorts = await _product_upcoming_cohorts(
+                    db_session,
+                    p,
+                )
             except Exception:
                 p._upcoming_cohorts = []
     resp = HTMLResponse(store_page(rows, _base_url(request)))
@@ -399,26 +442,26 @@ async def buy(product_id: int, request: Request, db_session: AsyncSession = Depe
             raise HTTPException(400, f"This discount link isn't valid — {reason}")
         discount_cents = _coupon_svc.compute_discount_cents(c, p.price_cents)
 
-    # cohort products: if every upcoming cohort is full, render the waitlist form
+    # Cohort products: if every eligible cohort is full, render the waitlist
+    # form. Dated products are pinned to one cohort and must never show or enroll
+    # into another month.
     sold_out, program = False, ""
     prog = getattr(p, "cohort_program", "") or ""
-    if prog or getattr(p, "cohort_id", None):
+    pinned = getattr(p, "cohort_id", None)
+    cohorts = await _product_upcoming_cohorts(db_session, p)
+    if prog or pinned:
         from src.bbu_cohorts import service as cohort_svc
-        pinned = getattr(p, "cohort_id", None)
         if pinned:
             c = (await db_session.execute(select(BBUCohort).where(BBUCohort.id == pinned))).scalars().first()
             program = (c.program if c else prog) or ""
-            sold_out = not bool(c and c.status in ("open", "full") and
-                                (not c.capacity or (await cohort_svc.active_count(db_session, c.id)) < c.capacity))
+            sold_out = not cohorts or cohorts[0]["full"]
         else:
             program = prog
             sold_out = not await cohort_svc.has_open_seat(db_session, p.org_id, prog)
-    cohorts = []
-    if prog or getattr(p, "cohort_id", None):
-        cohorts = await _upcoming_cohorts(db_session, p.org_id, program or prog)
     resp = HTMLResponse(checkout_page(p, PUB_KEY, _base_url(request), sold_out=sold_out,
                                       program=program, coupon_code=coupon_code,
-                                      discount_cents=discount_cents, cohorts=cohorts))
+                                      discount_cents=discount_cents, cohorts=cohorts,
+                                      pinned_cohort=bool(pinned)))
     await _apply_ref(request, resp, db_session)
     return resp
 

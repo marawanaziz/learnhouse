@@ -111,7 +111,7 @@ def _price_block(p, discount_cents=0, coupon_code=""):
     return f"<div class='price' style='margin:18px 0'>{_price(p.price_cents, p.currency)}</div>"
 
 
-def _cohort_dates(cohorts):
+def _cohort_dates(cohorts, pinned=False):
     """Upcoming cohort dates on the buy page.
 
     A cohort product used to show only "available / sold out", so a buyer picked
@@ -147,7 +147,12 @@ def _cohort_dates(cohorts):
         "<div class='eyebrow' style='margin-bottom:6px'>Upcoming dates</div>"
         f"{rows}"
         "<p style='margin-top:8px;font-size:.8rem;color:#6b6f79'>"
-        "You'll be enrolled in the next live cohort.</p></div>"
+        + (
+            "You'll be enrolled in this live cohort."
+            if pinned
+            else "You'll be enrolled in the next live cohort."
+        )
+        + "</p></div>"
     )
 
 
@@ -242,7 +247,7 @@ def waitlist_page(p, base, program):
 
 
 def checkout_page(p, pub_key, base, sold_out=False, program="", coupon_code="",
-                  discount_cents=0, cohorts=None):
+                  discount_cents=0, cohorts=None, pinned_cohort=False):
     if sold_out:
         return waitlist_page(p, base, program)
     is_ebook = getattr(p, "kind", "") == "ebook"
@@ -255,7 +260,7 @@ def checkout_page(p, pub_key, base, sold_out=False, program="", coupon_code="",
         f"<h1 style='font-size:2rem;margin:12px 0 6px'>{p.name}</h1>"
         f"<p style='color:#4a5b68;margin-bottom:8px'>{(p.description or '')[:200]}</p>"
         f"{_price_block(p, discount_cents, coupon_code)}"
-        f"{_cohort_dates(cohorts)}"
+        f"{_cohort_dates(cohorts, pinned=pinned_cohort)}"
         f"<label for='email'>{email_label}</label>"
         f"<input id='email' type='email' placeholder='you@example.com' required>"
         f"<div style='height:22px'></div>"
