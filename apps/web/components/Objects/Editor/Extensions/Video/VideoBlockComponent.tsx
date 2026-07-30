@@ -300,6 +300,14 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
     fallbackSrc: hlsMasterUrl && mp4Url ? mp4Url : undefined,
     // Enforce forward-seek lock in the reader for integrity-flagged courses.
     noSkip: !isEditable && noSkipCourse,
+    playbackProgress:
+      !isEditable && activityUuid && blockObject?.block_uuid && fileId
+        ? {
+            activityUuid,
+            videoKey: blockObject.block_uuid,
+            sourceId: fileId,
+          }
+        : undefined,
     thumbnails:
       hlsReady && hlsMeta?.thumbnails?.url && blockObject && orgUuid && courseUuid && activityUuid
         ? {

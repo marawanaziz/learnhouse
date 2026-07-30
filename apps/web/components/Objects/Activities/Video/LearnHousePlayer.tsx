@@ -4,8 +4,15 @@ import React, { useEffect, useRef, useState } from 'react'
 import 'video.js/dist/video-js.css'
 import './player-controls.css'
 import { shouldSendHlsCredentials, type CaptionTrack } from './videoSource'
+import {
+  getVideoProgress,
+  resolveResumePosition,
+  saveVideoProgress,
+  type VideoProgressIdentity,
+} from '@services/media/videoProgress'
 
 const SEEK_SECONDS = 15
+const CHECKPOINT_INTERVAL_MS = 10_000
 
 /* Register ±15s seek-button components once (Video.js Button API — no plugin). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +72,8 @@ interface LearnHousePlayerProps {
   /** Integrity mode (cert/CEU courses): disable forward-seek past the furthest
    * point actually watched. Rewind + playback speed stay allowed. */
   noSkip?: boolean
+  /** Authenticated learner checkpoint. Omit in editors/public previews. */
+  playbackProgress?: VideoProgressIdentity
 }
 
 // BBU policy: learners may slow down or modestly speed up a lesson, but
@@ -89,6 +98,7 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
   thumbnails,
   captions,
   noSkip = false,
+  playbackProgress,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -98,19 +108,40 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
   const retriedRef = useRef(false)
   const [loadError, setLoadError] = useState(false)
   const [reloadNonce, setReloadNonce] = useState(0)
+  const playbackActivityUuid = playbackProgress?.activityUuid
+  const playbackVideoKey = playbackProgress?.videoKey
+  const playbackSourceId = playbackProgress?.sourceId
 
   useEffect(() => {
     let disposed = false
+    let checkpointReady = false
+    let flushProgress: ((_keepalive?: boolean) => void) | null = null
+    let removePageListeners: (() => void) | null = null
+    const progressIdentity =
+      playbackActivityUuid && playbackVideoKey && playbackSourceId
+        ? {
+            activityUuid: playbackActivityUuid,
+            videoKey: playbackVideoKey,
+            sourceId: playbackSourceId,
+          }
+        : null
     fellBackRef.current = false
     retriedRef.current = false
     setLoadError(false)
 
     ;(async () => {
+      // Fetch the learner's checkpoint in parallel with the dynamic player
+      // imports so persistence adds little or no player startup latency.
+      const savedProgressPromise = progressIdentity
+        ? getVideoProgress(progressIdentity)
+        : Promise.resolve(null)
       const { default: videojs } = await import('video.js')
       // Order matters: quality-levels must register before the selector.
       await import('videojs-contrib-quality-levels')
       await import('videojs-hls-quality-selector')
       await import('videojs-sprite-thumbnails')
+      if (disposed || !containerRef.current) return
+      const savedProgress = await savedProgressPromise
       if (disposed || !containerRef.current) return
 
       registerSeekButtons(videojs)
@@ -158,6 +189,35 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
         onReady?.()
       })
       playerRef.current = player
+      let maxWatched = 0
+      let lastCheckpointAt = 0
+      let lastCheckpointPosition = savedProgress?.position_seconds ?? 0
+      let playbackEnded = false
+
+      const persistPosition = (
+        force = false,
+        resetToStart = false,
+        keepalive = false
+      ) => {
+        if (!progressIdentity || !checkpointReady) return
+        const current = resetToStart ? 0 : (player.currentTime?.() ?? 0)
+        const durationValue = player.duration?.()
+        const duration =
+          typeof durationValue === 'number' && Number.isFinite(durationValue)
+            ? durationValue
+            : null
+        if (!Number.isFinite(current) || current < 0) return
+
+        const now = Date.now()
+        if (!force && now - lastCheckpointAt < CHECKPOINT_INTERVAL_MS) return
+        if (!force && Math.abs(current - lastCheckpointPosition) < 2) return
+
+        lastCheckpointAt = now
+        lastCheckpointPosition = current
+        void saveVideoProgress(progressIdentity, current, duration, { keepalive })
+      }
+      flushProgress = (keepalive = false) =>
+        persistPosition(true, playbackEnded, keepalive)
 
       // Durable, layered recovery so the user is NEVER left with a dead player:
       //   1. HLS source errors/stalls -> switch to the progressive MP4
@@ -214,6 +274,22 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       player.one('loadedmetadata', () => {
         metaLoaded = true
         clearWatchdog()
+        const duration = player.duration?.() ?? 0
+        const resumeAt = resolveResumePosition({
+          savedPosition: savedProgress?.position_seconds ?? 0,
+          duration,
+          startTime: details?.startTime,
+          endTime: details?.endTime,
+        })
+        maxWatched = resumeAt
+        if (resumeAt > 0) {
+          try {
+            player.currentTime(resumeAt)
+          } catch {
+            /* best-effort */
+          }
+        }
+        checkpointReady = true
       })
       player.on('dispose', clearWatchdog)
       armWatchdog()
@@ -238,7 +314,6 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       // deterrent, matching the segment-encryption posture elsewhere.)
       if (noSkip) {
         const SKIP_TOLERANCE = 1.0
-        let maxWatched = 0
         let watchedFired = false
         // Tell the activity page a gated video is present so it can require a
         // full watch before "mark complete" unlocks the next lesson.
@@ -265,6 +340,31 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
         }
         player.on('seeking', clampForward)
         player.on('seeked', clampForward)
+      }
+
+      // Save while watching, immediately on pause, and during navigation/tab
+      // close. The endpoint upserts one row, so this does not create a stream
+      // of progress records. A finished video resets to zero for future replay.
+      player.on('timeupdate', () => persistPosition())
+      player.on('pause', () => persistPosition(true))
+      player.on('play', () => {
+        playbackEnded = false
+      })
+      player.on('ended', () => {
+        playbackEnded = true
+        persistPosition(true, true)
+      })
+      const onPageHide = () => persistPosition(true, false, true)
+      const onVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          persistPosition(true, false, true)
+        }
+      }
+      window.addEventListener('pagehide', onPageHide)
+      document.addEventListener('visibilitychange', onVisibilityChange)
+      removePageListeners = () => {
+        window.removeEventListener('pagehide', onPageHide)
+        document.removeEventListener('visibilitychange', onVisibilityChange)
       }
 
       // Casual-download deterrents (cosmetic — not real protection; the segments
@@ -334,12 +434,8 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
         })
       }
 
-      // Honor per-video start/stop bounds. video.js's currentTime() getter is
-      // typed number | undefined, so coalesce before comparing.
-      const startTime = details?.startTime
-      if (startTime) {
-        player.one('loadedmetadata', () => player.currentTime(startTime))
-      }
+      // Honor the per-video stop bound. The start bound is applied together
+      // with the saved checkpoint in the loadedmetadata handler above.
       const endTime = details?.endTime
       if (endTime) {
         player.on('timeupdate', () => {
@@ -349,6 +445,8 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
     })()
 
     return () => {
+      flushProgress?.(true)
+      removePageListeners?.()
       disposed = true
       if (playerRef.current) {
         playerRef.current.dispose()
@@ -358,7 +456,20 @@ const LearnHousePlayer: React.FC<LearnHousePlayerProps> = ({
       captionBlobUrls.current = []
     }
     // Rebuild when the source changes, or when the user hits Retry (reloadNonce).
-  }, [src, isHls, fallbackSrc, reloadNonce, noSkip])
+  }, [
+    src,
+    isHls,
+    fallbackSrc,
+    reloadNonce,
+    noSkip,
+    playbackActivityUuid,
+    playbackVideoKey,
+    playbackSourceId,
+    details?.startTime,
+    details?.endTime,
+    details?.autoplay,
+    details?.muted,
+  ])
 
   return (
     // h-full chain is required for the player's `fill` mode to size to the

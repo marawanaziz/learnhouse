@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.core.events.database import get_db_session
 from src.db.trails import TrailRead
+from src.services.trail_video_progress import VideoProgressRead
 from src.routers.trail import router as trail_router
 from src.security.auth import get_current_user
 from src.security.features_utils.dependencies import require_courses_feature
@@ -72,4 +73,39 @@ class TestTrailRouter:
 
         with patch("src.routers.trail.remove_activity_from_trail", new_callable=AsyncMock, return_value=_mock_trail()):
             response = await client.delete("/api/v1/trail/remove_activity/activity_test")
+        assert response.status_code == 200
+
+        progress = VideoProgressRead(
+            activity_uuid="activity_test",
+            video_key="block_test",
+            source_id="lesson.mp4",
+            position_seconds=42,
+            duration_seconds=120,
+        )
+        with patch(
+            "src.routers.trail.get_video_playback_progress",
+            new_callable=AsyncMock,
+            return_value=progress,
+        ):
+            response = await client.get(
+                "/api/v1/trail/video-progress/activity_test",
+                params={"video_key": "block_test", "source_id": "lesson.mp4"},
+            )
+        assert response.status_code == 200
+        assert response.json()["position_seconds"] == 42
+
+        with patch(
+            "src.routers.trail.save_video_playback_progress",
+            new_callable=AsyncMock,
+            return_value=progress,
+        ):
+            response = await client.put(
+                "/api/v1/trail/video-progress/activity_test",
+                json={
+                    "video_key": "block_test",
+                    "source_id": "lesson.mp4",
+                    "position_seconds": 42,
+                    "duration_seconds": 120,
+                },
+            )
         assert response.status_code == 200

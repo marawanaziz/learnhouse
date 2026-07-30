@@ -17,6 +17,7 @@ from src.bbu_cohorts.models import BBUCohort, BBUCohortMember, BBUCohortWaitlist
 from src.bbu_credentials.models import BBUCredential, BBUCeuLedger  # noqa: F401
 from src.bbu_seats.models import BBUSeatCode  # noqa: F401
 from src.bbu_people.models import BBUQuizSubmission  # noqa: F401
+from src.db.video_playback_progress import VideoPlaybackProgress  # noqa: F401
 
 # Columns added to pre-existing tables after their first creation. create_all
 # never ALTERs, so additive columns are applied here explicitly.
@@ -53,6 +54,7 @@ def main():
         BBUCredential.__table__, BBUCeuLedger.__table__,
         BBUSeatCode.__table__,
         BBUQuizSubmission.__table__,
+        VideoPlaybackProgress.__table__,
     ]
     try:
         SQLModel.metadata.create_all(engine, tables=tables)

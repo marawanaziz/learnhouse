@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from src.core.events.database import get_db_session
 from src.db.trails import TrailCreate, TrailRead
 from src.security.auth import get_current_user
@@ -12,6 +12,12 @@ from src.services.trail.trail import (
     get_user_trail_with_orgid,
     remove_course_from_trail,
     remove_activity_from_trail,
+)
+from src.services.trail_video_progress import (
+    VideoProgressRead,
+    VideoProgressWrite,
+    get_video_playback_progress,
+    save_video_playback_progress,
 )
 
 
@@ -186,3 +192,47 @@ async def api_remove_activity_from_trail(
     Remove Activity from trail
     """
     return await remove_activity_from_trail(request, user, activity_uuid, db_session)
+
+
+@router.get(
+    "/video-progress/{activity_uuid}",
+    response_model=VideoProgressRead,
+    summary="Get the current user's position in a video",
+)
+async def api_get_video_progress(
+    request: Request,
+    activity_uuid: str,
+    video_key: str = Query(min_length=1, max_length=255),
+    source_id: str = Query(min_length=1, max_length=512),
+    user=Depends(get_current_user),
+    db_session=Depends(get_db_session),
+) -> VideoProgressRead:
+    return await get_video_playback_progress(
+        request,
+        user,
+        activity_uuid,
+        video_key,
+        source_id,
+        db_session,
+    )
+
+
+@router.put(
+    "/video-progress/{activity_uuid}",
+    response_model=VideoProgressRead,
+    summary="Save the current user's position in a video",
+)
+async def api_save_video_progress(
+    request: Request,
+    activity_uuid: str,
+    payload: VideoProgressWrite,
+    user=Depends(get_current_user),
+    db_session=Depends(get_db_session),
+) -> VideoProgressRead:
+    return await save_video_playback_progress(
+        request,
+        user,
+        activity_uuid,
+        payload,
+        db_session,
+    )

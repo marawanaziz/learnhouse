@@ -2,6 +2,12 @@ import React from 'react'
 import YouTube from 'react-youtube'
 import { useOrg } from '@components/Contexts/OrgContext'
 import { getNoSkipCourses } from '@services/media/noSkipCourses'
+import {
+  getVideoProgress,
+  resolveResumePosition,
+  saveVideoProgress,
+  type VideoProgressIdentity,
+} from '@services/media/videoProgress'
 import LearnHousePlayer from './LearnHousePlayer'
 import {
   isActivityHlsReady,
@@ -48,6 +54,117 @@ interface VideoActivityProps {
     course_uuid: string
   }
   orgUuid?: string
+}
+
+function PersistedYouTubePlayer({
+  videoId,
+  activityUuid,
+  details,
+}: {
+  videoId: string
+  activityUuid: string
+  details?: VideoDetails
+}) {
+  const playerRef = React.useRef<any>(null)
+  const checkpointReadyRef = React.useRef(false)
+  const playbackEndedRef = React.useRef(false)
+  const intervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null)
+  const identity = React.useMemo<VideoProgressIdentity>(
+    () => ({
+      activityUuid,
+      videoKey: activityUuid,
+      sourceId: `youtube:${videoId}`,
+    }),
+    [activityUuid, videoId]
+  )
+
+  const persist = React.useCallback(
+    (resetToStart = false, keepalive = false) => {
+      const player = playerRef.current
+      if (!player || !checkpointReadyRef.current) return
+      const position = resetToStart ? 0 : Number(player.getCurrentTime?.() ?? 0)
+      const duration = Number(player.getDuration?.() ?? 0)
+      void saveVideoProgress(
+        identity,
+        position,
+        Number.isFinite(duration) && duration > 0 ? duration : null,
+        { keepalive }
+      )
+    },
+    [identity]
+  )
+
+  const stopInterval = React.useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+  }, [])
+
+  React.useEffect(() => {
+    const onPageHide = () => persist(playbackEndedRef.current, true)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        persist(playbackEndedRef.current, true)
+      }
+    }
+    window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      persist(playbackEndedRef.current, true)
+      stopInterval()
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [persist, stopInterval])
+
+  return (
+    <YouTube
+      className="w-full h-full"
+      opts={{
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          autoplay: details?.autoplay ? 1 : 0,
+          mute: details?.muted ? 1 : 0,
+          start: details?.startTime || 0,
+          end: details?.endTime || undefined,
+          controls: 1,
+          modestbranding: 1,
+          rel: 0,
+        },
+      }}
+      videoId={videoId}
+      onReady={async (event) => {
+        playerRef.current = event.target
+        const saved = await getVideoProgress(identity)
+        const duration = Number(event.target.getDuration?.() ?? 0)
+        const resumeAt = resolveResumePosition({
+          savedPosition: saved?.position_seconds ?? 0,
+          duration,
+          startTime: details?.startTime,
+          endTime: details?.endTime,
+        })
+        if (resumeAt > 0) event.target.seekTo(resumeAt, true)
+        checkpointReadyRef.current = true
+      }}
+      onStateChange={(event) => {
+        // YouTube iframe API: ended=0, playing=1, paused=2.
+        if (event.data === 1) {
+          playbackEndedRef.current = false
+          stopInterval()
+          intervalRef.current = setInterval(() => persist(), 10_000)
+        } else if (event.data === 2) {
+          stopInterval()
+          persist()
+        } else if (event.data === 0) {
+          playbackEndedRef.current = true
+          stopInterval()
+          persist(true)
+        }
+      }}
+    />
+  )
 }
 
 function VideoActivity({ activity, course, orgUuid }: VideoActivityProps) {
@@ -131,6 +248,15 @@ function VideoActivity({ activity, course, orgUuid }: VideoActivityProps) {
                       thumbnails={thumbnails}
                       captions={captions}
                       noSkip={noSkip}
+                      playbackProgress={
+                        activity.content?.filename
+                          ? {
+                              activityUuid: activity.activity_uuid,
+                              videoKey: activity.activity_uuid,
+                              sourceId: activity.content.filename,
+                            }
+                          : undefined
+                      }
                     />
                   ) : null
                 })()}
@@ -140,27 +266,10 @@ function VideoActivity({ activity, course, orgUuid }: VideoActivityProps) {
           {activity.activity_sub_type === 'SUBTYPE_VIDEO_YOUTUBE' && (
             <div className="my-0 sm:my-3 md:my-5 w-full">
               <div className="relative w-full aspect-video sm:rounded-lg overflow-hidden ring-0 sm:ring-1 sm:ring-gray-200/10 sm:dark:ring-gray-700/20 shadow-none">
-                <YouTube
-                  className="w-full h-full"
-                  opts={{
-                    width: '100%',
-                    height: '100%',
-                    playerVars: {
-                      autoplay: activity.details?.autoplay ? 1 : 0,
-                      mute: activity.details?.muted ? 1 : 0,
-                      start: activity.details?.startTime || 0,
-                      end: activity.details?.endTime || undefined,
-                      controls: 1,
-                      modestbranding: 1,
-                      rel: 0
-                    },
-                  }}
+                <PersistedYouTubePlayer
                   videoId={videoId}
-                  onReady={(event) => {
-                    if (activity.details?.startTime) {
-                      event.target.seekTo(activity.details.startTime, true)
-                    }
-                  }}
+                  activityUuid={activity.activity_uuid}
+                  details={activity.details}
                 />
               </div>
             </div>
