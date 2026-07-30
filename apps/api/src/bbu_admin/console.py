@@ -8,6 +8,7 @@ the admin key never reaches the browser. Each endpoint calls the same service
 layer the key-gated routers use — no duplicated business logic.
 """
 from datetime import datetime, timezone
+import logging
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
@@ -42,6 +43,7 @@ from src.bbu_payments.branding import NAVY, SKY, STEEL, ICE, PAPER, LOGO, _FONTS
 
 router = APIRouter()
 ORG = 1
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -568,9 +570,7 @@ async def credential_member_record(
             "username": user.username,
         },
         "training_certificates": training_certificates,
-        "issuances": [
-            credential_app_svc.issuance_to_dict(row) for row in issuances
-        ],
+        "issuances": credential_app_svc.issuance_history_to_dicts(issuances),
         "applications": [
             await credential_app_svc.serialize_application(
                 db_session, row, include_internal=True
@@ -594,6 +594,47 @@ async def credential_member_record(
             for row in ledger
         ],
     }
+
+
+@router.get("/credentials/data-quality")
+async def credential_data_quality(
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Read-only review queue for suspicious historical credential data."""
+    await _auth(request, db_session)
+    report = await credential_app_svc.credential_data_quality_report(
+        db_session, ORG
+    )
+    user_ids = {
+        row["user_id"] for row in report["nonstandard_terms"]
+    } | {
+        row["user_id"]
+        for row in report["possible_duplicate_manual_ceus"]
+    }
+    users = (
+        await db_session.execute(select(User).where(User.id.in_(user_ids)))
+    ).scalars().all() if user_ids else []
+    user_lookup = {
+        user.id: {
+            "user_id": user.id,
+            "name": (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+            ),
+            "email": str(user.email),
+        }
+        for user in users
+    }
+    for row in (
+        report["nonstandard_terms"]
+        + report["possible_duplicate_manual_ceus"]
+    ):
+        row["member"] = user_lookup.get(
+            row["user_id"],
+            {"user_id": row["user_id"], "name": "Unknown member", "email": ""},
+        )
+    return report
 
 
 async def _admin_application(
@@ -996,9 +1037,21 @@ async def credential_manual_issue(
     )
     await db_session.commit()
     await db_session.refresh(issuance)
+    notification_error = ""
+    try:
+        from src.bbu_credentials.notifications import notify_issuance
+
+        await notify_issuance(request, user, issuance)
+    except Exception as exc:
+        notification_error = str(exc)[:1000]
+        logger.exception(
+            "Manual credential notification failed for issuance %s",
+            issuance.id,
+        )
     return {
         "ok": True,
         "issuance": credential_app_svc.issuance_to_dict(issuance),
+        "notification_error": notification_error,
     }
 
 
@@ -1246,29 +1299,11 @@ async def credentials_roster(request: Request, q: str = "", status: str = "",
 async def credentials_action(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     b = await request.json()
     await _auth(request, db_session, b)
-    u = await _user(db_session, b.get("email", ""))
-    action = b.get("action")
-    ctype = (b.get("credential_type") or "birth").strip().lower()
-    if action == "issue":
-        mode = (b.get("mode") or "provisional").lower()
-        if mode == "full":
-            await cred_svc.issue_full_direct(db_session, ORG, u.id, ctype, source="manual", source_ref="admin")
-        else:
-            await cred_svc.issue_provisional(db_session, ORG, u.id, ctype, source_ref="admin")
-        return {"ok": True}
-    if action == "award_ceu":
-        await cred_svc.award_ceu(db_session, ORG, u.id, int(b.get("count", 0)),
-                                 source="manual", source_ref=b.get("note", ""))
-        return {"ok": True, "ceu_total": await cred_svc.approved_ceu_total(db_session, ORG, u.id)}
-    if action == "renew":
-        cred = (await db_session.execute(select(BBUCredential).where(
-            BBUCredential.org_id == ORG, BBUCredential.user_id == u.id,
-            BBUCredential.credential_type == ctype))).scalars().first()
-        if not cred:
-            raise HTTPException(404, "Credential not found")
-        ok, reason = await cred_svc.renew(db_session, cred)
-        return {"ok": ok, "reason": reason}
-    raise HTTPException(400, "unknown action")
+    raise HTTPException(
+        410,
+        "This legacy credential action is retired. Open the member record in "
+        "Operations > Credentials to review CEUs or generate a new certificate.",
+    )
 
 
 # ===========================================================================
@@ -1530,6 +1565,11 @@ button.ghost:hover{{background:#dbecf8}}
       <div id=cm-results style="margin-top:.5rem"></div>
       <div id=cm-record style="display:none;margin-top:1rem"></div>
     </div>
+    <div class=card><h2>Credential data review</h2>
+      <p class=muted style="margin-top:-.6rem">Read-only safety report for imported certificate terms and possible duplicate manual CEU entries. Nothing is changed until an administrator reviews the member record.</p>
+      <button class=ghost onclick=loadCredentialDataReview()>Refresh review</button>
+      <div id=cdq-out style="margin-top:.7rem"></div>
+    </div>
     <div class=card><h2>Credential registry — certified and expiring</h2>
       <div id=cr-summary class=row style="gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
       <div class=row style="flex-wrap:wrap;gap:.4rem">
@@ -1644,7 +1684,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{{
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); document.getElementById('p-'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='cohorts')loadCohorts(); if(t.dataset.t==='seats')loadSeats(); if(t.dataset.t==='store')loadStore();
-  if(t.dataset.t==='credentials'){{loadCredentialApplications();loadCredRoster();}}
+  if(t.dataset.t==='credentials'){{loadCredentialApplications();loadCredRoster();loadCredentialDataReview();}}
   if(t.dataset.t==='circlehist')loadCircleHist();
   if(t.dataset.t==='sponsors')loadSponsors();
 }});
@@ -2056,7 +2096,7 @@ function openCredentialMember(userId){{
     const m=d.member;
     const training=(d.training_certificates||[]).map(c=>`<tr><td>${{esc(c.course)}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{c.is_cross_cert?'Cross-certification':'Full training'}}</td><td>${{esc((c.issued_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{esc(c.verify_url)}}">Open</a></td></tr>`).join('')
       ||'<tr><td colspan=5 class=muted>No mapped training certificates.</td></tr>';
-    const issues=(d.issuances||[]).map(i=>`<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a></td></tr>`).join('')
+    const issues=(d.issuances||[]).map(i=>`<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a> <a class=ghost href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/certificate.pdf">Download PDF</a></td></tr>`).join('')
       ||'<tr><td colspan=6 class=muted>No professional credential issuances.</td></tr>';
     const apps=(d.applications||[]).map(a=>`<tr><td>${{credLabel(a.credential_type)}}</td><td>${{statusBadge(a.status)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{esc((a.submitted_at||a.created_at||'').slice(0,10))}}</td><td><button class=ghost onclick="openCredentialApplication(${{a.id}})">Open</button></td></tr>`).join('')
       ||'<tr><td colspan=5 class=muted>No CEU applications.</td></tr>';
@@ -2066,22 +2106,53 @@ function openCredentialMember(userId){{
       <h3>Training certificates</h3><table><thead><tr><th>Course</th><th>Maps to</th><th>Training path</th><th>Issued</th><th></th></tr></thead><tbody>${{training}}</tbody></table>
       <h3>Professional credential history</h3><table><thead><tr><th>Credential</th><th>Level</th><th>Status</th><th>Effective</th><th>Expires</th><th></th></tr></thead><tbody>${{issues}}</tbody></table>
       <h3>CEU applications</h3><table><thead><tr><th>Credential</th><th>Status</th><th>Claimed</th><th>Date</th><th></th></tr></thead><tbody>${{apps}}</tbody></table>
-      <details style="margin-top:1rem"><summary style="cursor:pointer;font-weight:700">Manual credential correction / exception</summary>
-      <p class=muted>Use only for a documented support or backfill exception. This creates a new history row and never replaces an old certificate.</p>
-      <div class=row style="flex-wrap:wrap"><select id=mi-type><option value=birth>Birth Doula</option><option value=postpartum>Postpartum</option></select>
-      <select id=mi-level><option value=one_year_provisional>One-year provisional</option><option value=three_year_full>Three-year full</option></select>
-      <input id=mi-date type=date max="${{today}}" value="${{today}}"><input id=mi-reason placeholder="Required audit reason" style="width:300px">
-      <button class=ghost onclick=manualCredentialIssue()>Create issuance</button></div><div id=mi-msg class=muted></div></details>`;
+      <details style="margin-top:1rem" ontoggle="if(this.open)previewManualCredential()"><summary style="cursor:pointer;font-weight:700">Generate a new credential certificate</summary>
+      <p class=muted>Use for a documented credentialing decision or historical correction. A separate certificate, ID and QR code will be created; prior certificates remain in history.</p>
+      <div class=row style="flex-wrap:wrap"><select id=mi-type onchange=previewManualCredential()><option value=birth>Birth Doula</option><option value=postpartum>Postpartum</option></select>
+      <select id=mi-level onchange=previewManualCredential()><option value=one_year_provisional>One-year provisional</option><option value=three_year_full>Three-year full</option></select>
+      <input id=mi-date type=date max="${{today}}" value="${{today}}" onchange=previewManualCredential()><input id=mi-reason placeholder="Required audit reason" style="width:300px">
+      <button class=ghost onclick=manualCredentialIssue()>Generate new certificate</button></div>
+      <div id=mi-preview style="margin-top:.6rem;padding:.7rem;border-radius:8px;background:#f7fbfe"></div><div id=mi-msg class=muted></div></details>`;
+    previewManualCredential();
     out.scrollIntoView({{behavior:'smooth',block:'nearest'}});
   }});
+}}
+function addCredentialYears(value,years){{
+  const p=(value||'').split('-').map(Number);if(p.length!==3||!p[0])return '—';
+  let y=p[0]+years,m=p[1],d=p[2];
+  const leap=(y%4===0&&y%100!==0)||y%400===0;
+  if(m===2&&d===29&&!leap)d=28;
+  return [y,String(m).padStart(2,'0'),String(d).padStart(2,'0')].join('-');
+}}
+function previewManualCredential(){{
+  const out=document.getElementById('mi-preview');if(!out)return;
+  const type=document.getElementById('mi-type').value;
+  const level=document.getElementById('mi-level').value;
+  const effective=document.getElementById('mi-date').value;
+  const years=level==='one_year_provisional'?1:3;
+  out.innerHTML=`<b>Certificate preview</b><br>${{credLabel(type)}} · ${{levelLabel(level)}}<br><span class=muted>Effective ${{esc(effective||'—')}} · Valid through ${{esc(addCredentialYears(effective,years))}}</span>`;
 }}
 function manualCredentialIssue(){{
   const reason=document.getElementById('mi-reason').value.trim();
   if(!reason){{document.getElementById('mi-msg').textContent='Enter an audit reason.';return;}}
-  if(!confirm('Create a new credential issuance for this member?'))return;
+  if(!confirm('Generate a separate credential certificate for this member? The prior certificate will remain in history.'))return;
   const body={{credential_type:document.getElementById('mi-type').value,credential_level:document.getElementById('mi-level').value,effective_at:document.getElementById('mi-date').value,reason:reason}};
   j('/credentials/member/'+CURRENT_CREDENTIAL_MEMBER+'/manual-issue',{{method:'POST',body:JSON.stringify(body)}}).then(r=>{{
-    if(r.detail)document.getElementById('mi-msg').textContent=r.detail;else openCredentialMember(CURRENT_CREDENTIAL_MEMBER);}});
+    if(r.detail){{document.getElementById('mi-msg').textContent=r.detail;return;}}
+    if(r.notification_error)alert('The certificate was created, but the member email could not be sent: '+r.notification_error);
+    openCredentialMember(CURRENT_CREDENTIAL_MEMBER);}});
+}}
+function loadCredentialDataReview(){{
+  const out=document.getElementById('cdq-out');if(!out)return;
+  out.innerHTML='<span class=muted>Checking historical credential data…</span>';
+  j('/credentials/data-quality').then(d=>{{
+    if(d.detail){{out.innerHTML=`<span class=muted>${{esc(d.detail)}}</span>`;return;}}
+    const terms=(d.nonstandard_terms||[]).map(r=>`<tr><td><button class=ghost onclick="openCredentialMember(${{r.member.user_id}})">${{esc(r.member.name)}}</button><br><span class=muted>${{esc(r.member.email)}}</span></td><td>${{esc(r.public_credential_id)}}</td><td>${{esc(r.effective_at)}} to ${{esc(r.expires_at)}}</td><td>${{esc(r.expected_expires_at)}}</td></tr>`).join('');
+    const dupes=(d.possible_duplicate_manual_ceus||[]).map(r=>`<tr><td><button class=ghost onclick="openCredentialMember(${{r.member.user_id}})">${{esc(r.member.name)}}</button><br><span class=muted>${{esc(r.member.email)}}</span></td><td>${{r.ceu_count}} CEUs</td><td>${{esc(r.ledger_ids.join(', '))}}</td><td>${{esc(r.reason)}}</td></tr>`).join('');
+    out.innerHTML=`<div class=row style="gap:.5rem;flex-wrap:wrap"><span class=badge>Nonstandard terms: ${{d.summary.nonstandard_terms||0}}</span><span class=badge>Possible duplicate CEU groups: ${{d.summary.possible_duplicate_manual_ceu_groups||0}}</span></div>
+      <details style="margin-top:.6rem"><summary style="cursor:pointer;font-weight:700">Certificate terms requiring review</summary><table><thead><tr><th>Member</th><th>Credential ID</th><th>Recorded term</th><th>Expected end</th></tr></thead><tbody>${{terms||'<tr><td colspan=4 class=muted>None.</td></tr>'}}</tbody></table></details>
+      <details style="margin-top:.6rem"><summary style="cursor:pointer;font-weight:700">Possible duplicate manual CEUs</summary><table><thead><tr><th>Member</th><th>Amount</th><th>Ledger rows</th><th>Reason</th></tr></thead><tbody>${{dupes||'<tr><td colspan=4 class=muted>None.</td></tr>'}}</tbody></table></details>`;
+  }});
 }}
 function rosterQS(){{
   const p=new URLSearchParams();

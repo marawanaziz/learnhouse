@@ -5,7 +5,10 @@ import pytest
 from starlette.requests import Request
 
 from src.bbu_credentials import notifications
-from src.bbu_credentials.models import BBUCredentialApplication
+from src.bbu_credentials.models import (
+    BBUCredentialApplication,
+    BBUCredentialIssuance,
+)
 
 
 def _request() -> Request:
@@ -70,3 +73,42 @@ async def test_submission_email_retry_skips_member_after_member_send_succeeds(
     assert application.submission_notified_at
     assert application.notification_error == ""
     assert application.notification_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_issuance_email_links_to_certificate_and_history(
+    regular_user, monkeypatch
+):
+    issuance = BBUCredentialIssuance(
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="postpartum",
+        credential_level="three_year_full",
+        term_years=3,
+        status="issued",
+        source="manual",
+        source_ref="admin issuance",
+        effective_at="2026-07-30T00:00:00+00:00",
+        expires_at="2029-07-30T00:00:00+00:00",
+        public_credential_id="BBU-PPD-2026-ABC123",
+        verification_token="manual_issuance_email_token",
+        created_at="2026-07-30T00:00:00+00:00",
+    )
+    sent = Mock()
+    monkeypatch.setattr(notifications, "send_email", sent)
+    monkeypatch.setenv("LEARNHOUSE_DOMAIN", "learn.birthandbabyuniversity.com")
+
+    await notifications.notify_issuance(_request(), regular_user, issuance)
+
+    assert sent.call_count == 1
+    message = sent.call_args.kwargs
+    assert message["to"] == str(regular_user.email)
+    assert "Postpartum Doula" in message["subject"]
+    assert "BBU-PPD-2026-ABC123" in message["body"]
+    assert (
+        "https://learn.birthandbabyuniversity.com/api/v1/bbu/credentials/"
+        "verify/manual_issuance_email_token/certificate.pdf"
+    ) in message["body"]
+    assert "https://learn.birthandbabyuniversity.com/account/credentials" in message[
+        "body"
+    ]

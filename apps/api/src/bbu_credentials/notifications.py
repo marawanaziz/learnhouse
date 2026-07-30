@@ -8,7 +8,10 @@ import os
 from fastapi import Request
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.bbu_credentials.models import BBUCredentialApplication
+from src.bbu_credentials.models import (
+    BBUCredentialApplication,
+    BBUCredentialIssuance,
+)
 from src.bbu_payments.public_url import get_bbu_public_base_url
 from src.db.users import User
 from src.services.email.utils import send_email
@@ -197,3 +200,52 @@ async def notify_decision(
             application.id,
         )
         raise
+
+
+async def notify_issuance(
+    request: Request,
+    user: User,
+    issuance: BBUCredentialIssuance,
+) -> None:
+    """Notify a member after an administrator manually creates a certificate."""
+    base = get_bbu_public_base_url(request).rstrip("/")
+    member_url = f"{base}/account/credentials"
+    certificate_url = (
+        f"{base}/api/v1/bbu/credentials/verify/"
+        f"{issuance.verification_token}/certificate.pdf"
+    )
+    name = html.escape(
+        f"{user.first_name or ''} {user.last_name or ''}".strip()
+        or user.username
+    )
+    label = _credential_label(issuance.credential_type)
+    level = (
+        "one-year provisional"
+        if issuance.credential_level == "one_year_provisional"
+        else "three-year full"
+    )
+    heading = "Your new BBU credential is ready"
+    body = f"""
+        <h1 style="{STYLES['h1']}">{heading}</h1>
+        <p style="{STYLES['p']}">Hi {name},</p>
+        <p style="{STYLES['p']}">
+          A new {html.escape(level)} {html.escape(label)} credential has been
+          issued with credential ID
+          <strong>{html.escape(issuance.public_credential_id)}</strong>.
+        </p>
+        <p style="{STYLES['p']}">
+          It is effective {html.escape(issuance.effective_at[:10])} and valid
+          through {html.escape(issuance.expires_at[:10])}.
+        </p>
+        {_button("Download your certificate", certificate_url)}
+        <p style="{STYLES['p']}">{_button("View credential history", member_url)}</p>
+    """
+    send_email(
+        to=str(user.email),
+        subject=f"Your new BBU {label} credential is ready",
+        body=_email_layout(
+            heading,
+            body,
+            "Your prior certificates remain available in your credential history.",
+        ),
+    )

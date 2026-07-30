@@ -170,7 +170,7 @@ async def member_credential_hub(
             "email": str(user.email),
         },
         "training_certificates": training_certificates,
-        "issuances": [app_svc.issuance_to_dict(row) for row in issuances],
+        "issuances": app_svc.issuance_history_to_dicts(issuances),
         "eligibility": eligibility,
         "applications": [
             await app_svc.serialize_application(db_session, row)
@@ -462,21 +462,38 @@ async def _verified_issuance(
     return issuance, user
 
 
+async def _public_issuance_status(
+    db: AsyncSession, issuance: BBUCredentialIssuance
+) -> tuple[str, int | None]:
+    replacement = (
+        await db.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.org_id == issuance.org_id,
+                BBUCredentialIssuance.supersedes_issuance_id == issuance.id,
+            )
+        )
+    ).scalars().first()
+    if replacement and issuance.status != "revoked":
+        return "replaced", replacement.id
+    return app_svc.issuance_effective_status(issuance), None
+
+
 @router.get("/verify/{verification_token}")
 async def verify_credential(
     verification_token: str,
     db_session: AsyncSession = Depends(get_db_session),
 ):
     issuance, user = await _verified_issuance(db_session, verification_token)
+    status, replacement_id = await _public_issuance_status(db_session, issuance)
     return {
-        "valid": app_svc.issuance_effective_status(issuance)
-        in ("provisional", "full"),
+        "valid": status in ("provisional", "full"),
         "holder_name": f"{user.first_name or ''} {user.last_name or ''}".strip()
         or user.username,
         "credential_type": issuance.credential_type,
         "credential_level": issuance.credential_level,
         "term_years": issuance.term_years,
-        "status": app_svc.issuance_effective_status(issuance),
+        "status": status,
+        "superseded_by_issuance_id": replacement_id,
         "effective_at": issuance.effective_at,
         "expires_at": issuance.expires_at,
         "public_credential_id": issuance.public_credential_id,
@@ -502,8 +519,14 @@ async def verify_credential_page(
         if issuance.credential_level == "one_year_provisional"
         else "Three-year full"
     )
-    status = app_svc.issuance_effective_status(issuance)
-    status_color = "#1c7a41" if status in ("provisional", "full") else "#8a4b13"
+    status, _replacement_id = await _public_issuance_status(
+        db_session, issuance
+    )
+    status_color = (
+        "#1c7a41"
+        if status in ("provisional", "full")
+        else ("#a3261e" if status == "replaced" else "#8a4b13")
+    )
     return HTMLResponse(
         f"""<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -529,6 +552,60 @@ dl{{grid-template-columns:1fr;gap:5px}}dd{{margin-bottom:10px}}}}</style></head>
 <dt>Effective date</dt><dd>{html.escape(issuance.effective_at[:10])}</dd>
 <dt>Valid through</dt><dd>{html.escape(issuance.expires_at[:10])}</dd></dl>
 </div></main></body></html>"""
+    )
+
+
+@router.get("/verify/{verification_token}/certificate.pdf")
+async def download_credential_certificate(
+    verification_token: str,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    issuance, user = await _verified_issuance(db_session, verification_token)
+    status, _replacement_id = await _public_issuance_status(
+        db_session, issuance
+    )
+    from src.bbu_credentials.certificate_pdf import (
+        build_credential_certificate_pdf,
+    )
+    from src.bbu_payments.public_url import get_bbu_public_base_url
+
+    base = get_bbu_public_base_url(request).rstrip("/")
+    verify_url = (
+        f"{base}/api/v1/bbu/credentials/verify/{verification_token}/page"
+    )
+    credential_name = (
+        "Certified Birth Doula"
+        if issuance.credential_type == "birth"
+        else "Certified Postpartum Doula"
+    )
+    credential_level = (
+        "One-year provisional"
+        if issuance.credential_level == "one_year_provisional"
+        else "Three-year full"
+    )
+    pdf = build_credential_certificate_pdf(
+        holder_name=(
+            f"{user.first_name or ''} {user.last_name or ''}".strip()
+            or user.username
+        ),
+        credential_name=credential_name,
+        credential_level=credential_level,
+        public_credential_id=issuance.public_credential_id,
+        effective_date=issuance.effective_at[:10],
+        expiration_date=issuance.expires_at[:10],
+        verification_url=verify_url,
+        status=status,
+    )
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{issuance.public_credential_id}.pdf"'
+            ),
+            "Cache-Control": "private, max-age=300",
+        },
     )
 
 
@@ -612,36 +689,24 @@ async def user_credentials(request: Request, email: str, org_id: int = 1,
 
 @router.post("/issue")
 async def issue(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    """Manual issue. Body: {email, credential_type, mode: provisional|full, org_id?}"""
+    """Retired: use the unified Operations credential workflow."""
     _check(request)
-    b = await request.json()
-    u = await _user_by_email(db_session, b.get("email", ""))
-    org_id = int(b.get("org_id", 1))
-    ctype = (b.get("credential_type") or "birth").strip().lower()
-    mode = (b.get("mode") or "provisional").strip().lower()
-    if mode == "full":
-        c = await svc.issue_full_direct(db_session, org_id, u.id, ctype,
-                                        source="manual", source_ref=b.get("note", ""))
-    else:
-        c = await svc.issue_provisional(db_session, org_id, u.id, ctype,
-                                        source_ref=b.get("note", ""))
-    total = await svc.approved_ceu_total(db_session, org_id, u.id)
-    return svc.to_dict(c, total)
+    raise HTTPException(
+        410,
+        "This legacy credential action has been retired. "
+        "Use Operations > Credentials to generate a new certificate.",
+    )
 
 
 @router.post("/award-ceu")
 async def award_ceu(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    """Body: {email, count, source?, source_ref?, approved?, org_id?}"""
+    """Retired: CEUs must be reviewed through the application workflow."""
     _check(request)
-    b = await request.json()
-    u = await _user_by_email(db_session, b.get("email", ""))
-    org_id = int(b.get("org_id", 1))
-    row = await svc.award_ceu(db_session, org_id, u.id, int(b.get("count", 0)),
-                              source=b.get("source", "manual"),
-                              source_ref=b.get("source_ref", ""),
-                              approved=bool(b.get("approved", True)))
-    total = await svc.approved_ceu_total(db_session, org_id, u.id)
-    return {"ledger_id": row.id, "ceu_total": total}
+    raise HTTPException(
+        410,
+        "This legacy CEU action has been retired. "
+        "Use Operations > Credentials to review a CEU application.",
+    )
 
 
 @router.post("/approve-ceu")
@@ -668,20 +733,13 @@ async def approve_ceu(request: Request, db_session: AsyncSession = Depends(get_d
 
 @router.post("/renew")
 async def renew(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    """Body: {email, credential_type, org_id?}"""
+    """Retired: renewals must create an immutable issuance record."""
     _check(request)
-    b = await request.json()
-    u = await _user_by_email(db_session, b.get("email", ""))
-    org_id = int(b.get("org_id", 1))
-    ctype = (b.get("credential_type") or "birth").strip().lower()
-    cred = (await db_session.execute(select(BBUCredential).where(
-        BBUCredential.org_id == org_id, BBUCredential.user_id == u.id,
-        BBUCredential.credential_type == ctype))).scalars().first()
-    if not cred:
-        raise HTTPException(404, "Credential not found")
-    ok, reason = await svc.renew(db_session, cred)
-    total = await svc.approved_ceu_total(db_session, org_id, u.id)
-    return {"renewed": ok, "reason": reason, **svc.to_dict(cred, total)}
+    raise HTTPException(
+        410,
+        "This legacy renewal action has been retired. "
+        "Use Operations > Credentials to generate a new certificate.",
+    )
 
 
 @router.post("/on-course-complete")

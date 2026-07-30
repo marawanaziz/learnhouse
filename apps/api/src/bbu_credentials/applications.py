@@ -112,6 +112,26 @@ def issuance_to_dict(issuance: BBUCredentialIssuance) -> dict:
     }
 
 
+def issuance_history_to_dicts(
+    issuances: Iterable[BBUCredentialIssuance],
+) -> list[dict]:
+    """Serialize immutable history and identify certificates replaced by a newer row."""
+    rows = list(issuances)
+    superseded_by = {
+        row.supersedes_issuance_id: row.id
+        for row in rows
+        if row.supersedes_issuance_id is not None
+    }
+    history = []
+    for row in rows:
+        payload = issuance_to_dict(row)
+        payload["superseded_by_issuance_id"] = superseded_by.get(row.id)
+        if row.id in superseded_by and row.status != "revoked":
+            payload["status"] = "replaced"
+        history.append(payload)
+    return history
+
+
 def _public_credential_id(credential_type: str, effective_at: datetime) -> str:
     label = "BD" if credential_type == "birth" else "PPD"
     return f"BBU-{label}-{effective_at.year}-{secrets.token_hex(3).upper()}"
@@ -158,6 +178,8 @@ async def create_issuance(
             return existing
 
     effective = _coerce_datetime(effective_at)
+    if effective > _now_dt():
+        raise HTTPException(400, "The effective date cannot be in the future.")
     term_years = 1 if credential_level == "one_year_provisional" else 3
     expiry = (
         _coerce_datetime(expires_at)
@@ -388,6 +410,98 @@ async def reconciliation_report(
                 invalid_course_mappings.values()
             ),
         },
+    }
+
+
+async def credential_data_quality_report(
+    db: AsyncSession, org_id: int
+) -> dict:
+    """Read-only review of historical rows that require a human decision.
+
+    Imported dates are authoritative history, so this report never changes a
+    credential or CEU row. It highlights nonstandard certificate terms and
+    repeated blank-reference manual CEU entries created close together.
+    """
+    issuances = (
+        await db.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.org_id == org_id
+            )
+        )
+    ).scalars().all()
+    nonstandard_terms = []
+    for issuance in issuances:
+        effective = legacy_svc._parse(issuance.effective_at)
+        expires = legacy_svc._parse(issuance.expires_at)
+        if not effective or not expires:
+            continue
+        expected = legacy_svc._add_years(effective, int(issuance.term_years or 0))
+        if expires.date() == expected.date():
+            continue
+        nonstandard_terms.append(
+            {
+                "issuance_id": issuance.id,
+                "user_id": issuance.user_id,
+                "public_credential_id": issuance.public_credential_id,
+                "credential_type": issuance.credential_type,
+                "credential_level": issuance.credential_level,
+                "effective_at": effective.date().isoformat(),
+                "expires_at": expires.date().isoformat(),
+                "expected_expires_at": expected.date().isoformat(),
+                "source": issuance.source,
+                "source_ref": issuance.source_ref,
+            }
+        )
+
+    manual_rows = (
+        await db.execute(
+            select(BBUCeuLedger).where(
+                BBUCeuLedger.org_id == org_id,
+                BBUCeuLedger.source == "manual",
+                BBUCeuLedger.source_ref == "",
+            )
+        )
+    ).scalars().all()
+    grouped: dict[tuple[int, int], list[BBUCeuLedger]] = {}
+    for row in manual_rows:
+        grouped.setdefault((row.user_id, int(row.ceu_count or 0)), []).append(row)
+    duplicate_groups = []
+    for (user_id, ceu_count), rows in grouped.items():
+        rows = sorted(rows, key=lambda row: row.id or 0)
+        duplicate_ids = set()
+        for previous, current in zip(rows, rows[1:]):
+            previous_at = legacy_svc._parse(
+                previous.approved_at or previous.submitted_at
+            )
+            current_at = legacy_svc._parse(
+                current.approved_at or current.submitted_at
+            )
+            if (
+                previous_at
+                and current_at
+                and 0 <= (current_at - previous_at).total_seconds() <= 600
+            ):
+                duplicate_ids.update((previous.id, current.id))
+        if duplicate_ids:
+            duplicate_groups.append(
+                {
+                    "user_id": user_id,
+                    "ceu_count": ceu_count,
+                    "ledger_ids": sorted(duplicate_ids),
+                    "reason": (
+                        "Matching manual CEU entries were recorded within "
+                        "ten minutes and need administrator review."
+                    ),
+                }
+            )
+
+    return {
+        "summary": {
+            "nonstandard_terms": len(nonstandard_terms),
+            "possible_duplicate_manual_ceu_groups": len(duplicate_groups),
+        },
+        "nonstandard_terms": nonstandard_terms,
+        "possible_duplicate_manual_ceus": duplicate_groups,
     }
 
 

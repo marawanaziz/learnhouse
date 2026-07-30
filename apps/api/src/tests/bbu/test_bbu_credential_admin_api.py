@@ -216,3 +216,76 @@ async def test_admin_can_issue_one_year_then_three_year_from_member_record(
             row["credential_level"] for row in member.json()["issuances"]
         ]
         assert levels == ["three_year_full", "one_year_provisional"]
+
+
+@pytest.mark.asyncio
+async def test_manual_issue_rejects_future_dates_and_notifies_member(
+    db, regular_user, admin_user, monkeypatch
+):
+    monkeypatch.setattr(console, "authorize_admin", AsyncMock())
+    monkeypatch.setattr(
+        console, "get_current_user", AsyncMock(return_value=admin_user)
+    )
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        "src.bbu_credentials.notifications.notify_issuance", notify
+    )
+    client = await _client_for(db)
+    async with client:
+        future = await client.post(
+            f"/api/v1/bbu/admin/credentials/member/{regular_user.id}/manual-issue",
+            json={
+                "credential_type": "birth",
+                "credential_level": "three_year_full",
+                "effective_at": "2099-01-01",
+                "reason": "Invalid future test.",
+            },
+        )
+        issued = await client.post(
+            f"/api/v1/bbu/admin/credentials/member/{regular_user.id}/manual-issue",
+            json={
+                "credential_type": "birth",
+                "credential_level": "three_year_full",
+                "effective_at": "2026-04-01",
+                "reason": "Verified credentialing exception.",
+            },
+        )
+
+    assert future.status_code == 400
+    assert "future" in future.json()["detail"].lower()
+    assert issued.status_code == 200
+    notify.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_legacy_credential_action_endpoint_is_retired(
+    db, regular_user, monkeypatch
+):
+    monkeypatch.setattr(console, "authorize_admin", AsyncMock())
+    client = await _client_for(db)
+    async with client:
+        response = await client.post(
+            "/api/v1/bbu/admin/credentials/action",
+            json={
+                "email": str(regular_user.email),
+                "action": "award_ceu",
+                "count": 15,
+            },
+        )
+
+    assert response.status_code == 410
+    assert "member record" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_console_offers_certificate_download_and_data_review(
+    db, monkeypatch
+):
+    monkeypatch.setattr(console, "authorize_admin", AsyncMock())
+    client = await _client_for(db)
+    async with client:
+        page = await client.get("/api/v1/bbu/admin/")
+
+    assert page.status_code == 200
+    assert "certificate.pdf" in page.text
+    assert "Credential data review" in page.text

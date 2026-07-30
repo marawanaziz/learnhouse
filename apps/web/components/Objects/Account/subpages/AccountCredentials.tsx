@@ -367,37 +367,8 @@ export default function AccountCredentials({
     }
   }
 
-  const downloadCertificate = async (issuance: Issuance) => {
+  const openCertificatePreview = (issuance: Issuance) => {
     setSelectedIssuance(issuance)
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    const surface = document.getElementById('bbu-professional-certificate')
-    if (!surface) return
-    try {
-      setBusy('certificate')
-      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import('html2canvas'),
-        import('jspdf'),
-      ])
-      const canvas = await html2canvas(surface, {
-        scale: 3,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-      })
-      const pdf = new jsPDF('landscape', 'mm', [279.4, 215.9])
-      pdf.addImage(
-        canvas.toDataURL('image/png'),
-        'PNG',
-        0,
-        0,
-        pdf.internal.pageSize.getWidth(),
-        pdf.internal.pageSize.getHeight()
-      )
-      pdf.save(`${issuance.public_credential_id}.pdf`)
-    } catch (_error) {
-      toast.error('The certificate could not be downloaded.')
-    } finally {
-      setBusy('')
-    }
   }
 
   if (loading) {
@@ -503,14 +474,10 @@ export default function AccountCredentials({
                     Verify <ExternalLink size={14} />
                   </a>
                   <button
-                    onClick={() => {
-                      setSelectedIssuance(issuance)
-                      void downloadCertificate(issuance)
-                    }}
-                    disabled={busy === 'certificate'}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#113d5d] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0d304a] disabled:opacity-50"
+                    onClick={() => openCertificatePreview(issuance)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#113d5d] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0d304a]"
                   >
-                    <Download size={15} /> Download
+                    <Download size={15} /> Certificate
                   </button>
                 </div>
               </div>
@@ -958,12 +925,13 @@ export default function AccountCredentials({
               </div>
             </div>
             <div className="mt-3 flex justify-end px-2">
-              <button
-                onClick={() => void downloadCertificate(selectedIssuance)}
+              <a
+                href={`${base}/verify/${selectedIssuance.verification_token}/certificate.pdf`}
+                download={`${selectedIssuance.public_credential_id}.pdf`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-[#113d5d] px-4 py-2.5 text-sm font-bold text-white"
               >
                 <Download size={15} /> Download PDF
-              </button>
+              </a>
             </div>
           </div>
         </div>

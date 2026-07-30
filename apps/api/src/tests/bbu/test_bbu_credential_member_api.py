@@ -59,6 +59,17 @@ async def test_member_hub_and_application_submission_flow(
         assert "verification_token" not in verification.json()
         assert "source_ref" not in verification.json()
 
+        certificate = await client.get(
+            f"/api/v1/bbu/credentials/verify/{issuance.verification_token}/certificate.pdf"
+        )
+        assert certificate.status_code == 200
+        assert certificate.headers["content-type"] == "application/pdf"
+        assert issuance.public_credential_id in certificate.headers[
+            "content-disposition"
+        ]
+        assert certificate.content.startswith(b"%PDF-1.4")
+        assert issuance.public_credential_id.encode() in certificate.content
+
         created = await client.post(
             "/api/v1/bbu/credentials/applications",
             json={"credential_type": "birth"},
@@ -128,3 +139,56 @@ async def test_member_cannot_open_another_members_application(
             f"/api/v1/bbu/credentials/applications/{application.public_uuid}"
         )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_replaced_public_credential_is_not_reported_as_valid(
+    db, regular_user
+):
+    original = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="one_year_provisional",
+        effective_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        source="training",
+        source_ref="original-course",
+    )
+    await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="three_year_full",
+        effective_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source="ceu_application",
+        source_ref="replacement-application",
+        supersedes_issuance_id=original.id,
+    )
+
+    client = await _client_for(db)
+    async with client:
+        verification = await client.get(
+            f"/api/v1/bbu/credentials/verify/{original.verification_token}"
+        )
+
+    assert verification.status_code == 200
+    assert verification.json()["valid"] is False
+    assert verification.json()["status"] == "replaced"
+
+
+@pytest.mark.asyncio
+async def test_old_key_gated_issue_award_and_renew_routes_are_retired(
+    db, monkeypatch
+):
+    monkeypatch.setattr(credential_router, "_check", lambda _request: None)
+    client = await _client_for(db)
+    async with client:
+        responses = [
+            await client.post("/api/v1/bbu/credentials/issue", json={}),
+            await client.post("/api/v1/bbu/credentials/award-ceu", json={}),
+            await client.post("/api/v1/bbu/credentials/renew", json={}),
+        ]
+
+    assert [response.status_code for response in responses] == [410, 410, 410]

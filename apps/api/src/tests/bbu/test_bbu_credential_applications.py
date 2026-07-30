@@ -4,7 +4,7 @@ These tests describe the business workflow independently of the HTTP/UI layer:
 one-year credentials are preserved, CEU applications require documented and
 reviewed CEUs, and approval creates exactly one new three-year issuance.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -67,6 +67,58 @@ async def test_one_year_and_three_year_issuances_are_separate_history_rows(
     assert three_year.supersedes_issuance_id == one_year.id
     assert one_year.public_credential_id != three_year.public_credential_id
     assert one_year.verification_token != three_year.verification_token
+
+
+@pytest.mark.asyncio
+async def test_new_issuance_rejects_future_effective_date(db, regular_user):
+    with pytest.raises(HTTPException) as exc:
+        await app_svc.create_issuance(
+            db,
+            org_id=1,
+            user_id=regular_user.id,
+            credential_type="birth",
+            credential_level="three_year_full",
+            effective_at=datetime.now(UTC) + timedelta(days=1),
+            source="manual",
+            source_ref="future-manual-issue",
+        )
+
+    assert exc.value.status_code == 400
+    assert "future" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_issuance_history_marks_the_superseded_certificate_replaced(
+    db, regular_user
+):
+    original = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="postpartum",
+        credential_level="one_year_provisional",
+        effective_at=datetime(2025, 1, 1, tzinfo=UTC),
+        source="training",
+        source_ref="original-course",
+    )
+    replacement = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="postpartum",
+        credential_level="three_year_full",
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        source="ceu_application",
+        source_ref="renewal-application",
+        supersedes_issuance_id=original.id,
+    )
+
+    history = app_svc.issuance_history_to_dicts([replacement, original])
+
+    assert history[0]["status"] == "full"
+    assert history[0]["supersedes_issuance_id"] == original.id
+    assert history[1]["status"] == "replaced"
+    assert history[1]["superseded_by_issuance_id"] == replacement.id
 
 
 @pytest.mark.asyncio
@@ -192,6 +244,45 @@ async def test_reconciliation_report_is_dry_run_then_idempotent(db, regular_user
     again = await app_svc.reconciliation_report(db, 1, apply=True)
     assert applied["created"] == 1
     assert again["created"] == 0
+
+
+@pytest.mark.asyncio
+async def test_data_quality_report_flags_nonstandard_terms_and_duplicate_manual_ceus(
+    db, regular_user
+):
+    await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="one_year_provisional",
+        effective_at=datetime(2025, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2025, 6, 1, tzinfo=UTC),
+        source="legacy",
+        source_ref="legacy:term-review",
+    )
+    submitted = datetime(2026, 7, 30, 16, 33, tzinfo=UTC)
+    for index, seconds in enumerate((0, 15), start=1):
+        db.add(
+            BBUCeuLedger(
+                org_id=1,
+                user_id=regular_user.id,
+                ceu_count=15,
+                source="manual",
+                source_ref="",
+                approved=True,
+                submitted_at=(submitted + timedelta(seconds=seconds)).isoformat(),
+                approved_at=(submitted + timedelta(seconds=seconds)).isoformat(),
+            )
+        )
+    await db.commit()
+
+    report = await app_svc.credential_data_quality_report(db, 1)
+
+    assert report["summary"]["nonstandard_terms"] == 1
+    assert report["summary"]["possible_duplicate_manual_ceu_groups"] == 1
+    assert report["nonstandard_terms"][0]["expected_expires_at"] == "2026-01-01"
+    assert report["possible_duplicate_manual_ceus"][0]["ledger_ids"]
 
 
 @pytest.mark.asyncio
