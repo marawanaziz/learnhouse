@@ -339,7 +339,7 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
               }}
             >
               <div className="relative group w-full aspect-video overflow-hidden rounded-lg bg-black">
-                <LearnHousePlayer {...playerProps} />
+                {!isModalOpen && <LearnHousePlayer {...playerProps} />}
                 <div className="absolute top-2 right-2 z-40 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={handleExpand}
@@ -361,13 +361,15 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
           minWidth="lg"
           minHeight="lg"
           dialogContent={
-            <div className="w-full aspect-video overflow-hidden rounded-lg bg-black">
-              <LearnHousePlayer
-                key={isModalOpen ? videoUrl : undefined}
-                {...playerProps}
-                details={{ autoplay: true }}
-              />
-            </div>
+            isModalOpen ? (
+              <div className="w-full aspect-video overflow-hidden rounded-lg bg-black">
+                <LearnHousePlayer
+                  key={videoUrl}
+                  {...playerProps}
+                  details={{ autoplay: true }}
+                />
+              </div>
+            ) : null
           }
         />
       </>
@@ -503,7 +505,7 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
                       <Loader2 className="w-8 h-8 animate-spin text-white" />
                     </div>
                   )}
-                  <LearnHousePlayer {...playerProps} />
+                  {!isModalOpen && <LearnHousePlayer {...playerProps} />}
                   <div className="absolute top-2 right-2 z-40 flex gap-1">
                     <button
                       onClick={handleExpand}
@@ -528,13 +530,15 @@ function VideoBlockComponent(props: ExtendedNodeViewProps) {
           minWidth="lg"
           minHeight="lg"
           dialogContent={
-            <div className="w-full aspect-video overflow-hidden rounded-lg bg-black">
-              <LearnHousePlayer
-                key={isModalOpen ? videoUrl : undefined}
-                {...playerProps}
-                details={{ autoplay: true }}
-              />
-            </div>
+            isModalOpen ? (
+              <div className="w-full aspect-video overflow-hidden rounded-lg bg-black">
+                <LearnHousePlayer
+                  key={videoUrl}
+                  {...playerProps}
+                  details={{ autoplay: true }}
+                />
+              </div>
+            ) : null
           }
         />
       )}
