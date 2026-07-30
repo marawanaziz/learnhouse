@@ -63,7 +63,7 @@ const AccountSubPage = async (props: { params: Promise<{ orgslug: string; subpag
 
   // Redirect to login if not authenticated
   if (!session) {
-    redirect(`/${params.orgslug}`)
+    redirect('/login')
   }
 
   // Redirect to general if invalid subpage
