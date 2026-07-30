@@ -289,3 +289,7 @@ async def test_admin_console_offers_certificate_download_and_data_review(
     assert page.status_code == 200
     assert "certificate.pdf" in page.text
     assert "Credential data review" in page.text
+    assert 'id=credential-member-drawer' in page.text
+    assert 'role=dialog' in page.text
+    assert 'aria-label="Close member record"' in page.text
+    assert "function closeCredentialMember()" in page.text

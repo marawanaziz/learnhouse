@@ -1469,6 +1469,29 @@ button.ghost:hover{{background:#dbecf8}}
 .on-b{{background:#dff5e6;color:#1c7a41}}.off-b{{background:#fde8e8;color:#b42318}}
 .muted{{color:#7d93a6;font-size:.82rem}}
 .pill{{background:{ICE};color:{STEEL};border-radius:999px;padding:3px 12px;font-family:'League Spartan',sans-serif;font-weight:600;font-size:.76rem}}
+body.credential-drawer-open{{overflow:hidden}}
+.member-drawer{{position:fixed;inset:0;z-index:1000;display:none;justify-content:flex-end;background:rgba(15,35,50,.42);backdrop-filter:blur(2px)}}
+.member-drawer.open{{display:flex}}
+.member-drawer-panel{{width:min(790px,100vw);height:100%;display:flex;flex-direction:column;background:#f5f8fb;box-shadow:-22px 0 55px rgba(17,61,93,.24);animation:credentialDrawerIn .2s ease-out}}
+.member-drawer-head{{flex:none;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.25rem;background:#fff;border-bottom:1px solid rgba(17,61,93,.1)}}
+.member-drawer-head h2{{margin:0 0 .1rem;font-family:'Open Sans',system-ui,sans-serif;font-size:1.25rem}}
+.member-drawer-head p{{margin:0}}
+.member-drawer-meta{{display:flex;align-items:center;justify-content:flex-end;gap:.4rem;flex-wrap:wrap}}
+.member-drawer-close{{display:grid;place-items:center;flex:none;width:38px;height:38px;padding:0;border-radius:10px;background:transparent;color:{STEEL};font:700 1.25rem/1 'Open Sans',sans-serif}}
+.member-drawer-close:hover{{background:{ICE};color:{NAVY}}}
+.member-drawer-body{{flex:1;min-height:0;overflow:auto;padding:1.1rem}}
+.member-drawer-section{{background:#fff;border:1px solid rgba(17,61,93,.07);border-radius:14px;box-shadow:0 6px 20px rgba(17,61,93,.04);padding:1rem;margin-bottom:1rem}}
+.member-drawer-section h3{{font-size:.98rem;margin:0 0 .7rem;color:{NAVY}}}
+.member-drawer-table{{overflow-x:auto;border:1px solid rgba(17,61,93,.06);border-radius:10px}}
+.member-drawer-table table{{min-width:650px}}
+.member-drawer-loading{{display:grid;place-items:center;min-height:220px;text-align:center}}
+@keyframes credentialDrawerIn{{from{{transform:translateX(24px);opacity:.7}}to{{transform:translateX(0);opacity:1}}}}
+@media(max-width:640px){{
+  .member-drawer-head{{align-items:flex-start;padding:.9rem}}
+  .member-drawer-meta{{display:none}}
+  .member-drawer-body{{padding:.75rem}}
+  .member-drawer-section{{padding:.8rem}}
+}}
 </style></head><body>
 <div class=nav><div class=wrap><img src="{LOGO}" alt="Birth &amp; Baby University"></div></div>
 <div class=wrap><div class=head><span class=eyebrow>Admin</span><h1>Operations</h1><p>Store · cohorts · coupons · credentials · seat codes · waitlist</p></div></div>
@@ -1563,7 +1586,6 @@ button.ghost:hover{{background:#dbecf8}}
       <p class=muted style="margin-top:-.6rem">Search once, select the correct account, and manage it by member ID. Training certificates and professional credentials are shown separately.</p>
       <div class=row><input id=cm-q placeholder="name, email, username, or member ID" style="width:340px" onkeyup="if(event.key==='Enter')searchCredentialMembers()"><button onclick=searchCredentialMembers()>Search</button></div>
       <div id=cm-results style="margin-top:.5rem"></div>
-      <div id=cm-record style="display:none;margin-top:1rem"></div>
     </div>
     <div class=card><h2>Credential data review</h2>
       <p class=muted style="margin-top:-.6rem">Read-only safety report for imported certificate terms and possible duplicate manual CEU entries. Nothing is changed until an administrator reviews the member record.</p>
@@ -1672,6 +1694,24 @@ button.ghost:hover{{background:#dbecf8}}
       <table id=t-chcodes><thead><tr><th>Code</th><th>Terms</th><th>Redemptions</th><th>People</th><th></th></tr></thead><tbody></tbody></table>
     </div>
   </div>
+</div>
+<div id=credential-member-drawer class=member-drawer role=dialog aria-modal=true aria-labelledby=credential-member-title aria-hidden=true data-testid=credential-member-drawer onclick="if(event.target===this)closeCredentialMember()">
+  <section class=member-drawer-panel>
+    <header class=member-drawer-head>
+      <div>
+        <h2 id=credential-member-title>Member credentials</h2>
+        <p id=credential-member-email class=muted>Loading member record…</p>
+      </div>
+      <div style="display:flex;align-items:center;gap:.55rem">
+        <div class=member-drawer-meta>
+          <span id=credential-member-number class=pill></span>
+          <span id=credential-member-ceus class=pill></span>
+        </div>
+        <button id=credential-member-close class=member-drawer-close aria-label="Close member record" title="Close" onclick=closeCredentialMember()>&times;</button>
+      </div>
+    </header>
+    <div id=cm-record class=member-drawer-body></div>
+  </section>
 </div>
 <script>
 const API='/api/v1/bbu/admin';
@@ -2088,35 +2128,65 @@ function searchCredentialMembers(){{
       ||'<span class=muted>No members matched. Try the member’s current account email or name.</span>';
   }});
 }}
+let CREDENTIAL_MEMBER_OPENER=null;
+function closeCredentialMember(){{
+  const drawer=document.getElementById('credential-member-drawer');
+  drawer.classList.remove('open');
+  drawer.setAttribute('aria-hidden','true');
+  document.body.classList.remove('credential-drawer-open');
+  document.getElementById('cm-record').innerHTML='';
+  if(CREDENTIAL_MEMBER_OPENER&&CREDENTIAL_MEMBER_OPENER.isConnected)CREDENTIAL_MEMBER_OPENER.focus();
+  CREDENTIAL_MEMBER_OPENER=null;
+}}
 function openCredentialMember(userId){{
   if(!userId)return;CURRENT_CREDENTIAL_MEMBER=+userId;
-  const out=document.getElementById('cm-record');out.style.display='block';out.innerHTML='<p class=muted>Loading member record…</p>';
+  const drawer=document.getElementById('credential-member-drawer');
+  const alreadyOpen=drawer.classList.contains('open');
+  if(!alreadyOpen)CREDENTIAL_MEMBER_OPENER=document.activeElement;
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden','false');
+  document.body.classList.add('credential-drawer-open');
+  document.getElementById('credential-member-title').textContent='Member credentials';
+  document.getElementById('credential-member-email').textContent='Loading member record…';
+  document.getElementById('credential-member-number').textContent='';
+  document.getElementById('credential-member-ceus').textContent='';
+  const out=document.getElementById('cm-record');
+  out.innerHTML='<div class=member-drawer-loading><p class=muted>Loading member record…</p></div>';
+  if(!alreadyOpen)setTimeout(()=>document.getElementById('credential-member-close').focus(),0);
   j('/credentials/member/'+userId).then(d=>{{
-    if(d.detail){{out.innerHTML=`<p class=muted>${{esc(d.detail)}}</p>`;return;}}
+    if(d.detail){{
+      document.getElementById('credential-member-email').textContent='Could not load this member';
+      out.innerHTML=`<div class="member-drawer-section member-drawer-loading"><p class=muted>${{esc(d.detail)}}</p></div>`;
+      return;
+    }}
     const m=d.member;
+    document.getElementById('credential-member-title').textContent=m.name||'Member credentials';
+    document.getElementById('credential-member-email').textContent=m.email||'';
+    document.getElementById('credential-member-number').textContent='Member #'+m.user_id;
+    document.getElementById('credential-member-ceus').textContent=(d.ceu_total||0)+' approved CEUs';
     const training=(d.training_certificates||[]).map(c=>`<tr><td>${{esc(c.course)}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{c.is_cross_cert?'Cross-certification':'Full training'}}</td><td>${{esc((c.issued_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{esc(c.verify_url)}}">Open</a></td></tr>`).join('')
       ||'<tr><td colspan=5 class=muted>No mapped training certificates.</td></tr>';
     const issues=(d.issuances||[]).map(i=>`<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a> <a class=ghost href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/certificate.pdf">Download PDF</a></td></tr>`).join('')
       ||'<tr><td colspan=6 class=muted>No professional credential issuances.</td></tr>';
-    const apps=(d.applications||[]).map(a=>`<tr><td>${{credLabel(a.credential_type)}}</td><td>${{statusBadge(a.status)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{esc((a.submitted_at||a.created_at||'').slice(0,10))}}</td><td><button class=ghost onclick="openCredentialApplication(${{a.id}})">Open</button></td></tr>`).join('')
+    const apps=(d.applications||[]).map(a=>`<tr><td>${{credLabel(a.credential_type)}}</td><td>${{statusBadge(a.status)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{esc((a.submitted_at||a.created_at||'').slice(0,10))}}</td><td><button class=ghost onclick="closeCredentialMember();openCredentialApplication(${{a.id}})">Open</button></td></tr>`).join('')
       ||'<tr><td colspan=5 class=muted>No CEU applications.</td></tr>';
     const today=new Date().toISOString().slice(0,10);
-    out.innerHTML=`<hr style="border:0;border-top:1px solid #e4edf4;margin:1rem 0"><h2 style="margin-bottom:.1rem">${{esc(m.name)}}</h2>
-      <p class=muted style="margin-top:0">${{esc(m.email)}} · member #${{m.user_id}} · <b>${{d.ceu_total||0}} approved CEUs</b></p>
-      <h3>Training certificates</h3><table><thead><tr><th>Course</th><th>Maps to</th><th>Training path</th><th>Issued</th><th></th></tr></thead><tbody>${{training}}</tbody></table>
-      <h3>Professional credential history</h3><table><thead><tr><th>Credential</th><th>Level</th><th>Status</th><th>Effective</th><th>Expires</th><th></th></tr></thead><tbody>${{issues}}</tbody></table>
-      <h3>CEU applications</h3><table><thead><tr><th>Credential</th><th>Status</th><th>Claimed</th><th>Date</th><th></th></tr></thead><tbody>${{apps}}</tbody></table>
-      <details style="margin-top:1rem" ontoggle="if(this.open)previewManualCredential()"><summary style="cursor:pointer;font-weight:700">Generate a new credential certificate</summary>
+    out.innerHTML=`<div class=member-drawer-section><h3>Training certificates</h3><div class=member-drawer-table><table><thead><tr><th>Course</th><th>Maps to</th><th>Training path</th><th>Issued</th><th></th></tr></thead><tbody>${{training}}</tbody></table></div></div>
+      <div class=member-drawer-section><h3>Professional credential history</h3><div class=member-drawer-table><table><thead><tr><th>Credential</th><th>Level</th><th>Status</th><th>Effective</th><th>Expires</th><th></th></tr></thead><tbody>${{issues}}</tbody></table></div></div>
+      <div class=member-drawer-section><h3>CEU applications</h3><div class=member-drawer-table><table><thead><tr><th>Credential</th><th>Status</th><th>Claimed</th><th>Date</th><th></th></tr></thead><tbody>${{apps}}</tbody></table></div></div>
+      <details class=member-drawer-section ontoggle="if(this.open)previewManualCredential()"><summary style="cursor:pointer;font-weight:700">Generate a new credential certificate</summary>
       <p class=muted>Use for a documented credentialing decision or historical correction. A separate certificate, ID and QR code will be created; prior certificates remain in history.</p>
       <div class=row style="flex-wrap:wrap"><select id=mi-type onchange=previewManualCredential()><option value=birth>Birth Doula</option><option value=postpartum>Postpartum</option></select>
       <select id=mi-level onchange=previewManualCredential()><option value=one_year_provisional>One-year provisional</option><option value=three_year_full>Three-year full</option></select>
       <input id=mi-date type=date max="${{today}}" value="${{today}}" onchange=previewManualCredential()><input id=mi-reason placeholder="Required audit reason" style="width:300px">
       <button class=ghost onclick=manualCredentialIssue()>Generate new certificate</button></div>
       <div id=mi-preview style="margin-top:.6rem;padding:.7rem;border-radius:8px;background:#f7fbfe"></div><div id=mi-msg class=muted></div></details>`;
-    previewManualCredential();
-    out.scrollIntoView({{behavior:'smooth',block:'nearest'}});
+    out.scrollTop=0;
   }});
 }}
+document.addEventListener('keydown',event=>{{
+  if(event.key==='Escape'&&document.getElementById('credential-member-drawer').classList.contains('open'))closeCredentialMember();
+}});
 function addCredentialYears(value,years){{
   const p=(value||'').split('-').map(Number);if(p.length!==3||!p[0])return '—';
   let y=p[0]+years,m=p[1],d=p[2];
