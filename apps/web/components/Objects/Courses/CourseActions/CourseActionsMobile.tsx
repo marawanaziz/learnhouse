@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query/keys'
 import Link from 'next/link'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
+import { getResumeActivity } from '@services/courses/courseResume'
 
 interface Author {
   user: {
@@ -139,12 +140,23 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
   const cleanCourseUuid = course.course_uuid?.replace('course_', '');
   const resourceUuid = cleanCourseUuid ? `course_${cleanCourseUuid}` : null;
 
-  const isStarted = trailData?.runs?.find(
+  const currentRun = trailData?.runs?.find(
     (run: any) => {
       const cleanRunCourseUuid = run.course?.course_uuid?.replace('course_', '');
       return cleanRunCourseUuid === cleanCourseUuid;
     }
-  ) ?? false;
+  ) ?? null;
+  const isStarted = Boolean(currentRun)
+  const preserveEnrollment = Number(course.org_id) === 1
+
+  const continueCourse = () => {
+    const activity = getResumeActivity(course, currentRun)
+    if (!activity?.activity_uuid) return
+    router.push(
+      getUriWithOrg(orgslug, '') +
+      `/course/${courseuuid}/activity/${activity.activity_uuid.replace('activity_', '')}`
+    )
+  }
 
   // Public endpoint — no auth needed, works for unauthenticated visitors too
   const { data: offersResult, isLoading } = useQuery({
@@ -168,6 +180,11 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
     // Check if user is part of the organization
     if (!isUserPartOfTheOrg) {
       router.push(getUriWithOrg(orgslug, '/signup'))
+      return
+    }
+
+    if (isStarted && preserveEnrollment) {
+      continueCourse()
       return
     }
 
@@ -280,14 +297,14 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
                   <button
                     onClick={handleCourseAction}
                     disabled={isActionLoading}
-                    className="w-full py-2 px-4 rounded-lg bg-red-500 text-white font-semibold text-sm hover:bg-red-600 transition-colors flex items-center justify-center gap-2 disabled:bg-red-400"
+                    className={`w-full py-2 px-4 rounded-lg text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2 ${preserveEnrollment ? 'bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-700' : 'bg-red-500 hover:bg-red-600 disabled:bg-red-400'}`}
                   >
                     {isActionLoading ? (
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
                       <>
-                        <LogOut className="w-4 h-4" />
-                        Leave Course
+                        {preserveEnrollment ? <LogIn className="w-4 h-4" /> : <LogOut className="w-4 h-4" />}
+                        {preserveEnrollment ? 'Continue Course' : 'Leave Course'}
                       </>
                     )}
                   </button>
@@ -329,7 +346,9 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
             disabled={isActionLoading}
             className={`w-full py-2 px-4 rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-2 ${
               isStarted
-                ? 'bg-red-500 text-white hover:bg-red-600 disabled:bg-red-400'
+                ? preserveEnrollment
+                  ? 'bg-neutral-900 text-white hover:bg-neutral-800 disabled:bg-neutral-700'
+                  : 'bg-red-500 text-white hover:bg-red-600 disabled:bg-red-400'
                 : 'bg-neutral-900 text-white hover:bg-neutral-800 disabled:bg-neutral-700'
             }`}
           >
@@ -342,8 +361,8 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
               </>
             ) : isStarted ? (
               <>
-                <LogOut className="w-4 h-4" />
-                Leave Course
+                {preserveEnrollment ? <LogIn className="w-4 h-4" /> : <LogOut className="w-4 h-4" />}
+                {preserveEnrollment ? 'Continue Course' : 'Leave Course'}
               </>
             ) : (
               <>
@@ -358,4 +377,4 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
   )
 }
 
-export default CourseActionsMobile 
+export default CourseActionsMobile

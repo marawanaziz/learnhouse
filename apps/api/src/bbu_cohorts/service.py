@@ -9,12 +9,14 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import select
+from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.usergroups import UserGroup
 from src.db.usergroup_user import UserGroupUser
 from src.db.usergroup_resources import UserGroupResource
+from src.db.users import User
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember, BBUCohortWaitlist
 from src.bbu_cohorts import templates
 
@@ -212,6 +214,103 @@ async def remove(db: AsyncSession, cohort: BBUCohort, user_id: int) -> dict:
         except Exception:
             pass
     return {"removed": True}
+
+
+async def transfer(
+    db: AsyncSession,
+    source: BBUCohort,
+    target: BBUCohort,
+    user_id: int,
+) -> dict:
+    """Move an active/waitlisted member between cohorts without losing access.
+
+    Capacity is checked before touching the source membership. The operation is
+    intentionally admin-only at the router layer; a paid participant should
+    never have to purchase again just because the team corrects their cohort.
+    """
+    if source.id == target.id:
+        return {"error": "choose a different target cohort"}
+    if source.org_id != target.org_id:
+        return {"error": "cohorts must belong to the same organization"}
+
+    source_member = await _member(db, source.id, user_id)
+    if not source_member or source_member.status not in ("active", "waitlisted"):
+        return {"error": "member is not active in the source cohort"}
+
+    target_member = await _member(db, target.id, user_id)
+    already_in_target = bool(
+        target_member and target_member.status in ("active", "completed")
+    )
+    if (
+        not already_in_target
+        and target.capacity
+        and (await active_count(db, target.id)) >= target.capacity
+    ):
+        return {"error": "target cohort is full"}
+
+    await ensure_usergroup(db, source)
+    await ensure_usergroup(db, target)
+
+    source_member.status = "removed"
+    db.add(source_member)
+    await db.commit()
+    if source.usergroup_id:
+        await _remove_from_group(db, source.usergroup_id, user_id)
+
+    enrolled = await enroll(db, target, user_id)
+    if enrolled.get("status") != "active" and not already_in_target:
+        # This should be unreachable after the capacity preflight, but restoring
+        # the source is safer than leaving a paid learner between cohorts.
+        source_member.status = "active"
+        db.add(source_member)
+        await db.commit()
+        await _add_to_group(db, source.usergroup_id, source.org_id, user_id)
+        return {"error": "target cohort could not accept the member"}
+
+    await promote_waitlist(db, source)
+    return {
+        "transferred": True,
+        "source_cohort_id": source.id,
+        "target_cohort_id": target.id,
+        "status": enrolled.get("status", "active"),
+    }
+
+
+async def change_member_email(
+    db: AsyncSession,
+    cohort: BBUCohort,
+    user_id: int,
+    new_email: str,
+) -> dict:
+    """Correct the login email for a member selected from a cohort roster."""
+    if not await _member(db, cohort.id, user_id):
+        return {"error": "member is not in this cohort"}
+    try:
+        normalized = str(TypeAdapter(EmailStr).validate_python(new_email.strip())).lower()
+    except (AttributeError, ValidationError):
+        return {"error": "enter a valid email address"}
+
+    user = (
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalars().first()
+    if not user:
+        return {"error": "user not found"}
+    duplicate = (
+        await db.execute(
+            select(User).where(
+                func.lower(User.email) == normalized,
+                User.id != user_id,
+            )
+        )
+    ).scalars().first()
+    if duplicate:
+        return {"error": "email is already used by another account"}
+
+    user.email = normalized
+    user.update_date = _now()
+    db.add(user)
+    await db.commit()
+    return {"updated": True, "user_id": user_id, "email": normalized}
 
 
 async def promote_waitlist(db: AsyncSession, cohort: BBUCohort):

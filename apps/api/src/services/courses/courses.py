@@ -1073,8 +1073,34 @@ def _replace_uuids_in_content(content, uuid_map):
         return {k: _replace_uuids_in_content(v, uuid_map) for k, v in content.items()}
     elif isinstance(content, list):
         return [_replace_uuids_in_content(item, uuid_map) for item in content]
-    elif isinstance(content, str) and content in uuid_map:
-        return uuid_map[content]
+    elif isinstance(content, str):
+        # Some legacy Tiptap payloads contain a JSON-serialized subtree. Exact
+        # equality misses UUIDs embedded inside that string, leaving cloned
+        # media pointed at the source activity.
+        for old_uuid, new_uuid in uuid_map.items():
+            content = content.replace(str(old_uuid), str(new_uuid))
+        return content
+    return content
+
+
+def _replace_cloned_block_objects(content, block_object_map):
+    """Replace Tiptap's embedded block snapshot with the cloned DB record.
+
+    The renderer builds media URLs from ``blockObject.content.activity_uuid``
+    and ``file_id``. Updating only the top-level block UUID is therefore not
+    enough after files are copied and renamed.
+    """
+    if isinstance(content, dict):
+        result = {}
+        for key, value in content.items():
+            if key == "blockObject" and isinstance(value, dict):
+                replacement = block_object_map.get(value.get("block_uuid"))
+                result[key] = replacement if replacement else _replace_cloned_block_objects(value, block_object_map)
+            else:
+                result[key] = _replace_cloned_block_objects(value, block_object_map)
+        return result
+    if isinstance(content, list):
+        return [_replace_cloned_block_objects(item, block_object_map) for item in content]
     return content
 
 
@@ -1384,6 +1410,7 @@ async def clone_course(
 
                 # Map old block UUIDs to new block UUIDs (for updating activity content references)
                 block_uuid_map = {}
+                block_object_map = {}
 
                 for original_block in original_blocks:
                     new_block_uuid = f"block_{uuid4()}"
@@ -1443,10 +1470,33 @@ async def clone_course(
                     )
 
                     db_session.add(new_block)
+                    await db_session.flush()
+                    block_object_map[original_block.block_uuid] = {
+                        "id": new_block.id,
+                        "block_type": new_block.block_type.value,
+                        "content": new_block.content,
+                        "org_id": new_block.org_id,
+                        "course_id": new_block.course_id,
+                        "chapter_id": new_block.chapter_id,
+                        "activity_id": new_block.activity_id,
+                        "block_uuid": new_block.block_uuid,
+                        "creation_date": new_block.creation_date,
+                        "update_date": new_block.update_date,
+                    }
 
-                # Update activity content to reference new block UUIDs
+                # Update both UUID references and the embedded block snapshots
+                # used by the learner renderer to construct media URLs.
                 if new_content and block_uuid_map:
-                    new_activity.content = _replace_uuids_in_content(new_content, block_uuid_map)
+                    replacements = {
+                        **block_uuid_map,
+                        original_activity.activity_uuid: new_activity_uuid,
+                    }
+                    rewritten = _replace_cloned_block_objects(
+                        new_content, block_object_map
+                    )
+                    new_activity.content = _replace_uuids_in_content(
+                        rewritten, replacements
+                    )
                     db_session.add(new_activity)
 
     # Single commit for all chapters, activities, blocks, and links

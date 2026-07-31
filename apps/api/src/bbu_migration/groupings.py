@@ -247,6 +247,172 @@ async def clone_bold(request: Request, db_session: AsyncSession = Depends(get_db
             "acting_id": getattr(acting, "id", 0), "results": results}
 
 
+def _block_snapshot(block) -> dict:
+    return {
+        "id": block.id,
+        "block_type": block.block_type.value,
+        "content": block.content,
+        "org_id": block.org_id,
+        "course_id": block.course_id,
+        "chapter_id": block.chapter_id,
+        "activity_id": block.activity_id,
+        "block_uuid": block.block_uuid,
+        "creation_date": block.creation_date,
+        "update_date": block.update_date,
+    }
+
+
+def _repair_cloned_activity_content(
+    source_activity,
+    target_activity,
+    source_blocks,
+    target_blocks,
+):
+    """Rebind a clone's Tiptap media snapshots to its copied block records."""
+    from src.services.courses.courses import (
+        _replace_cloned_block_objects,
+        _replace_uuids_in_content,
+    )
+
+    if len(source_blocks) != len(target_blocks):
+        return target_activity.content, (
+            f"block count differs ({len(source_blocks)} source, "
+            f"{len(target_blocks)} target)"
+        )
+
+    uuid_replacements = {
+        source_activity.activity_uuid: target_activity.activity_uuid,
+    }
+    object_replacements = {}
+    for source_block, target_block in zip(source_blocks, target_blocks):
+        snapshot = _block_snapshot(target_block)
+        uuid_replacements[source_block.block_uuid] = target_block.block_uuid
+        source_file_id = (source_block.content or {}).get("file_id")
+        target_file_id = (target_block.content or {}).get("file_id")
+        if source_file_id and target_file_id:
+            uuid_replacements[source_file_id] = target_file_id
+        # Existing clones vary: some embedded snapshots still have the source
+        # block UUID, while others have the new UUID but stale activity/file data.
+        object_replacements[source_block.block_uuid] = snapshot
+        object_replacements[target_block.block_uuid] = snapshot
+
+    repaired = _replace_cloned_block_objects(
+        target_activity.content, object_replacements
+    )
+    repaired = _replace_uuids_in_content(repaired, uuid_replacements)
+    return repaired, ""
+
+
+@router.post("/groupings/repair-bold-media")
+async def repair_bold_media(
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Repair the three existing Project BOLD clones created before the clone fix."""
+    from src.db.courses.activities import Activity, ActivityTypeEnum
+    from src.db.courses.blocks import Block
+    from src.db.courses.chapter_activities import ChapterActivity
+    from src.db.courses.course_chapters import CourseChapter
+
+    body = await request.json() if await request.body() else {}
+    _check(request, body)
+    dry = bool(body.get("dry_run", True))
+
+    async def ordered_activities(course_id: int):
+        return (
+            await db_session.execute(
+                select(Activity)
+                .join(ChapterActivity, ChapterActivity.activity_id == Activity.id)
+                .join(
+                    CourseChapter,
+                    CourseChapter.chapter_id == ChapterActivity.chapter_id,
+                )
+                .where(CourseChapter.course_id == course_id)
+                .order_by(CourseChapter.order, ChapterActivity.order)
+            )
+        ).scalars().all()
+
+    results = []
+    changed = 0
+    for source_name in body.get("courses") or BOLD_SOURCES:
+        source = (
+            await db_session.execute(
+                select(Course).where(Course.org_id == ORG, Course.name == source_name)
+            )
+        ).scalars().first()
+        target_name = f"{BOLD_PREFIX}{source_name}"
+        target = (
+            await db_session.execute(
+                select(Course).where(Course.org_id == ORG, Course.name == target_name)
+            )
+        ).scalars().first()
+        if not source or not target:
+            results.append({
+                "source": source_name,
+                "target": target_name,
+                "status": "course missing",
+            })
+            continue
+
+        source_activities = await ordered_activities(source.id)
+        target_activities = await ordered_activities(target.id)
+        if len(source_activities) != len(target_activities):
+            results.append({
+                "source": source_name,
+                "target": target_name,
+                "status": "activity count differs",
+                "source_activities": len(source_activities),
+                "target_activities": len(target_activities),
+            })
+            continue
+
+        course_changed = 0
+        errors = []
+        for source_activity, target_activity in zip(
+            source_activities, target_activities
+        ):
+            if source_activity.activity_type != ActivityTypeEnum.TYPE_DYNAMIC:
+                continue
+            source_blocks = (
+                await db_session.execute(
+                    select(Block)
+                    .where(Block.activity_id == source_activity.id)
+                    .order_by(Block.id)
+                )
+            ).scalars().all()
+            target_blocks = (
+                await db_session.execute(
+                    select(Block)
+                    .where(Block.activity_id == target_activity.id)
+                    .order_by(Block.id)
+                )
+            ).scalars().all()
+            repaired, error = _repair_cloned_activity_content(
+                source_activity, target_activity, source_blocks, target_blocks
+            )
+            if error:
+                errors.append(f"{target_activity.name}: {error}")
+                continue
+            if repaired != target_activity.content:
+                course_changed += 1
+                changed += 1
+                if not dry:
+                    target_activity.content = repaired
+                    target_activity.update_date = _now()
+                    db_session.add(target_activity)
+        results.append({
+            "source": source_name,
+            "target": target_name,
+            "status": "would repair" if dry and course_changed else "repaired" if course_changed else "already healthy",
+            "activities_changed": course_changed,
+            "errors": errors,
+        })
+
+    if not dry:
+        await db_session.commit()
+    return {"dry_run": dry, "activities_changed": changed, "results": results}
+
+
 @router.post("/groupings/communities")
 async def provision_communities(request: Request,
                                 db_session: AsyncSession = Depends(get_db_session)):

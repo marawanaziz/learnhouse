@@ -1,8 +1,12 @@
-"""Dependency-light PDF renderer for BBU professional credentials."""
+"""PDF renderer for BBU professional credentials using Anna's artwork."""
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
 import unicodedata
+import zlib
 
+from PIL import Image
 import segno
 
 
@@ -13,6 +17,7 @@ SKY = (0.427, 0.627, 0.859)
 ICE = (0.922, 0.969, 1.0)
 INK = (0.105, 0.153, 0.2)
 MUTED = (0.42, 0.435, 0.475)
+TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cert_templates"
 
 
 def _ascii(value: str) -> str:
@@ -79,6 +84,41 @@ def _centered_text(
     )
 
 
+def _field_text(
+    commands: list[str],
+    value: str,
+    *,
+    center_x: float,
+    y: float,
+    maximum: float,
+    width: float,
+    font: str = "F2",
+) -> None:
+    size = max(6.0, min(maximum, width / max(1, len(_ascii(value))) / 0.53))
+    x = center_x - len(_ascii(value)) * size * 0.53 / 2
+    _text(commands, value, x=x, y=y, size=size, font=font, color=NAVY)
+
+
+def _display_date(value: str) -> str:
+    try:
+        parsed = date.fromisoformat((value or "")[:10])
+        return parsed.strftime("%m/%d/%Y")
+    except (TypeError, ValueError):
+        return _ascii(value)
+
+
+def _template_image(credential_name: str) -> tuple[bytes, int, int]:
+    filename = (
+        "bbu_cert-02.png"
+        if "postpartum" in (credential_name or "").lower()
+        else "bbu_cert-01.png"
+    )
+    with Image.open(TEMPLATE_DIR / filename) as source:
+        image = source.convert("RGB")
+        width, height = image.size
+        return zlib.compress(image.tobytes(), 9), width, height
+
+
 def _qr_commands(url: str, *, x: float, y: float, size: float) -> list[str]:
     matrix = tuple(tuple(row) for row in segno.make(url, error="m").matrix)
     border = 4
@@ -132,150 +172,59 @@ def build_credential_certificate_pdf(
     verification_url: str,
     status: str,
 ) -> bytes:
-    """Render a landscape letter-size, one-page credential certificate."""
+    """Render the exact legacy BBU certificate with dynamic verification data."""
+    image_data, image_width, image_height = _template_image(credential_name)
     commands = [
-        "q",
-        _rgb(ICE),
-        f"0 0 {PAGE_WIDTH} {PAGE_HEIGHT} re f",
-        _rgb(NAVY),
-        f"0 0 {PAGE_WIDTH} 14 re f",
-        f"0 {PAGE_HEIGHT - 14} {PAGE_WIDTH} 14 re f",
-        f"0 0 14 {PAGE_HEIGHT} re f",
-        f"{PAGE_WIDTH - 14} 0 14 {PAGE_HEIGHT} re f",
-        _rgb(SKY, stroke=True),
-        "2 w",
-        f"31 31 {PAGE_WIDTH - 62} {PAGE_HEIGHT - 62} re S",
+        f"q {PAGE_WIDTH} 0 0 {PAGE_HEIGHT} 0 0 cm /BG Do Q",
     ]
-    _centered_text(
-        commands,
-        "BIRTH & BABY UNIVERSITY",
-        y=545,
-        size=12,
-        font="F2",
-        color=SKY,
-        factor=0.6,
+    _field_text(
+        commands, holder_name, center_x=396, y=329, maximum=29, width=490, font="F3"
     )
-    _centered_text(
+    _field_text(
         commands,
-        "Certificate of Professional Credential",
-        y=501,
-        size=28,
-        font="F3",
-        color=NAVY,
-        factor=0.48,
+        _display_date(effective_date),
+        center_x=313,
+        y=163,
+        maximum=10,
+        width=128,
     )
-    _centered_text(
+    _field_text(
         commands,
-        "This certifies that",
-        y=446,
-        size=13,
-        color=MUTED,
+        _display_date(expiration_date),
+        center_x=479,
+        y=163,
+        maximum=10,
+        width=128,
     )
-    name_size = _fit_font(holder_name, 31, 610, 0.5)
-    _centered_text(
+    _field_text(
         commands,
-        holder_name,
-        y=398,
-        size=name_size,
-        font="F3",
-        color=INK,
-        factor=0.5,
+        public_credential_id,
+        center_x=313,
+        y=114,
+        maximum=8.5,
+        width=145,
     )
-    commands.extend([_rgb(SKY, stroke=True), "1.5 w", "110 386 m 682 386 l S"])
-    _centered_text(
-        commands,
-        "holds the Birth & Baby University credential",
-        y=350,
-        size=14,
-        color=MUTED,
-    )
-    credential_size = _fit_font(credential_name, 25, 610, 0.5)
-    _centered_text(
-        commands,
-        credential_name,
-        y=307,
-        size=credential_size,
-        font="F3",
-        color=NAVY,
-        factor=0.5,
-    )
-    _centered_text(
-        commands,
-        credential_level.upper(),
-        y=274,
-        size=11,
-        font="F2",
-        color=SKY,
-        factor=0.6,
-    )
-
-    _text(
-        commands,
-        f"Effective: {effective_date}",
-        x=68,
-        y=166,
-        size=11,
-        font="F2",
-        color=MUTED,
-    )
-    _text(
-        commands,
-        f"Valid through: {expiration_date}",
-        x=68,
-        y=144,
-        size=11,
-        font="F2",
-        color=MUTED,
-    )
-    _text(
-        commands,
-        f"Credential ID: {public_credential_id}",
-        x=68,
-        y=122,
-        size=10,
-        font="F2",
-        color=MUTED,
-    )
-    commands.extend(_qr_commands(verification_url, x=351, y=91, size=90))
+    commands.extend(_qr_commands(verification_url, x=628, y=93, size=68))
     _text(
         commands,
         "Scan to verify",
-        x=365,
-        y=76,
-        size=8,
+        x=638,
+        y=82,
+        size=7,
         font="F1",
         color=MUTED,
     )
-    _text(
-        commands,
-        "Anna Rodney",
-        x=620,
-        y=142,
-        size=17,
-        font="F3",
-        color=NAVY,
-    )
-    commands.extend([_rgb(MUTED, stroke=True), "0.75 w", "592 130 m 735 130 l S"])
-    _text(
-        commands,
-        "Birth & Baby University",
-        x=606,
-        y=113,
-        size=8,
-        color=MUTED,
-    )
     if status == "replaced":
-        commands.extend(["0.76 0.10 0.10 rg", "0.15 0.15 0.15 RG"])
+        commands.extend(["1 1 1 rg", "110 54 572 24 re f"])
         _centered_text(
             commands,
             "REPLACED - SEE CURRENT CREDENTIAL HISTORY",
-            y=52,
-            size=10,
+            y=61,
+            size=9,
             font="F2",
             color=(0.65, 0.09, 0.09),
             factor=0.6,
         )
-    commands.append("Q")
 
     content = "\n".join(commands).encode("ascii")
     objects = [
@@ -283,12 +232,21 @@ def build_credential_certificate_pdf(
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         (
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] "
-            b"/Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >> "
+            b"/Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> "
+            b"/XObject << /BG 8 0 R >> >> "
             b"/Contents 4 0 R >>"
         ),
         b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>",
+        (
+            f"<< /Type /XObject /Subtype /Image /Width {image_width} "
+            f"/Height {image_height} /ColorSpace /DeviceRGB "
+            f"/BitsPerComponent 8 /Filter /FlateDecode /Length {len(image_data)} >>\n"
+        ).encode()
+        + b"stream\n"
+        + image_data
+        + b"\nendstream",
     ]
     return _pdf(objects)

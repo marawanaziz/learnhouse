@@ -421,6 +421,8 @@ async def cohorts_roster(cid: int, request: Request, db_session: AsyncSession = 
         rows = (await db_session.execute(select(User).where(User.id.in_(uids)))).scalars().all()
         users = {u.id: u for u in rows}
     return [{
+        "user_id": m.user_id,
+        "member_id": m.id,
         "email": getattr(users.get(m.user_id), "email", ""),
         "name": f"{getattr(users.get(m.user_id), 'first_name', '')} {getattr(users.get(m.user_id), 'last_name', '')}".strip(),
         "status": m.status,
@@ -437,13 +439,43 @@ async def cohorts_action(cid: int, request: Request, db_session: AsyncSession = 
     action = b.get("action")
     if action == "close":
         return await cohort_svc.close(db_session, c, revoke_access=True)
-    u = await _user(db_session, b.get("email", ""))
+    user_id = int(b.get("user_id") or 0)
+    u = None
+    if user_id:
+        u = (await db_session.execute(select(User).where(User.id == user_id))).scalars().first()
+        if not u:
+            raise HTTPException(404, "User not found")
+    elif action in ("enroll", "complete", "remove"):
+        u = await _user(db_session, b.get("email", ""))
     if action == "enroll":
         return await cohort_svc.enroll(db_session, c, u.id)
     if action == "complete":
         return await cohort_svc.complete(db_session, c, u.id)
     if action == "remove":
         return await cohort_svc.remove(db_session, c, u.id)
+    if action == "edit_email":
+        if not u:
+            raise HTTPException(400, "Select a roster member")
+        result = await cohort_svc.change_member_email(
+            db_session, c, u.id, b.get("new_email", "")
+        )
+        if result.get("error"):
+            raise HTTPException(409, result["error"])
+        return result
+    if action == "transfer":
+        if not u:
+            raise HTTPException(400, "Select a roster member")
+        target_id = int(b.get("target_cohort_id") or 0)
+        target = (await db_session.execute(select(BBUCohort).where(
+            BBUCohort.id == target_id,
+            BBUCohort.org_id == ORG,
+        ))).scalars().first()
+        if not target:
+            raise HTTPException(404, "Target cohort not found")
+        result = await cohort_svc.transfer(db_session, c, target, u.id)
+        if result.get("error"):
+            raise HTTPException(409, result["error"])
+        return result
     raise HTTPException(400, "unknown action")
 
 
@@ -1568,8 +1600,10 @@ body.credential-drawer-open{{overflow:hidden}}
       <table id=t-cohorts><thead><tr><th>Name</th><th>Program</th><th>Dates</th><th>Members</th><th>Cap</th><th>Cred</th><th>Prompts</th><th>Access until</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
       <div class=muted id=lc-msg style="margin-top:.4rem"></div></div>
     <div class=card id=roster-card style=display:none><h2>Roster — <span id=roster-name></span></h2>
-      <div class=row><input id=co-email placeholder="member email"><button onclick="cohortAct('enroll')">Enroll</button><button class=ghost onclick="cohortAct('complete')">Mark complete</button><button class=ghost onclick="cohortAct('remove')">Remove</button><button class=ghost style="margin-left:auto;color:#b23" onclick="closeCohort()">Close cohort</button></div>
-      <table id=t-roster><thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead><tbody></tbody></table>
+      <p class=muted style="margin-top:-.55rem">Use this roster for paid mentorship enrollment. The main Users &amp; Groups area controls course access only; email corrections, cohort moves, completion, and removal happen here.</p>
+      <div class=row><input id=co-email placeholder="member email"><button onclick="cohortAct('enroll')">Enroll by email</button><button class=ghost style="margin-left:auto;color:#b23" onclick="closeCohort()">Close cohort</button></div>
+      <div class=muted id=roster-msg style="margin-top:.35rem"></div>
+      <table id=t-roster><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Move to cohort</th><th>Actions</th></tr></thead><tbody></tbody></table>
     </div>
     <div class=card><h2>Waitlist <button class=ghost style="float:right;font-size:.8rem" onclick="notifyWaitlist()">Notify next waiting</button></h2>
       <p class=muted style="margin-top:-.6rem">Prospects who signed up while cohorts were full. They're invited automatically when a seat frees; use the button to invite the next one manually.</p>
@@ -1967,7 +2001,7 @@ function createCoupon(){{
 }}
 function toggleCoupon(id){{j('/coupons/'+id+'/toggle',{{method:'POST'}}).then(loadCoupons)}}
 // Cohorts
-let curCohort=null;
+let curCohort=null, COHORTS=[];
 function progDefaults(){{
   // sensible default access window per program (editable)
   const el=document.getElementById('co-access');
@@ -1991,6 +2025,7 @@ function loadCohorts(){{
   loadZoomMeetings();
   loadWaitlist();
   j('/cohorts').then(d=>{{
+    COHORTS=d||[];
     document.querySelector('#t-cohorts tbody').innerHTML=(d||[]).map(c=>{{
       const dates=(c.start_date||'').slice(0,10)+(c.end_date?' → '+c.end_date.slice(0,10):'');
       const zoom=c.zoom_meeting_id?' 🎥':''; const wb=c.workbook_url?' 📓':'';
@@ -2041,11 +2076,41 @@ function notifyWaitlist(){{
     const n=(r.notified||[]).length; alert(n?('Invited: '+r.notified.map(x=>x.email).join(', ')):'No one waiting to notify.');loadWaitlist();}});
 }}
 function openRoster(id,name){{curCohort=id;document.getElementById('roster-card').style.display='block';
-  document.getElementById('roster-name').textContent=name;loadRoster();}}
+  document.getElementById('roster-name').textContent=name;document.getElementById('roster-msg').textContent='';loadRoster();}}
 function loadRoster(){{j('/cohorts/'+curCohort+'/roster').then(d=>{{
-  document.querySelector('#t-roster tbody').innerHTML=(d||[]).map(m=>`<tr><td>${{esc(m.name)}}</td><td>${{esc(m.email)}}</td><td>${{esc(m.status)}}</td></tr>`).join('');}})}}
+  const targets=COHORTS.filter(c=>c.id!==curCohort&&c.status!=='closed');
+  document.querySelector('#t-roster tbody').innerHTML=(d||[]).map(m=>{{
+    const move=`<select id="co-move-${{m.user_id}}" style="max-width:210px"><option value="">Choose cohort…</option>`
+      +targets.map(c=>`<option value="${{c.id}}">${{esc(c.name)}}</option>`).join('')+'</select>';
+    return `<tr><td>${{esc(m.name||'—')}}</td><td>${{esc(m.email)}}</td><td>${{esc(m.status)}}</td><td>${{move}} <button class=ghost onclick="moveCohortMember(${{m.user_id}})">Move</button></td>`
+      +`<td><button class=ghost onclick="editCohortEmail(${{m.user_id}},'${{esc(m.email).replace(/'/g,"&#39;")}}')">Edit email</button> <button class=ghost onclick="cohortMemberAct('complete',${{m.user_id}})">Complete</button> <button class=ghost style="color:#b23" onclick="cohortMemberAct('remove',${{m.user_id}})">Remove</button></td></tr>`;
+  }}).join('')||'<tr><td colspan=5 class=muted>No members in this cohort yet.</td></tr>';}})}}
+function rosterResult(r,success){{
+  const msg=document.getElementById('roster-msg');
+  if(r&&r.detail){{msg.textContent=r.detail;msg.style.color='#b23';return false;}}
+  msg.textContent=success;msg.style.color='#1c7a3e';loadRoster();loadCohorts();return true;
+}}
 function cohortAct(action){{
-  j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:action,email:document.getElementById('co-email').value}})}}).then(()=>{{loadRoster();loadCohorts();}});
+  const email=document.getElementById('co-email').value.trim();
+  if(!email){{document.getElementById('roster-msg').textContent='Enter a member email.';return;}}
+  j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:action,email:email}})}}).then(r=>{{
+    if(rosterResult(r,'Member enrolled.'))document.getElementById('co-email').value='';}});
+}}
+function cohortMemberAct(action,userId){{
+  if(action==='remove'&&!confirm('Remove this member and revoke this cohort\'s access?'))return;
+  j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:action,user_id:userId}})}}).then(r=>rosterResult(r,action==='complete'?'Member marked complete.':'Member removed.'));
+}}
+function editCohortEmail(userId,current){{
+  const next=prompt('Correct this member\'s login email:',current);
+  if(next===null||next.trim()===current)return;
+  j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:'edit_email',user_id:userId,new_email:next.trim()}})}}).then(r=>rosterResult(r,'Email updated.'));
+}}
+function moveCohortMember(userId){{
+  const sel=document.getElementById('co-move-'+userId), target=+(sel&&sel.value||0);
+  if(!target){{document.getElementById('roster-msg').textContent='Choose a target cohort first.';return;}}
+  const name=(COHORTS.find(c=>c.id===target)||{{}}).name||'the selected cohort';
+  if(!confirm('Move this member to '+name+'?'))return;
+  j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:'transfer',user_id:userId,target_cohort_id:target}})}}).then(r=>rosterResult(r,'Member moved to '+name+'.'));
 }}
 function closeCohort(){{
   if(!confirm('Close this cohort and revoke all members\\' access?'))return;

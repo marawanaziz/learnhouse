@@ -69,6 +69,8 @@ async def test_member_hub_and_application_submission_flow(
         ]
         assert certificate.content.startswith(b"%PDF-1.4")
         assert issuance.public_credential_id.encode() in certificate.content
+        assert b"/Subtype /Image" in certificate.content
+        assert b"Certificate of Professional Credential" not in certificate.content
 
         qr = await client.get(
             f"/api/v1/bbu/credentials/verify/{issuance.verification_token}/qr"

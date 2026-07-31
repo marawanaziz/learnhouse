@@ -1895,3 +1895,43 @@ class TestGetUserCoursesAndRights:
             {"blocks": ["old-uuid", "keep-me"]}, uuid_map
         )
         assert result2 == {"blocks": ["new-uuid", "keep-me"]}
+
+    def test_replace_cloned_block_objects_updates_embedded_media_metadata(self):
+        from src.services.courses.courses import _replace_cloned_block_objects
+
+        replacement = {
+            "id": 55,
+            "block_type": "BLOCK_VIDEO",
+            "block_uuid": "block_new",
+            "activity_id": 22,
+            "course_id": 9,
+            "content": {
+                "activity_uuid": "activity_new",
+                "file_id": "block_new_file",
+                "file_format": "mp4",
+            },
+        }
+        content = {
+            "type": "doc",
+            "content": [{
+                "type": "videoBlock",
+                "attrs": {
+                    "blockObject": {
+                        "id": 4,
+                        "block_uuid": "block_old",
+                        "activity_id": 2,
+                        "course_id": 1,
+                        "content": {
+                            "activity_uuid": "activity_old",
+                            "file_id": "block_old_file",
+                        },
+                    }
+                },
+            }],
+        }
+
+        repaired = _replace_cloned_block_objects(
+            content, {"block_old": replacement}
+        )
+
+        assert repaired["content"][0]["attrs"]["blockObject"] == replacement

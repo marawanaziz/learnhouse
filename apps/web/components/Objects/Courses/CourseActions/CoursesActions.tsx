@@ -17,6 +17,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query/keys'
 import { useTranslation } from 'react-i18next'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
+import { getResumeActivity } from '@services/courses/courseResume'
 
 interface CourseRun {
   status: string
@@ -83,12 +84,28 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
   }, [cleanCourseUuid])
   const resourceUuid = cleanCourseUuid ? `course_${cleanCourseUuid}` : null;
 
-  const isStarted = trailData?.runs?.find(
+  const currentRun = trailData?.runs?.find(
     (run: any) => {
       const cleanRunCourseUuid = run.course?.course_uuid?.replace('course_', '');
       return cleanRunCourseUuid === cleanCourseUuid;
     }
-  ) ?? false;
+  ) ?? null;
+  const isStarted = Boolean(currentRun)
+  // BBU courses are purchased or assigned by an admin. A learner should never
+  // erase imported progress or revoke paid access from the course page.
+  const preserveEnrollment = Number(course.org_id) === 1
+
+  const continueCourse = () => {
+    const activity = getResumeActivity(course, currentRun)
+    if (!activity?.activity_uuid) {
+      setIsProgressOpen(true)
+      return
+    }
+    router.push(
+      getUriWithOrg(orgslug, '') +
+      `/course/${courseuuid}/activity/${activity.activity_uuid.replace('activity_', '')}`
+    )
+  }
 
   // Public endpoint — no auth needed, works for unauthenticated visitors too
   const { data: offersResult, isLoading } = useQuery({
@@ -112,6 +129,11 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
     // Check if user is part of the organization
     if (!isUserPartOfTheOrg) {
       router.push(getUriWithOrg(orgslug, '/signup'))
+      return
+    }
+
+    if (isStarted && preserveEnrollment) {
+      continueCourse()
       return
     }
 
@@ -188,12 +210,12 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
     }
   }
 
-  const renderActionButton = (action: 'start' | 'leave') => {
+  const renderActionButton = (action: 'start' | 'leave' | 'continue') => {
     if (!session.data?.user) {
       return (
         <>
           <UserAvatar width={24} predefined_avatar="empty" rounded="rounded-full" border="border-2" borderColor="border-white" />
-          <span>{action === 'start' ? t('courses.start_course') : t('courses.leave_course')}</span>
+          <span>{action === 'start' ? t('courses.start_course') : action === 'continue' ? 'Continue Course' : t('courses.leave_course')}</span>
           <ArrowRight className="w-5 h-5" />
         </>
       );
@@ -208,7 +230,7 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
           border="border-2"
           borderColor="border-white"
         />
-        <span>{action === 'start' ? t('courses.start_course') : t('courses.leave_course')}</span>
+        <span>{action === 'start' ? t('courses.start_course') : action === 'continue' ? 'Continue Course' : t('courses.leave_course')}</span>
         <ArrowRight className="w-5 h-5" />
       </>
     );
@@ -436,7 +458,8 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
   }
 
   if (linkedOffers.length > 0) {
-    // User already enrolled / started — show "you own this" notice + leave button
+    // User already enrolled / started — BBU members continue without a
+    // destructive self-unenroll option.
     if (isStarted) {
       return (
         <div className="bg-white nice-shadow rounded-lg overflow-hidden p-4">
@@ -453,12 +476,16 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
             <button
               onClick={handleCourseAction}
               disabled={isActionLoading}
-              aria-label={t('courses.leave_course')}
-              className="w-full py-3 rounded-lg nice-shadow font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer bg-red-500 text-white hover:bg-red-600 disabled:bg-red-400"
+              aria-label={preserveEnrollment ? 'Continue Course' : t('courses.leave_course')}
+              className={`w-full py-3 rounded-lg nice-shadow font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer text-white ${
+                preserveEnrollment
+                  ? 'bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-700'
+                  : 'bg-red-500 hover:bg-red-600 disabled:bg-red-400'
+              }`}
             >
               {isActionLoading
                 ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : renderActionButton('leave')
+                : renderActionButton(preserveEnrollment ? 'continue' : 'leave')
               }
             </button>
             {renderContributorButton()}
@@ -489,21 +516,23 @@ function CoursesActions({ courseuuid, orgslug, course, trailData }: CourseAction
         {/* Progress Section */}
         {renderProgressSection()}
 
-        {/* Start/Leave Course Button */}
+        {/* Start/Continue Course Button */}
         <button
           onClick={handleCourseAction}
           disabled={isActionLoading}
-          aria-label={isStarted ? t('courses.leave_course') : t('courses.start_course')}
+          aria-label={isStarted ? (preserveEnrollment ? 'Continue Course' : t('courses.leave_course')) : t('courses.start_course')}
           className={`w-full py-3 rounded-lg nice-shadow font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer ${
             isStarted
-              ? 'bg-red-500 text-white hover:bg-red-600 disabled:bg-red-400'
+              ? preserveEnrollment
+                ? 'bg-neutral-900 text-white hover:bg-neutral-800 disabled:bg-neutral-700'
+                : 'bg-red-500 text-white hover:bg-red-600 disabled:bg-red-400'
               : 'bg-neutral-900 text-white hover:bg-neutral-800 disabled:bg-neutral-700'
           }`}
         >
           {isActionLoading ? (
             <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
           ) : (
-            renderActionButton(isStarted ? 'leave' : 'start')
+            renderActionButton(isStarted ? (preserveEnrollment ? 'continue' : 'leave') : 'start')
           )}
         </button>
 
