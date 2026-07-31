@@ -300,3 +300,5 @@ async def test_admin_console_offers_certificate_download_and_data_review(
     assert 'role=dialog' in page.text
     assert 'aria-label="Close member record"' in page.text
     assert "function closeCredentialMember()" in page.text
+    assert "const localToday=" in page.text
+    assert "new Date().toISOString().slice(0,10)" not in page.text

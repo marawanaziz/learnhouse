@@ -2055,6 +2055,10 @@ function closeCohort(){{
 let CAPAGE=1, CURRENT_CREDENTIAL_MEMBER=0, CURRENT_APPLICATION=0;
 const credLabel=t=>t==='birth'?'Birth Doula':'Postpartum';
 const levelLabel=l=>l==='one_year_provisional'?'One-year provisional':'Three-year full';
+const localToday=()=>{{
+  const date=new Date();
+  return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');
+}};
 const statusBadge=s=>`<span style="padding:.18rem .6rem;border-radius:999px;font-size:.75rem;font-weight:700;background:${{s==='approved'||s==='full'?'#dff5e6':(s==='submitted'||s==='provisional'?'#fff2d6':(s==='draft'?'#eaf2f9':'#fde8e8'))}}">${{esc(s)}}</span>`;
 function loadCredentialApplications(){{
   const p=new URLSearchParams({{page:String(CAPAGE),per_page:'50'}});
@@ -2089,7 +2093,7 @@ function openCredentialApplication(id){{
       const review=a.status==='submitted'?`<div class=row style="margin-top:.35rem"><input id="ceu-${{i.id}}" type=number min=0 max="${{i.claimed_ceu}}" value="${{i.approved_ceu==null?i.claimed_ceu:i.approved_ceu}}" style="width:86px" title="approved CEUs"><input id="note-${{i.id}}" value="${{esc(i.admin_note||'')}}" placeholder="internal note (optional)" style="width:230px"><button class=ghost onclick="reviewCredentialItem(${{a.id}},${{i.id}})">Save review</button></div>`:`<b>${{i.approved_ceu==null?'—':i.approved_ceu}} approved</b>`;
       return `<tr><td><b>${{esc(i.training_title)}}</b><br><span class=muted>${{esc(i.provider)}} · ${{esc(i.completion_date)}}</span></td><td>${{i.claimed_ceu}}</td><td>${{docs}}</td><td>${{review}}</td></tr>`;
     }}).join('');
-    const today=new Date().toISOString().slice(0,10);
+    const today=localToday();
     const decision=a.status==='submitted'?`<div class=card style="margin-top:.8rem;background:#f8fbfd">
       <h3 style="margin-top:0">Decision</h3><div class=row style="align-items:flex-start;flex-wrap:wrap">
       <label class=muted>Effective date<br><input id=ca-effective type=date max="${{today}}" value="${{today}}"></label>
@@ -2181,7 +2185,7 @@ function openCredentialMember(userId){{
       ||'<tr><td colspan=6 class=muted>No professional credential issuances.</td></tr>';
     const apps=(d.applications||[]).map(a=>`<tr><td>${{credLabel(a.credential_type)}}</td><td>${{statusBadge(a.status)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{esc((a.submitted_at||a.created_at||'').slice(0,10))}}</td><td><button class=ghost onclick="closeCredentialMember();openCredentialApplication(${{a.id}})">Open</button></td></tr>`).join('')
       ||'<tr><td colspan=5 class=muted>No CEU applications.</td></tr>';
-    const today=new Date().toISOString().slice(0,10);
+    const today=localToday();
     out.innerHTML=`<div class=member-drawer-section><h3>Training certificates</h3><div class=member-drawer-table><table><thead><tr><th>Course</th><th>Maps to</th><th>Training path</th><th>Issued</th><th></th></tr></thead><tbody>${{training}}</tbody></table></div></div>
       <div class=member-drawer-section><h3>Professional credential history</h3><div class=member-drawer-table><table><thead><tr><th>Credential</th><th>Level</th><th>Status</th><th>Effective</th><th>Expires</th><th></th></tr></thead><tbody>${{issues}}</tbody></table></div></div>
       <div class=member-drawer-section><h3>CEU applications</h3><div class=member-drawer-table><table><thead><tr><th>Credential</th><th>Status</th><th>Claimed</th><th>Date</th><th></th></tr></thead><tbody>${{apps}}</tbody></table></div></div>
