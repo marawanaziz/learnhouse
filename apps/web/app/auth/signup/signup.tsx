@@ -28,6 +28,7 @@ function SignUpClient(props: SignUpClientProps) {
   const session = useLHSession() as any
   const [joinMethod, setJoinMethod] = React.useState('open')
   const [inviteCode, setInviteCode] = React.useState('')
+  const [inviteProgram, setInviteProgram] = React.useState('')
   const searchParams = useSearchParams()
   const inviteCodeParam = searchParams.get('inviteCode')
 
@@ -45,14 +46,35 @@ function SignUpClient(props: SignUpClientProps) {
     }
   }, [props.org, inviteCodeParam])
 
+  useEffect(() => {
+    if (!inviteCodeParam || !props.org?.id) return
+    let cancelled = false
+    validateInviteCode(
+      props.org.id,
+      inviteCodeParam,
+      session.data?.tokens?.access_token
+    ).then(res => {
+      if (cancelled || !res.success) return
+      const group = String(res.data?.usergroup_name || '')
+      if (group === 'Bold Families') setInviteProgram('Project BOLD Families')
+      if (group === 'Bold Perinatal Professionals') {
+        setInviteProgram('Project BOLD for Perinatal Professionals')
+      }
+    })
+    return () => { cancelled = true }
+  }, [inviteCodeParam, props.org?.id, session.data?.tokens?.access_token])
+
   return (
-    <AuthLayout org={props.org} welcomeText={t('auth.invited_to_join')}>
+    <AuthLayout
+      org={props.org}
+      welcomeText={inviteProgram ? `You're invited to join ${inviteProgram}` : t('auth.invited_to_join')}
+    >
       {joinMethod == 'open' &&
         (session.status == 'authenticated' ? (
-          <LoggedInJoinScreen inviteCode={inviteCode} org={props.org} />
+          <LoggedInJoinScreen inviteCode={inviteCode} org={props.org} programName={inviteProgram} />
         ) : inviteCode ? (
           <div className="flex-1 flex flex-row">
-            <InviteOnlySignUpComponent inviteCode={inviteCode} />
+            <InviteOnlySignUpComponent inviteCode={inviteCode} programName={inviteProgram} />
           </div>
         ) : (
           <div className="flex-1 flex flex-row">
@@ -62,10 +84,10 @@ function SignUpClient(props: SignUpClientProps) {
       {joinMethod == 'inviteOnly' &&
         (inviteCode ? (
           session.status == 'authenticated' ? (
-            <LoggedInJoinScreen inviteCode={inviteCode} org={props.org} />
+            <LoggedInJoinScreen inviteCode={inviteCode} org={props.org} programName={inviteProgram} />
           ) : (
             <div className="flex-1 flex flex-row">
-              <InviteOnlySignUpComponent inviteCode={inviteCode} />
+              <InviteOnlySignUpComponent inviteCode={inviteCode} programName={inviteProgram} />
             </div>
           )
         ) : (
@@ -78,9 +100,10 @@ function SignUpClient(props: SignUpClientProps) {
 interface JoinScreenProps {
   inviteCode: string
   org: any
+  programName?: string
 }
 
-const LoggedInJoinScreen = ({ inviteCode, org }: JoinScreenProps) => {
+const LoggedInJoinScreen = ({ inviteCode, org, programName }: JoinScreenProps) => {
   const { t } = useTranslation()
   const session = useLHSession() as any
   const contextOrg = useOrg() as any
@@ -169,7 +192,7 @@ const LoggedInJoinScreen = ({ inviteCode, org }: JoinScreenProps) => {
               {/* Organization Info */}
               <div className="w-full text-center py-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500 mb-1">{t('auth.joining')}</p>
-                <p className="font-semibold text-gray-900 text-lg">{activeOrg?.name}</p>
+                <p className="font-semibold text-gray-900 text-lg">{programName || activeOrg?.name}</p>
               </div>
 
               {/* Join Button or Verification Warning */}

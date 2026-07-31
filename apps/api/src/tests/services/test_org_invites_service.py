@@ -20,7 +20,7 @@ from src.services.orgs.invites import (
 )
 
 
-def _make_usergroup(db, org, **overrides):
+async def _make_usergroup(db, org, **overrides):
     usergroup = UserGroup(
         id=overrides.pop("id", None),
         org_id=org.id,
@@ -31,8 +31,8 @@ def _make_usergroup(db, org, **overrides):
         update_date=overrides.pop("update_date", str(datetime.now())),
     )
     db.add(usergroup)
-    db.commit()
-    db.refresh(usergroup)
+    await db.commit()
+    await db.refresh(usergroup)
     return usergroup
 
 
@@ -63,7 +63,7 @@ class TestOrgInvitesService:
     async def test_create_invite_code_success_with_usergroup(
         self, mock_request, db, org, admin_user
     ):
-        usergroup = _make_usergroup(db, org, id=11)
+        usergroup = await _make_usergroup(db, org, id=11)
         fake_redis = _fake_redis()
 
         with patch(
@@ -300,7 +300,7 @@ class TestOrgInvitesService:
     async def test_get_invite_codes_enriches_usergroup_name(
         self, mock_request, db, org, admin_user
     ):
-        usergroup = _make_usergroup(db, org, id=21, name="Beta Group")
+        usergroup = await _make_usergroup(db, org, id=21, name="Beta Group")
         invite_payload = {
             "invite_code": "ABC12345",
             "invite_code_uuid": "org_invite_code_test",
@@ -369,6 +369,9 @@ class TestOrgInvitesService:
     async def test_get_invite_code_success_and_not_found(
         self, mock_request, db, org, admin_user
     ):
+        usergroup = await _make_usergroup(
+            db, org, id=22, name="Project BOLD Families"
+        )
         invite_payload = {
             "invite_code": "ABC12345",
             "invite_code_uuid": "org_invite_code_test",
@@ -376,6 +379,7 @@ class TestOrgInvitesService:
             "invite_code_type": "signup",
             "created_at": "2024-01-01T00:00:00",
             "created_by": admin_user.user_uuid,
+            "usergroup_id": usergroup.id,
         }
         fake_redis = _fake_redis(
             scan_keys=[b"invite-key"],
@@ -401,6 +405,7 @@ class TestOrgInvitesService:
             )
 
         assert result["invite_code"] == "ABC12345"
+        assert result["usergroup_name"] == "Project BOLD Families"
 
         with patch(
             "src.services.orgs.invites.get_learnhouse_config",

@@ -43,6 +43,7 @@ interface StoreProps {
   orgslug: string
   offers: Offer[]
   activeAudience: string
+  isBold?: boolean
 }
 
 const STORE_TABS = [
@@ -249,7 +250,7 @@ function OfferCard({ offer, orgslug, orgUuid, position }: { offer: Offer; orgslu
   )
 }
 
-function Store({ orgslug, offers, activeAudience }: StoreProps) {
+function Store({ orgslug, offers, activeAudience, isBold = false }: StoreProps) {
   const org = useOrg() as any
 
   useTrackView(AnalyticsEvent.StoreViewed, { offers_count: offers.length, is_empty: offers.length === 0 }, true, 'learner')
@@ -262,14 +263,20 @@ function Store({ orgslug, offers, activeAudience }: StoreProps) {
             <ShoppingBag size={18} className="text-gray-800" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight">Access More Courses</h1>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight">
+              {isBold ? 'Project BOLD Opportunities' : 'Access More Courses'}
+            </h1>
             {org?.name && (
-              <p className="text-sm text-gray-400 mt-0.5">Unlock premium content from {org.name}</p>
+              <p className="text-sm text-gray-400 mt-0.5">
+                {isBold
+                  ? 'Optional mentorship, agency development, and licensing resources'
+                  : `Unlock premium content from ${org.name}`}
+              </p>
             )}
           </div>
         </div>
 
-        <nav
+        {!isBold && <nav
           aria-label="Course catalogue"
           className="mb-6 flex flex-wrap gap-2 rounded-2xl bg-white p-2 nice-shadow"
         >
@@ -290,7 +297,23 @@ function Store({ orgslug, offers, activeAudience }: StoreProps) {
               </Link>
             )
           })}
-        </nav>
+        </nav>}
+
+        {isBold && (
+          <a
+            href="https://www.throughtothrive.org/Licensing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mb-6 flex items-center justify-between gap-4 rounded-2xl bg-white p-5 nice-shadow transition-transform hover:scale-[1.01]"
+          >
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-[#113d5d]">Through to THRIVE</p>
+              <h2 className="mt-1 text-lg font-black text-gray-900">Explore licensing packages</h2>
+              <p className="mt-1 text-sm text-gray-500">Bring Project BOLD-aligned content and mentorship into your practice.</p>
+            </div>
+            <ArrowRight size={20} className="shrink-0 text-[#113d5d]" />
+          </a>
+        )}
 
         {offers.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">

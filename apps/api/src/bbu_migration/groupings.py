@@ -1,7 +1,7 @@
 """Anna's class groupings — audience segmentation, Bold copies, Spanish communities.
 
 From her 26 Jul brief: professionals should see professional and doula trainings,
-families should see family classes, Project Bold cohorts should see only their own
+families should see family classes, Project BOLD cohorts should see only their own
 labelled versions, and the Spanish classes should live in their own community
 rather than clutter the main catalogue.
 
@@ -9,7 +9,7 @@ Three provisioning steps, each idempotent and each with a dry run, because they
 mutate the live catalogue:
 
   POST /groupings/audiences   create the audiences + their usergroups, tag products
-  POST /groupings/clone-bold  duplicate the named courses into Project Bold versions
+  POST /groupings/clone-bold  duplicate the named courses into Project BOLD versions
   POST /groupings/communities create the Spanish communities and attach courses
   GET  /groupings/plan        what the tagging pass *would* do, changing nothing
 
@@ -40,10 +40,10 @@ ADMIN_KEY = os.environ.get("BBU_MIGRATION_KEY") or os.environ.get("BBU_AFFILIATE
 AUDIENCES = [
     ("family", "Expecting Families", True, False, 10),
     ("professional", "Perinatal Professionals", False, True, 20),
-    ("bold_professional", "Project Bold — Professionals", False, False, 30),
-    ("bold_family", "Project Bold — Families", False, False, 40),
+    ("bold_professional", "Project BOLD — Professionals", False, False, 30),
+    ("bold_family", "Project BOLD — Families", False, False, 40),
     ("spanish_family", "Spanish-Speaking Families", False, False, 50),
-    ("bold_spanish_family", "Project Bold — Spanish-Speaking Families", False, False, 60),
+    ("bold_spanish_family", "Project BOLD — Spanish-Speaking Families", False, False, 60),
 ]
 
 AUDIENCE_GROUP_NAMES = {
@@ -52,7 +52,7 @@ AUDIENCE_GROUP_NAMES = {
     "bold_professional": "Bold Perinatal Professionals",
     "bold_family": "Bold Families",
     "spanish_family": "Spanish-Speaking Families",
-    "bold_spanish_family": "Project Bold — Spanish-Speaking Families",
+    "bold_spanish_family": "Project BOLD — Spanish-Speaking Families",
 }
 
 # A product is professional if its name matches any of these.
@@ -70,13 +70,13 @@ OVERRIDES: dict = {
     "bbu test guide (qa)": "",          # internal QA item, leave untagged
 }
 
-# Courses Anna asked to duplicate for Project Bold.
+# Courses Anna asked to duplicate for Project BOLD.
 BOLD_SOURCES = [
     "Breastfeeding for Perinatal Professionals",
     "Comfort Measures for Perinatal Professionals",
     "Newborn Care for Perinatal Professionals",
 ]
-BOLD_PREFIX = "Project Bold — "
+BOLD_PREFIX = "Project BOLD — "
 
 
 def _check(request: Request, body: dict | None = None):
@@ -181,7 +181,7 @@ async def provision_audiences(request: Request,
 
 @router.post("/groupings/clone-bold")
 async def clone_bold(request: Request, db_session: AsyncSession = Depends(get_db_session)):
-    """Duplicate the professional courses Anna named into Project Bold versions.
+    """Duplicate the professional courses Anna named into Project BOLD versions.
 
     Uses the platform's own course clone (chapters, activities, blocks, files) and
     then renames — the built-in clone appends "(Copy)", which is not a name to put
@@ -431,8 +431,8 @@ async def provision_communities(request: Request,
         {"name": "Spanish-Speaking Families",
          "description": "Clases en español para familias que esperan un bebé.",
          "match": ES_MARKERS, "bold": False},
-        {"name": "Project Bold — Spanish-Speaking Families",
-         "description": "Clases en español para las familias de Project Bold.",
+        {"name": "Project BOLD — Spanish-Speaking Families",
+         "description": "Clases en español para las familias de Project BOLD.",
          "match": ES_MARKERS, "bold": True},
     ]
 
@@ -506,12 +506,12 @@ async def provision_access_mapping(
     target_communities = [
         ("Families Connect & Learn", "Family"),
         ("Doulas Connect & Learn", "BBU Professionals"),
-        ("Welcome to Bold for Perinatal Professionals", "Bold Perinatal Professionals"),
-        ("Welcome to Bold for Families", "Bold Families"),
+        ("Project BOLD for Perinatal Professionals", "Bold Perinatal Professionals"),
+        ("Project BOLD Families", "Bold Families"),
         ("Spanish-Speaking Families", "Spanish-Speaking Families"),
         (
-            "Project Bold — Spanish-Speaking Families",
-            "Project Bold — Spanish-Speaking Families",
+            "Project BOLD — Spanish-Speaking Families",
+            "Project BOLD — Spanish-Speaking Families",
         ),
         ("CFD Birth Families", "CFD Birth Families"),
         ("CFD Postpartum Families", "CFD Postpartum Families"),
@@ -519,9 +519,9 @@ async def provision_access_mapping(
     ]
     clone_names = [f"{BOLD_PREFIX}{name}" for name in BOLD_SOURCES]
     bold_spanish_names = [
-        "Project Bold — Introducción al Parto",
-        "Project Bold — Atención del Recién Nacido",
-        "Project Bold — Lactancia Materna",
+        "Project BOLD — Introducción al Parto",
+        "Project BOLD — Atención del Recién Nacido",
+        "Project BOLD — Lactancia Materna",
     ]
     spanish_names = [
         "Introducción al Parto",
@@ -848,7 +848,7 @@ async def provision_access_mapping(
         await add_resource(current_groups["CFD Doulas"], course.course_uuid)
     for course in bold_spanish_courses:
         await add_resource(
-            current_groups["Project Bold — Spanish-Speaking Families"],
+            current_groups["Project BOLD — Spanish-Speaking Families"],
             course.course_uuid,
         )
     for course in spanish_courses:
@@ -944,7 +944,7 @@ async def provision_access_mapping(
         (bold_professional_group, all_bold_professional_courses),
         (current_groups["Bold Families"], bold_family_courses),
         (
-            current_groups["Project Bold — Spanish-Speaking Families"],
+            current_groups["Project BOLD — Spanish-Speaking Families"],
             bold_spanish_courses,
         ),
         (current_groups["Spanish-Speaking Families"], spanish_courses),

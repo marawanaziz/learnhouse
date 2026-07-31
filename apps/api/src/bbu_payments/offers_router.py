@@ -50,6 +50,15 @@ stripe.api_key = os.environ.get("BBU_STRIPE_SECRET_KEY", "")
 ADMIN_KEY = os.environ.get("BBU_AFFILIATE_ADMIN_KEY", "")
 
 
+def _bold_opportunity_products(products: list) -> list:
+    """Keep Project BOLD's optional catalogue focused on growth resources."""
+    return [
+        product for product in products
+        if "mentorship" in (product.name or "").lower()
+        or "agency owner" in (product.name or "").lower()
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Mapping: BBUProduct -> the "Offer" shape the React UI expects.
 # --------------------------------------------------------------------------- #
@@ -245,6 +254,8 @@ async def storefront(
 ):
     """Personalized Access More Courses tabs for the native store."""
     user_id = int(getattr(user, "id", 0) or 0)
+    viewer_slugs = await audience_svc.slugs_for_user(db_session, user_id, org_id)
+    is_bold = any(slug.startswith("bold_") for slug in viewer_slugs)
     selected = audience if audience in audience_svc.RETAIL_AUDIENCES else ""
     if not selected:
         selected = await audience_svc.preferred_store_slug(
@@ -258,9 +269,16 @@ async def storefront(
             )
         )
     ).scalars().all()
-    rows = await audience_svc.filter_products(
-        db_session, rows, user_id, org_id, selected
-    )
+    if is_bold:
+        # Project BOLD access is grant-funded.  Its optional-opportunities page
+        # should not look like an upsell wall for the same family classes.  Kate
+        # and Anna asked that it contain only mentorship / agency development;
+        # the licensing opportunity is an external card rendered by the client.
+        rows = _bold_opportunity_products(rows)
+    else:
+        rows = await audience_svc.filter_products(
+            db_session, rows, user_id, org_id, selected
+        )
     rows = await audience_svc.exclude_owned_products(
         db_session, rows, user_id, org_id
     )
@@ -272,7 +290,7 @@ async def storefront(
             db_session, user_id, product
         )
         offers.append(offer)
-    return {"active_audience": selected, "offers": offers}
+    return {"active_audience": selected, "offers": offers, "is_bold": is_bold}
 
 
 @router.get("/{org_id}/offers/{offer_uuid}/public")

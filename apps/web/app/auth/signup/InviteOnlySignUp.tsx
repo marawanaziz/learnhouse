@@ -48,6 +48,7 @@ const validate = (values: any, t: any) => {
 
 interface InviteOnlySignUpProps {
   inviteCode: string
+  programName?: string
 }
 
 function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
@@ -105,8 +106,14 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
     <div className="m-auto w-full max-w-sm px-6 py-8 sm:py-0">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">{t('auth.create_account')}</h1>
-        <p className="text-gray-500 mt-1">{t('auth.fill_in_details')}</p>
+        <h1 className="text-2xl font-bold text-gray-900">
+          {props.programName ? `Create your ${props.programName} account` : t('auth.create_account')}
+        </h1>
+        <p className="text-gray-500 mt-1">
+          {props.programName
+            ? 'Project BOLD partners with Birth & Baby University and Through to THRIVE to provide this learning space.'
+            : t('auth.fill_in_details')}
+        </p>
       </div>
 
       {/* Error/Success Messages */}

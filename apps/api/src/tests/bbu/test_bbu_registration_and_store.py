@@ -8,7 +8,10 @@ from src.bbu_migration.registration import assign_registration_audience
 from src.bbu_payments.audiences import exclude_owned_products
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.models import BBUCoupon, BBUProduct
-from src.bbu_payments.offers_router import _automatic_discount_percent
+from src.bbu_payments.offers_router import (
+    _automatic_discount_percent,
+    _bold_opportunity_products,
+)
 from src.db.usergroup_resources import UserGroupResource
 from src.db.usergroup_user import UserGroupUser
 from src.db.usergroups import UserGroup
@@ -130,6 +133,22 @@ async def test_store_excludes_fully_unlocked_course_offer(
         org.id,
     )
     assert [product.name for product in result] == ["Available", "Guide"]
+
+
+def test_bold_store_only_shows_growth_opportunities():
+    products = [
+        BBUProduct(name="Doula Mentorship", org_id=1),
+        BBUProduct(name="Doula Agency Owner Mentorship", org_id=1),
+        BBUProduct(name="Newborn Care 101", org_id=1),
+        BBUProduct(name="Certified Birth Doula Training", org_id=1),
+    ]
+
+    result = _bold_opportunity_products(products)
+
+    assert [product.name for product in result] == [
+        "Doula Mentorship",
+        "Doula Agency Owner Mentorship",
+    ]
 
 
 @pytest.mark.asyncio

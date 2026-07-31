@@ -280,6 +280,22 @@ async def get_invite_code(
     invite_code_value = r.get(matched_key)
     invite_code_data = json.loads(invite_code_value)
 
+    # Group-linked links are also branded onboarding links.  Returning the safe
+    # display name lets the public signup screen say "Project BOLD" instead of
+    # making every invited audience look like a generic organization signup.
+    usergroup_id = invite_code_data.get("usergroup_id")
+    if usergroup_id:
+        group = (
+            await db_session.execute(
+                select(UserGroup).where(
+                    UserGroup.id == int(usergroup_id),
+                    UserGroup.org_id == org_id,
+                )
+            )
+        ).scalars().first()
+        if group:
+            invite_code_data["usergroup_name"] = group.name
+
     return invite_code_data
 
 

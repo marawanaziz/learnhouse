@@ -75,12 +75,14 @@ export default async function StorePage({
 
   let offers: any[] = []
   let activeAudience = audience
+  let isBold = false
   try {
     const result = await getStorefrontOffers(org.id, accessToken, audience)
     offers = result?.success && Array.isArray(result.data?.offers)
       ? result.data.offers
       : []
     activeAudience = result?.data?.active_audience || audience || 'family'
+    isBold = Boolean(result?.data?.is_bold)
   } catch {
     offers = []
   }
@@ -97,6 +99,7 @@ export default async function StorePage({
         orgslug={orgslug}
         offers={offers}
         activeAudience={activeAudience}
+        isBold={isBold}
       />
     </>
   )
