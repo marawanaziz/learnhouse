@@ -73,6 +73,46 @@ const SESSION_CACHE_TTL = 10 * 60 * 1000 // 10 minutes
 const TOKEN_REFRESH_THRESHOLD = 60 * 1000 // 1 minute before expiry
 const AUTH_BROADCAST_CHANNEL = 'learnhouse_auth_sync'
 const OAUTH_STATE_COOKIE = 'LH_oauth_state'
+const AUTH_REQUEST_RETRY_DELAYS_MS = [250, 750, 1500]
+
+class TransientAuthError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'TransientAuthError'
+  }
+}
+
+function isTransientAuthStatus(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
+async function fetchWithAuthRetry(
+  request: () => Promise<Response>,
+  label: string
+): Promise<Response> {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= AUTH_REQUEST_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const response = await request()
+      if (!isTransientAuthStatus(response.status)) {
+        return response
+      }
+      lastError = new Error(`${label} returned ${response.status}`)
+    } catch (error) {
+      lastError = error
+    }
+
+    const retryDelay = AUTH_REQUEST_RETRY_DELAYS_MS[attempt]
+    if (retryDelay !== undefined) {
+      await new Promise(resolve => setTimeout(resolve, retryDelay))
+    }
+  }
+
+  throw new TransientAuthError(`${label} is temporarily unavailable`, {
+    cause: lastError,
+  })
+}
 
 // Context
 interface AuthContextValue {
@@ -230,33 +270,28 @@ export function SessionProvider({
 
   // Fetch user session from backend
   const fetchUserSession = useCallback(async (token: string, expiry?: number): Promise<Session | null> => {
-    try {
-      const response = await fetch(`${getAPIUrl()}users/session`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: 'include',
-      })
+    const response = await fetchWithAuthRetry(() => fetch(`${getAPIUrl()}users/session`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      credentials: 'include',
+    }), 'Session validation')
 
-      if (!response.ok) {
-        console.error(`Session fetch failed with status: ${response.status}`)
-        return null
-      }
-
-      const data = await response.json()
-      return {
-        user: data.user,
-        roles: data.roles,
-        tokens: {
-          access_token: token,
-          refresh_token: undefined, // Stored in httpOnly cookie
-          expiry: expiry,
-        },
-      }
-    } catch (error) {
-      console.error('Error fetching user session:', error)
+    if (!response.ok) {
+      console.error(`Session fetch failed with status: ${response.status}`)
       return null
+    }
+
+    const data = await response.json()
+    return {
+      user: data.user,
+      roles: data.roles,
+      tokens: {
+        access_token: token,
+        refresh_token: undefined, // Stored in httpOnly cookie
+        expiry: expiry,
+      },
     }
   }, [])
 
@@ -276,10 +311,10 @@ export function SessionProvider({
     refreshPromiseRef.current = (async () => {
       try {
         // Use Next.js API route to ensure cookies are set correctly
-        const response = await fetch('/api/auth/refresh', {
+        const response = await fetchWithAuthRetry(() => fetch('/api/auth/refresh', {
           method: 'GET',
           credentials: 'include',
-        })
+        }), 'Token refresh')
 
         if (!response.ok) {
           if (response.status === 401) {
@@ -293,8 +328,7 @@ export function SessionProvider({
 
         // Validate response structure
         if (!data.access_token) {
-          console.error('Invalid refresh response: missing access_token')
-          return null
+          throw new TransientAuthError('Invalid refresh response: missing access_token')
         }
 
         return {
@@ -303,7 +337,7 @@ export function SessionProvider({
         }
       } catch (error) {
         console.error('Token refresh failed:', error)
-        return null
+        throw error
       } finally {
         isRefreshingRef.current = false
         refreshPromiseRef.current = null
@@ -352,7 +386,11 @@ export function SessionProvider({
       }
     } catch (error) {
       console.error('Session refresh error:', error)
-      clearAuthState()
+      // Keep the readable session marker and secure cookies intact during
+      // transient deploy/network failures so the next retry can recover.
+      if (!sessionCacheRef.current) {
+        setStatus('loading')
+      }
     }
   }, [applySessionFromToken, clearAuthState, refreshAccessToken])
 
@@ -412,7 +450,11 @@ export function SessionProvider({
       }
     } catch (error) {
       console.error('Session refresh error:', error)
-      clearAuthState()
+      // A temporary backend outage is not a logout. Preserve the cookies and
+      // current session state so a later refresh can recover automatically.
+      if (!sessionCacheRef.current) {
+        setStatus('loading')
+      }
       return null
     }
   }, [accessToken, tokenExpiry, fetchUserSession, isTokenExpiringSoon, refreshAccessToken, clearAuthState])
@@ -420,6 +462,7 @@ export function SessionProvider({
   // Initialize session on mount
   useEffect(() => {
     let isMounted = true
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     const initSession = async () => {
       // Skip entirely if no session marker — no httpOnly refresh token exists
@@ -431,15 +474,22 @@ export function SessionProvider({
       setStatus('loading')
 
       // Try to restore session from refresh token
-      const refreshResult = await refreshAccessToken()
+      try {
+        const refreshResult = await refreshAccessToken()
 
-      if (!isMounted) return
-
-      if (refreshResult) {
         if (!isMounted) return
-        await applySessionFromToken(refreshResult.access_token, refreshResult.expiry)
-      } else {
-        clearAuthState()
+
+        if (refreshResult) {
+          if (!isMounted) return
+          await applySessionFromToken(refreshResult.access_token, refreshResult.expiry)
+        } else {
+          clearAuthState()
+        }
+      } catch (error) {
+        if (!isMounted) return
+        console.error('Initial session restore is temporarily unavailable:', error)
+        setStatus('loading')
+        retryTimer = setTimeout(initSession, 2000)
       }
     }
 
@@ -447,6 +497,9 @@ export function SessionProvider({
 
     return () => {
       isMounted = false
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+      }
     }
   }, [applySessionFromToken, clearAuthState, hasSessionMarker, refreshAccessToken])
 

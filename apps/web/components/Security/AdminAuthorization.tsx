@@ -39,7 +39,7 @@ const AdminAuthorization: React.FC<AuthorizationProps> = ({ children, authorizat
     }
 
     // Convert pattern to a regex pattern
-    const regexPattern = new RegExp(`^${pattern.replace(/[\/.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*')}$`);
+    const regexPattern = new RegExp(`^${pattern.replace(/[/.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*')}$`);
 
     // Test the pathname against the regex pattern
     return regexPattern.test(pathname);
@@ -54,7 +54,7 @@ const AdminAuthorization: React.FC<AuthorizationProps> = ({ children, authorizat
     }
 
     if (!isUserAuthenticated) {
-      router.push(getUriWithOrg(org.slug, '/login'));
+      router.push(getUriWithOrg(org?.slug || '', '/login'));
       return;
     }
 
@@ -72,7 +72,7 @@ const AdminAuthorization: React.FC<AuthorizationProps> = ({ children, authorizat
     } else if (authorizationMode === 'component') {
       setIsAuthorized(isAdmin);
     }
-  }, [loading, isUserAuthenticated, isAdmin, isAdminPath, authorizationMode, router]);
+  }, [loading, isUserAuthenticated, isAdmin, isAdminPath, authorizationMode, router, org?.slug]);
 
   useEffect(() => {
     authorizeUser();
