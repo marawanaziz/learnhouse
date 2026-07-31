@@ -70,6 +70,13 @@ async def test_member_hub_and_application_submission_flow(
         assert certificate.content.startswith(b"%PDF-1.4")
         assert issuance.public_credential_id.encode() in certificate.content
 
+        qr = await client.get(
+            f"/api/v1/bbu/credentials/verify/{issuance.verification_token}/qr"
+        )
+        assert qr.status_code == 200
+        assert qr.headers["content-type"].startswith("image/svg+xml")
+        assert b"<svg" in qr.content
+
         created = await client.post(
             "/api/v1/bbu/credentials/applications",
             json={"credential_type": "birth"},

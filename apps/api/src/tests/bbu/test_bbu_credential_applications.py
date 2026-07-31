@@ -20,6 +20,8 @@ from src.bbu_credentials.models import (
     BBUCredentialApplicationItem,
     BBUCredentialIssuance,
 )
+from src.db.courses.certifications import CertificateUser, Certifications
+from src.db.courses.courses import Course
 
 
 UTC = timezone.utc
@@ -181,6 +183,63 @@ async def test_application_requires_prior_matching_bbu_credential(db, regular_us
     assert application.status == "draft"
     assert application.qualifying_source_type == "credential_issuance"
     assert application.qualifying_source_id == prior.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("credential_type", "is_cross_cert"),
+    (("birth", False), ("postpartum", True)),
+)
+async def test_full_or_cross_training_certificate_qualifies_for_matching_ceu_application(
+    db, org, regular_user, credential_type, is_cross_cert
+):
+    course = Course(
+        name=f"{credential_type.title()} training",
+        description="Qualifying BBU training",
+        public=True,
+        published=True,
+        open_to_contributors=False,
+        org_id=org.id,
+        course_uuid=f"course_{credential_type}_{is_cross_cert}",
+        creation_date="2025-01-01T00:00:00+00:00",
+        update_date="2025-01-01T00:00:00+00:00",
+    )
+    db.add(course)
+    await db.commit()
+    await db.refresh(course)
+    certification = Certifications(
+        course_id=course.id,
+        certification_uuid=f"cert_{credential_type}_{is_cross_cert}",
+        config={
+            "bbu_credential_type": credential_type,
+            "bbu_is_cross_cert": is_cross_cert,
+        },
+        creation_date="2025-01-01T00:00:00+00:00",
+        update_date="2025-01-01T00:00:00+00:00",
+    )
+    db.add(certification)
+    await db.commit()
+    await db.refresh(certification)
+    certificate_user = CertificateUser(
+        user_id=regular_user.id,
+        certification_id=certification.id,
+        user_certification_uuid=f"user_cert_{credential_type}_{is_cross_cert}",
+        created_at="2025-01-01T00:00:00+00:00",
+        updated_at="2025-01-01T00:00:00+00:00",
+    )
+    db.add(certificate_user)
+    await db.commit()
+    await db.refresh(certificate_user)
+
+    application = await app_svc.create_application(
+        db,
+        org_id=org.id,
+        user_id=regular_user.id,
+        credential_type=credential_type,
+    )
+
+    assert application.qualifying_source_type == "course_certificate"
+    assert application.qualifying_source_id == certificate_user.id
 
 
 @pytest.mark.asyncio

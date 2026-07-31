@@ -112,3 +112,79 @@ async def test_manual_issuance_email_links_to_certificate_and_history(
     assert "https://learn.birthandbabyuniversity.com/account/credentials" in message[
         "body"
     ]
+
+
+@pytest.mark.asyncio
+async def test_approval_email_announces_new_three_year_credential_once(
+    db, regular_user, monkeypatch
+):
+    application = BBUCredentialApplication(
+        public_uuid="approved_credential_application_email_test",
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        status="approved",
+        approved_ceu_total=15,
+    )
+    db.add(application)
+    await db.commit()
+    await db.refresh(application)
+    sent = Mock()
+    monkeypatch.setattr(notifications, "send_email", sent)
+    monkeypatch.setenv("LEARNHOUSE_DOMAIN", "learn.birthandbabyuniversity.com")
+
+    await notifications.notify_decision(
+        _request(),
+        db,
+        application,
+        regular_user,
+        credential_id="BBU-BD-2026-ABC123",
+    )
+    await notifications.notify_decision(
+        _request(),
+        db,
+        application,
+        regular_user,
+        credential_id="BBU-BD-2026-ABC123",
+    )
+
+    assert sent.call_count == 1
+    message = sent.call_args.kwargs
+    assert message["to"] == str(regular_user.email)
+    assert "new BBU Birth Doula credential is ready" in message["subject"]
+    assert "new three-year Birth Doula credential" in message["body"]
+    assert "BBU-BD-2026-ABC123" in message["body"]
+    assert "prior certificates remain available" in message["body"]
+    assert application.decision_notified_at
+
+
+@pytest.mark.asyncio
+async def test_decline_email_includes_escaped_review_reason(
+    db, regular_user, monkeypatch
+):
+    application = BBUCredentialApplication(
+        public_uuid="declined_credential_application_email_test",
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="postpartum",
+        status="declined",
+        decline_reason="The certificate is incomplete <please resubmit>.",
+    )
+    db.add(application)
+    await db.commit()
+    await db.refresh(application)
+    sent = Mock()
+    monkeypatch.setattr(notifications, "send_email", sent)
+    monkeypatch.setenv("LEARNHOUSE_DOMAIN", "learn.birthandbabyuniversity.com")
+
+    await notifications.notify_decision(
+        _request(), db, application, regular_user
+    )
+
+    assert sent.call_count == 1
+    message = sent.call_args.kwargs
+    assert "Postpartum Doula CEU application" in message["subject"]
+    assert "The certificate is incomplete &lt;please resubmit&gt;." in message[
+        "body"
+    ]
+    assert application.decision_notified_at

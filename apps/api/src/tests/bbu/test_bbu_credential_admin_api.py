@@ -79,11 +79,18 @@ async def test_admin_search_queue_review_and_approval_use_internal_ids(
 
     client = await _client_for(db)
     async with client:
-        search = await client.get(
-            "/api/v1/bbu/admin/credentials/members?q=regular"
-        )
-        assert search.status_code == 200
-        assert search.json()["results"][0]["user_id"] == regular_user.id
+        for query in (
+            "Regular User",
+            str(regular_user.email),
+            regular_user.username,
+            str(regular_user.id),
+        ):
+            search = await client.get(
+                "/api/v1/bbu/admin/credentials/members",
+                params={"q": query},
+            )
+            assert search.status_code == 200
+            assert search.json()["results"][0]["user_id"] == regular_user.id
 
         member = await client.get(
             f"/api/v1/bbu/admin/credentials/member/{regular_user.id}"

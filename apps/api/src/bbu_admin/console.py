@@ -12,7 +12,7 @@ import logging
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.events.database import get_db_session
@@ -466,11 +466,22 @@ async def credential_member_search(
     )
     needle = (q or "").strip()
     if needle:
+        # Match every word independently so a full-name lookup such as
+        # "Katherine Healy Daily" works even though names are stored in
+        # separate first/last columns.
+        terms = [term for term in needle.split() if term]
         conditions = [
-            User.email.ilike(f"%{needle}%"),
-            User.first_name.ilike(f"%{needle}%"),
-            User.last_name.ilike(f"%{needle}%"),
-            User.username.ilike(f"%{needle}%"),
+            and_(
+                *[
+                    or_(
+                        User.email.ilike(f"%{term}%"),
+                        User.first_name.ilike(f"%{term}%"),
+                        User.last_name.ilike(f"%{term}%"),
+                        User.username.ilike(f"%{term}%"),
+                    )
+                    for term in terms
+                ]
+            )
         ]
         if needle.isdigit():
             conditions.append(User.id == int(needle))
