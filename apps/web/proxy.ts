@@ -277,10 +277,13 @@ export default async function proxy(req: NextRequest) {
   }
 
   // BBU is an authenticated learning portal, not a public course catalog.
-  // Anonymous visitors start at sign-in. After login, the auth bridge returns
-  // to `/` with LH_session set, so authenticated learners must be allowed
-  // through to the tenant-scoped platform instead of being sent back to login.
-  const hasSession = req.cookies.get('LH_session')?.value === '1'
+  // Anonymous visitors start at sign-in. LH_session is a client-readable
+  // convenience marker, not the source of truth: secure auth cookies can
+  // remain valid if that marker is lost during a transient frontend failure.
+  const hasSession =
+    req.cookies.get('LH_session')?.value === '1'
+    || Boolean(req.cookies.get('LH_access')?.value)
+    || Boolean(req.cookies.get('LH_refresh')?.value)
   if (pathname === '/' && instance.default_org_slug === 'bbu' && !hasSession) {
     const resolved = await resolveTenant(req, instance)
     const response = NextResponse.redirect(new URL(`/login${search}`, req.url))

@@ -107,10 +107,16 @@ async function proxyRequest(
   ) {
     const expiryMs = decodeJwtExpiryMs(accessToken.value)
     if (expiryMs && expiryMs - Date.now() > REFRESH_FAST_PATH_HEADROOM_MS) {
-      return NextResponse.json({
+      const response = NextResponse.json({
         access_token: accessToken.value,
         expiry: expiryMs,
       })
+      response.cookies.set('LH_session', '1', {
+        ...getCookieOptions(request),
+        httpOnly: false,
+        maxAge: REFRESH_TOKEN_MAX_AGE,
+      })
+      return response
     }
   }
 

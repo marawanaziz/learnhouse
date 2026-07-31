@@ -295,11 +295,6 @@ export function SessionProvider({
     }
   }, [])
 
-  // Check if a session might exist (marker cookie is set alongside httpOnly auth cookies)
-  const hasSessionMarker = useCallback((): boolean => {
-    return typeof document !== 'undefined' && document.cookie.includes('LH_session')
-  }, [])
-
   // Refresh access token using refresh token cookie
   const refreshAccessToken = useCallback(async (): Promise<{ access_token: string; expiry?: number } | null> => {
     // Deduplicate refresh requests within this tab
@@ -465,15 +460,11 @@ export function SessionProvider({
     let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     const initSession = async () => {
-      // Skip entirely if no session marker — no httpOnly refresh token exists
-      if (!hasSessionMarker()) {
-        clearAuthState(false)
-        return
-      }
-
       setStatus('loading')
 
-      // Try to restore session from refresh token
+      // Always ask the same-origin refresh route whether secure auth cookies
+      // exist. LH_session is only a readable marker and may be missing after a
+      // transient client failure even while the httpOnly cookies remain valid.
       try {
         const refreshResult = await refreshAccessToken()
 
@@ -501,7 +492,7 @@ export function SessionProvider({
         clearTimeout(retryTimer)
       }
     }
-  }, [applySessionFromToken, clearAuthState, hasSessionMarker, refreshAccessToken])
+  }, [applySessionFromToken, clearAuthState, refreshAccessToken])
 
   // Set up refetch interval
   useEffect(() => {
