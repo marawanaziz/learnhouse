@@ -135,6 +135,8 @@ describe("session recovery during rolling deploys", () => {
     assert.match(activityPageSource, /Metadata must never take down a protected learner page/);
     assert.match(activityPageSource, /Course activity —/);
     assert.match(activityPageSource, /\.catch\(\(\) => null\)/);
+    assert.match(activityPageSource, /canFetchProtectedMetadata/);
+    assert.match(activityPageSource, /Boolean\(access_token\)/);
     assert.match(activityHookSource, /session\?\.status === 'authenticated'/);
     assert.match(activityHookSource, /options\?\.requireAuth/);
   });

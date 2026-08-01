@@ -18,19 +18,22 @@ export async function generateMetadata(props: MetadataProps): Promise<Metadata> 
   const session = await getServerSession()
   const access_token = session?.tokens?.access_token || null
   const isCourseEnd = params.activityid === 'end'
+  const canFetchProtectedMetadata = params.orgslug !== 'bbu' || Boolean(access_token)
 
   const [org, course_meta, activity] = await Promise.all([
     getOrganizationContextInfo(params.orgslug, {
       revalidate: 120,
       tags: ['organizations'],
     }).catch(() => null),
-    getCourseMetadata(
-      params.courseuuid,
-      { revalidate: 120, tags: ['courses'] },
-      access_token,
-      { slim: true }
-    ).catch(() => null),
-    isCourseEnd
+    canFetchProtectedMetadata
+      ? getCourseMetadata(
+          params.courseuuid,
+          { revalidate: 120, tags: ['courses'] },
+          access_token,
+          { slim: true }
+        ).catch(() => null)
+      : Promise.resolve(null),
+    isCourseEnd || !canFetchProtectedMetadata
       ? Promise.resolve(null)
       : getActivityWithAuthHeader(
           params.activityid,
