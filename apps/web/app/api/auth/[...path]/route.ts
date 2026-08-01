@@ -1,16 +1,117 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { getConfig } from '@services/config/config'
+import { createHash } from 'node:crypto'
+import * as Sentry from '@sentry/nextjs'
+import { getServerAPIUrl } from '@services/config/config'
 import {
   ACCESS_TOKEN_COOKIE,
   REFRESH_TOKEN_COOKIE,
   ACCESS_TOKEN_MAX_AGE,
   REFRESH_TOKEN_MAX_AGE,
-  getCookieDomain,
+  clearLegacyAuthCookies,
   getCookieOptions,
 } from '@services/auth/cookies'
 
-const BACKEND_URL = (getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') || 'http://localhost:1338').replace(/\/+$/, '')
+const REFRESH_COALESCE_WINDOW_MS = 5_000
+
+type ResponseSnapshot = {
+  body: ArrayBuffer
+  headers: [string, string][]
+  status: number
+  statusText: string
+}
+
+const inFlightRefreshes = new Map<
+  string,
+  { promise: Promise<ResponseSnapshot>; expiresAt: number }
+>()
+
+function getBackendApiUrl(): string {
+  return getServerAPIUrl().replace(/\/+$/, '')
+}
+
+async function snapshotResponse(response: Response): Promise<ResponseSnapshot> {
+  return {
+    body: await response.arrayBuffer(),
+    headers: Array.from(response.headers.entries()),
+    status: response.status,
+    statusText: response.statusText,
+  }
+}
+
+function restoreResponse(snapshot: ResponseSnapshot): Response {
+  return new Response(snapshot.body.slice(0), {
+    headers: snapshot.headers,
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+  })
+}
+
+async function coalescedRefresh(
+  refreshToken: string,
+  request: () => Promise<Response>,
+): Promise<Response> {
+  const key = createHash('sha256').update(refreshToken).digest('hex')
+  const existing = inFlightRefreshes.get(key)
+  if (existing && existing.expiresAt > Date.now()) {
+    return restoreResponse(await existing.promise)
+  }
+
+  const promise = request().then(snapshotResponse)
+  const entry = {
+    promise,
+    expiresAt: Date.now() + REFRESH_COALESCE_WINDOW_MS,
+  }
+  inFlightRefreshes.set(key, entry)
+  setTimeout(() => {
+    if (inFlightRefreshes.get(key) === entry) {
+      inFlightRefreshes.delete(key)
+    }
+  }, REFRESH_COALESCE_WINDOW_MS)
+
+  return restoreResponse(await promise)
+}
+
+function reportRefreshFailure(
+  request: NextRequest,
+  status: number,
+  phase: 'validation' | 'rotation',
+  error?: unknown,
+) {
+  const level = status >= 500 || status === 404 || status === 0 ? 'error' : 'warning'
+  const details = {
+    event: 'auth_refresh_failure',
+    phase,
+    status,
+    host: request.headers.get('host') || 'unknown',
+    requestId: request.headers.get('x-railway-request-id') || undefined,
+  }
+
+  // Railway parses this as a structured error/warning that can be filtered by
+  // `@event:auth_refresh_failure`; Sentry receives the same signal when its DSN
+  // is enabled. Never include cookies or tokens in either channel.
+  console.error(JSON.stringify({
+    level,
+    message: 'Authentication session refresh failed',
+    ...details,
+  }))
+
+  if (Sentry.isInitialized()) {
+    Sentry.captureMessage('Authentication session refresh failed', {
+      level,
+      tags: {
+        event: details.event,
+        phase,
+        status: String(status),
+      },
+      extra: {
+        host: details.host,
+        requestId: details.requestId,
+        error: error instanceof Error ? error.message : undefined,
+      },
+    })
+  }
+}
 
 // Paths that return tokens in response body (relative to /api/v1/auth/)
 // `verify-email` auto-signs-in the user on successful email verification, so
@@ -47,14 +148,9 @@ const REFRESH_FAST_PATH_HEADROOM_MS = 2 * 60 * 1000
 
 function clearAuthCookies(response: NextResponse, request: NextRequest) {
   const isSecure = request.nextUrl.protocol === 'https:'
-  const domain = getCookieDomain(request)
   const securePart = isSecure ? '; Secure' : ''
 
-  if (domain) {
-    response.headers.append('Set-Cookie', `${ACCESS_TOKEN_COOKIE}=; Path=/; Domain=${domain}; Max-Age=0; HttpOnly; SameSite=Lax${securePart}`)
-    response.headers.append('Set-Cookie', `${REFRESH_TOKEN_COOKIE}=; Path=/; Domain=${domain}; Max-Age=0; HttpOnly; SameSite=Lax${securePart}`)
-    response.headers.append('Set-Cookie', `LH_session=; Path=/; Domain=${domain}; Max-Age=0; SameSite=Lax${securePart}`)
-  }
+  clearLegacyAuthCookies(response, request)
 
   response.headers.append('Set-Cookie', `${ACCESS_TOKEN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${securePart}`)
   response.headers.append('Set-Cookie', `${REFRESH_TOKEN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${securePart}`)
@@ -70,7 +166,7 @@ async function proxyRequest(
   const search = request.nextUrl.search
 
   // Map to backend URL: /api/auth/login -> /api/v1/auth/login
-  const backendUrl = `${BACKEND_URL}/api/v1/auth/${pathSegments}${search}`
+  const backendUrl = `${getBackendApiUrl()}/auth/${pathSegments}${search}`
 
   // Build headers
   const headers: HeadersInit = {}
@@ -97,9 +193,9 @@ async function proxyRequest(
     return NextResponse.json({ error: 'No refresh token' }, { status: 401 })
   }
 
-  // Fast-path: if the access token cookie is present and isn't about to
-  // expire, return it without round-tripping to the backend. Saves ~500ms+
-  // on every cold page load where the cookie is still valid.
+  // Fast-path: reuse an access token only after the backend validates it.
+  // Decoding `exp` alone is unsafe because password changes and logout revoke
+  // otherwise unexpired JWTs; trusting `exp` caused the production login loop.
   if (
     pathSegments === 'refresh'
     && method === 'GET'
@@ -107,16 +203,42 @@ async function proxyRequest(
   ) {
     const expiryMs = decodeJwtExpiryMs(accessToken.value)
     if (expiryMs && expiryMs - Date.now() > REFRESH_FAST_PATH_HEADROOM_MS) {
-      const response = NextResponse.json({
-        access_token: accessToken.value,
-        expiry: expiryMs,
-      })
-      response.cookies.set('LH_session', '1', {
-        ...getCookieOptions(request),
-        httpOnly: false,
-        maxAge: REFRESH_TOKEN_MAX_AGE,
-      })
-      return response
+      try {
+        const validationResponse = await fetch(`${getBackendApiUrl()}/users/session`, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${accessToken.value}` },
+          cache: 'no-store',
+        })
+        if (validationResponse.ok) {
+          const response = NextResponse.json({
+            access_token: accessToken.value,
+            expiry: expiryMs,
+          })
+          clearLegacyAuthCookies(response, request)
+          response.cookies.set('LH_session', '1', {
+            ...getCookieOptions(request),
+            httpOnly: false,
+            maxAge: REFRESH_TOKEN_MAX_AGE,
+          })
+          return response
+        }
+
+        if (validationResponse.status >= 500) {
+          reportRefreshFailure(request, validationResponse.status, 'validation')
+          return NextResponse.json(
+            { error: 'Session validation is temporarily unavailable' },
+            { status: 503 },
+          )
+        }
+        // A revoked access token can still have a valid refresh token. Fall
+        // through to rotation, which validates that refresh token.
+      } catch (error) {
+        reportRefreshFailure(request, 0, 'validation', error)
+        return NextResponse.json(
+          { error: 'Session validation is temporarily unavailable' },
+          { status: 503 },
+        )
+      }
     }
   }
 
@@ -129,7 +251,7 @@ async function proxyRequest(
       if (refreshToken?.value) {
         logoutHeaders['Cookie'] = `${REFRESH_TOKEN_COOKIE}=${refreshToken.value}`
       }
-      await fetch(`${BACKEND_URL}/api/v1/auth/logout`, {
+      await fetch(`${getBackendApiUrl()}/auth/logout`, {
         method: 'POST',
         headers: logoutHeaders,
         signal: AbortSignal.timeout(3000),
@@ -174,12 +296,33 @@ async function proxyRequest(
     }
   }
 
-  // Make the request to backend
-  const backendResponse = await fetch(backendUrl, {
-    method,
-    headers,
-    body,
-  })
+  // Coalesce near-simultaneous refreshes from multiple tabs/components. The
+  // backend uses one-time refresh tokens, so sending the same token twice can
+  // otherwise be mistaken for replay and revoke every session for the user.
+  let backendResponse: Response
+  try {
+    const makeRequest = () => fetch(backendUrl, {
+      method,
+      headers,
+      body,
+      cache: 'no-store',
+    })
+    backendResponse = pathSegments === 'refresh' && refreshToken?.value
+      ? await coalescedRefresh(refreshToken.value, makeRequest)
+      : await makeRequest()
+  } catch (error) {
+    if (pathSegments === 'refresh') {
+      reportRefreshFailure(request, 0, 'rotation', error)
+    }
+    return NextResponse.json(
+      { error: 'Authentication service is temporarily unavailable' },
+      { status: 503 },
+    )
+  }
+
+  if (pathSegments === 'refresh' && !backendResponse.ok) {
+    reportRefreshFailure(request, backendResponse.status, 'rotation')
+  }
 
   // Get response data
   const responseContentType = backendResponse.headers.get('content-type')
@@ -211,6 +354,10 @@ async function proxyRequest(
   // Extract and set auth cookies if this is a token-returning endpoint
   if (backendResponse.ok && shouldExtractTokens(pathSegments) && responseData) {
     const cookieOptions = getCookieOptions(request)
+
+    // Remove former parent-domain sessions before setting the canonical
+    // host-only cookies, preventing duplicate cookie names after the cutover.
+    clearLegacyAuthCookies(response, request)
 
     // Handle different response structures
     const tokens = responseData.tokens || responseData

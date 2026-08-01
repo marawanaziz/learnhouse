@@ -139,8 +139,12 @@ export const errorHandling = async (res: any) => {
     error.status = res.status
     error.detail = detail
     if (typeof window !== 'undefined' && res.status === 401) {
+      const isAdmin = window.location.pathname.startsWith('/admin')
+      const returnTo = `${window.location.pathname}${window.location.search}`
       dispatchAuthExpired({
-        callbackUrl: window.location.pathname.startsWith('/admin') ? '/admin/login' : '/login',
+        callbackUrl: isAdmin
+          ? '/admin/login'
+          : `/login?returnTo=${encodeURIComponent(returnTo)}`,
         reason: 'api_401',
       })
     }

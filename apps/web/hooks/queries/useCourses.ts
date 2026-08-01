@@ -17,14 +17,16 @@ export function useCourses(orgSlug: string) {
   })
 }
 
-export function useCourseMeta(courseUuid: string) {
+export function useCourseMeta(courseUuid: string, options?: { requireAuth?: boolean }) {
   const session = useLHSession() as any
   const accessToken = session?.data?.tokens?.access_token as string | undefined
+  const sessionReady = session?.status !== 'loading'
+  const authReady = !options?.requireAuth || session?.status === 'authenticated'
 
   return useQuery({
     queryKey: queryKeys.courses.meta(courseUuid),
     queryFn: () => getCourseMetadata(courseUuid, {}, accessToken, { slim: true }),
-    enabled: !!courseUuid,
+    enabled: !!courseUuid && sessionReady && authReady,
     staleTime: 60_000,
   })
 }

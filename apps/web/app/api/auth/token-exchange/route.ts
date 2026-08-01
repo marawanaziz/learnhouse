@@ -1,19 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getConfig } from '@services/config/config'
+import { getConfig, getServerAPIUrl } from '@services/config/config'
 import {
   ACCESS_TOKEN_COOKIE,
   REFRESH_TOKEN_COOKIE,
   ACCESS_TOKEN_MAX_AGE,
   REFRESH_TOKEN_MAX_AGE,
+  clearLegacyAuthCookies,
   getCookieOptions,
 } from '@services/auth/cookies'
 
-const BACKEND_URL = (getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') || 'http://localhost:1338').replace(/\/+$/, '')
 const PLATFORM_URL = (getConfig('NEXT_PUBLIC_LEARNHOUSE_PLATFORM_URL') || getConfig('LEARNHOUSE_PLATFORM_URL') || 'https://learnhouse.app').replace(/\/+$/, '')
 
 const MAX_CODE_LENGTH = 4096
 const PLATFORM_TIMEOUT_MS = 10_000
 const BACKEND_TIMEOUT_MS = 5_000
+
+function getBackendApiUrl(): string {
+  return getServerAPIUrl().replace(/\/+$/, '')
+}
 
 // Fetch with one retry on transient errors (network errors, 5xx). Creates a
 // FRESH timeout signal for each attempt — reusing the same signal would leave
@@ -23,7 +27,11 @@ async function fetchWithRetry(
   init: Omit<RequestInit, 'signal'>,
   timeoutMs: number,
 ): Promise<Response> {
-  const attempt = () => fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+  const attempt = () => fetch(url, {
+    ...init,
+    cache: 'no-store',
+    signal: AbortSignal.timeout(timeoutMs),
+  })
   try {
     const res = await attempt()
     if (res.status >= 500 && res.status < 600) {
@@ -158,7 +166,7 @@ export async function POST(request: NextRequest) {
     }
 
     let access_token: string = typeof payload.access_token === 'string' ? payload.access_token : ''
-    const refresh_token: string = typeof payload.refresh_token === 'string' ? payload.refresh_token : ''
+    let refresh_token: string = typeof payload.refresh_token === 'string' ? payload.refresh_token : ''
 
     if (!access_token && !refresh_token) {
       console.error('[token-exchange] step=decrypt no tokens in response')
@@ -173,7 +181,7 @@ export async function POST(request: NextRequest) {
     if (refresh_token) {
       try {
         const refreshRes = await fetchWithRetry(
-          `${BACKEND_URL}/api/v1/auth/refresh`,
+          `${getBackendApiUrl()}/auth/refresh`,
           {
             method: 'GET',
             headers: backendHeaders(request, {
@@ -184,19 +192,37 @@ export async function POST(request: NextRequest) {
         )
         if (refreshRes.ok) {
           const refreshData = await refreshRes.json().catch(() => null)
-          if (refreshData?.access_token && typeof refreshData.access_token === 'string') {
+          if (
+            refreshData?.access_token
+            && typeof refreshData.access_token === 'string'
+            && refreshData.refresh_token
+            && typeof refreshData.refresh_token === 'string'
+          ) {
             access_token = refreshData.access_token
+            // Refresh tokens are one-time-use. Persist the ROTATED token from
+            // this tenant, never the platform token that was just consumed.
+            refresh_token = refreshData.refresh_token
           } else {
-            console.error('[token-exchange] step=refresh response missing access_token')
+            console.error('[token-exchange] step=refresh response missing rotated tokens')
+            return NextResponse.json(
+              { error: 'Token exchange returned an incomplete session', code: 'refresh_incomplete' },
+              { status: 502 }
+            )
           }
         } else {
           const detail = await refreshRes.text().catch(() => '')
           console.error(`[token-exchange] step=refresh failed: ${refreshRes.status} ${detail}`)
-          // Non-fatal: we'll fall through to /session validation with the
-          // original access_token. If that's also invalid we bail there.
+          return NextResponse.json(
+            { error: 'This sign-in session is no longer valid', code: 'refresh_invalid' },
+            { status: 401 }
+          )
         }
       } catch (err) {
         console.error('[token-exchange] step=refresh errored:', err)
+        return NextResponse.json(
+          { error: 'Could not reach backend', code: 'backend_unreachable' },
+          { status: 502 }
+        )
       }
     }
 
@@ -213,7 +239,7 @@ export async function POST(request: NextRequest) {
     let sessionRes: Response
     try {
       sessionRes = await fetchWithRetry(
-        `${BACKEND_URL}/api/v1/users/session`,
+        `${getBackendApiUrl()}/users/session`,
         {
           headers: backendHeaders(request, {
             Authorization: `Bearer ${access_token}`,
@@ -264,6 +290,8 @@ export async function POST(request: NextRequest) {
 
     const cookieOptions = getCookieOptions(request)
     const response = NextResponse.json({ ok: true })
+
+    clearLegacyAuthCookies(response, request)
 
     response.cookies.set(ACCESS_TOKEN_COOKIE, access_token, {
       ...cookieOptions,

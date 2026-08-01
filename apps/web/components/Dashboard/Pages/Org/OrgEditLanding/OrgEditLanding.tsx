@@ -1626,4 +1626,4 @@ const FeaturedCoursesEditor: React.FC<{
   )
 }
 
-export default OrgEditLanding 
+export default OrgEditLanding

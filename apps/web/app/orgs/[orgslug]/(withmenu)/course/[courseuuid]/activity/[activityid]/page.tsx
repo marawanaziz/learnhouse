@@ -17,24 +17,44 @@ export async function generateMetadata(props: MetadataProps): Promise<Metadata> 
   const params = await props.params;
   const session = await getServerSession()
   const access_token = session?.tokens?.access_token || null
+  const isCourseEnd = params.activityid === 'end'
 
   const [org, course_meta, activity] = await Promise.all([
     getOrganizationContextInfo(params.orgslug, {
       revalidate: 120,
       tags: ['organizations'],
-    }),
-    getCourseMetadata(params.courseuuid, { revalidate: 120, tags: ['courses'] }, access_token || null, { slim: true }),
-    getActivityWithAuthHeader(
-      params.activityid,
-      { revalidate: 120, tags: ['activities'] },
-      access_token || null
-    ),
+    }).catch(() => null),
+    getCourseMetadata(
+      params.courseuuid,
+      { revalidate: 120, tags: ['courses'] },
+      access_token,
+      { slim: true }
+    ).catch(() => null),
+    isCourseEnd
+      ? Promise.resolve(null)
+      : getActivityWithAuthHeader(
+          params.activityid,
+          { revalidate: 120, tags: ['activities'] },
+          access_token
+        ).catch(() => null),
   ])
 
-  // Check if this is the course end page
-  const isCourseEnd = params.activityid === 'end';
+  // Metadata must never take down a protected learner page. During initial
+  // session restoration the browser can refresh its cookies, but an RSC
+  // metadata function cannot. Use a private, neutral fallback until the client
+  // session is ready instead of surfacing a 403 as "Something went wrong".
+  if (!org || !course_meta || (!isCourseEnd && !activity)) {
+    return {
+      title: `Course activity — ${org?.name || 'Birth & Baby University'}`,
+      description: 'Continue your course.',
+      robots: { index: false, follow: false, nocache: true },
+    }
+  }
+
   const seoConfig = getOrgSeoConfig(org)
-  const rawTitle = isCourseEnd ? `Congratulations — ${course_meta.name} Course` : `${activity.name} — ${course_meta.name} Course`
+  const rawTitle = isCourseEnd
+    ? `Congratulations — ${course_meta.name} Course`
+    : `${activity.name} — ${course_meta.name} Course`
   const pageTitle = seoConfig.default_meta_title_suffix ? `${rawTitle}${seoConfig.default_meta_title_suffix}` : rawTitle
 
   const orgOgImageUrl = seoConfig.default_og_image

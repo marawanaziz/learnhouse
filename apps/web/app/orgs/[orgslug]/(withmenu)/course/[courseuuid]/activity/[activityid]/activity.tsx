@@ -240,9 +240,26 @@ function ActivityClient(props: ActivityClientProps) {
   const courseuuid = props.courseuuid
   const orgslug = props.orgslug
   const org = useOrg() as any
+  const requiresAuth = orgslug === 'bbu'
+  const isCourseEnd = activityid === 'end'
 
-  const { data: course, isLoading: courseLoading } = useCourseMeta(courseuuid)
-  const { data: activity, isLoading: activityLoading } = useActivity(activityid)
+  const courseQuery = useCourseMeta(courseuuid, { requireAuth: requiresAuth })
+  const activityQuery = useActivity(activityid, {
+    requireAuth: requiresAuth,
+    enabled: !isCourseEnd,
+  })
+  const {
+    data: course,
+    isLoading: courseLoading,
+    error: courseError,
+    refetch: refetchCourse,
+  } = courseQuery
+  const {
+    data: activity,
+    isLoading: activityLoading,
+    error: activityError,
+    refetch: refetchActivity,
+  } = activityQuery
   const session = useLHSession() as any;
   const pathname = usePathname()
   const access_token = session?.data?.tokens?.access_token;
@@ -251,8 +268,42 @@ function ActivityClient(props: ActivityClientProps) {
   const [_markStatusButtonActive, setMarkStatusButtonActive] = React.useState(false);
   const [isFocusMode, setIsFocusMode] = React.useState(false);
   const isInitialRender = useRef(true);
+  const sessionRecoveryAttempted = useRef(false)
+  const [recoveringSession, setRecoveringSession] = React.useState(false)
   const { contributorStatus } = useContributorStatus(courseuuid);
   const router = useRouter();
+
+  // BBU course activities are private. If a refresh token is genuinely no
+  // longer valid, return the learner to sign-in with the exact lesson saved,
+  // rather than letting anonymous protected fetches become a generic error.
+  useEffect(() => {
+    if (!requiresAuth || session?.status !== 'unauthenticated') return
+    const loginUrl = `${getUriWithOrg(orgslug, '/login')}?returnTo=${encodeURIComponent(pathname || '/')}`
+    router.replace(loginUrl)
+  }, [orgslug, pathname, requiresAuth, router, session?.status])
+
+  // A request can race the final milliseconds of token rotation. Perform one
+  // coordinated session recovery and retry both protected resources. The
+  // fetch interceptor replaces stale Authorization headers on a 401.
+  useEffect(() => {
+    const queryError = courseError || activityError
+    if (
+      !queryError
+      || session?.status !== 'authenticated'
+      || sessionRecoveryAttempted.current
+    ) {
+      return
+    }
+
+    sessionRecoveryAttempted.current = true
+    setRecoveringSession(true)
+    session.update(true)
+      .then(() => Promise.all([
+        refetchCourse(),
+        isCourseEnd ? Promise.resolve(null) : refetchActivity(),
+      ]))
+      .finally(() => setRecoveringSession(false))
+  }, [activityError, courseError, isCourseEnd, refetchActivity, refetchCourse, session])
 
   const { track } = useLHAnalytics('learner')
   const activityStartTime = useRef(Date.now())
@@ -538,7 +589,64 @@ function ActivityClient(props: ActivityClientProps) {
   }
     , [activity, pathname, isFocusMode])
 
-  if (courseLoading || !course) {
+  const protectedQueryError = courseError || activityError
+  const protectedQueryStatus = Number((protectedQueryError as any)?.status || 0)
+
+  if (requiresAuth && session?.status === 'unauthenticated') {
+    return <LoadingFallback />
+  }
+
+  if (protectedQueryError && !recoveringSession) {
+    const retryRecovery = () => {
+      sessionRecoveryAttempted.current = false
+      setRecoveringSession(true)
+      session.update(true)
+        .then(() => Promise.all([
+          refetchCourse(),
+          isCourseEnd ? Promise.resolve(null) : refetchActivity(),
+        ]))
+        .finally(() => setRecoveringSession(false))
+    }
+
+    return (
+      <GeneralWrapperStyled>
+        <div className="max-w-xl mx-auto my-16 bg-white rounded-2xl border border-gray-200/80 shadow-sm p-8 text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-4">
+            <RotateCcw className="text-gray-600" size={22} />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">
+            {protectedQueryStatus === 403
+              ? 'Course access needs attention'
+              : 'Your course is reconnecting'}
+          </h1>
+          <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+            {protectedQueryStatus === 403
+              ? 'Your progress is safe. Please confirm this course is assigned to your account.'
+              : 'Your progress is safe. Continue to restore this lesson.'}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            {protectedQueryStatus !== 403 && (
+              <button
+                type="button"
+                onClick={retryRecovery}
+                className="inline-flex items-center justify-center px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors"
+              >
+                Continue
+              </button>
+            )}
+            <Link
+              href={getUriWithOrg(orgslug, '') + `/course/${courseuuid}`}
+              className="inline-flex items-center justify-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors"
+            >
+              Back to course
+            </Link>
+          </div>
+        </div>
+      </GeneralWrapperStyled>
+    )
+  }
+
+  if (courseLoading || recoveringSession || !course) {
     return (
       <GeneralWrapperStyled>
         <div className="animate-pulse pt-6 space-y-5">

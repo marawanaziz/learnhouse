@@ -28,7 +28,9 @@ function isAuthRoute(url: string): boolean {
 
 function getLoginCallbackUrl(): string {
   if (typeof window === 'undefined') return '/login'
-  return window.location.pathname.startsWith('/admin') ? '/admin/login' : '/login'
+  if (window.location.pathname.startsWith('/admin')) return '/admin/login'
+  const returnTo = `${window.location.pathname}${window.location.search}`
+  return `/login?returnTo=${encodeURIComponent(returnTo)}`
 }
 
 export default function AuthFetchInterceptor() {

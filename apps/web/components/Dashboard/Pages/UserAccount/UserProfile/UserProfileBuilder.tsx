@@ -1359,4 +1359,4 @@ const CoursesEditor: React.FC<{
   )
 }
 
-export default UserProfileBuilder 
+export default UserProfileBuilder

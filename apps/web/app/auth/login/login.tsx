@@ -141,8 +141,15 @@ const LoginClient = (props: LoginClientProps) => {
 
       track(AnalyticsEvent.LoginSubmitted, { has_sso_enabled: ssoEnabled })
 
-      // Use absolute URL with current origin for custom domain support
-      const callbackUrl = `${window.location.origin}/redirect_from_auth`;
+      // Preserve the exact protected lesson after an automatic session
+      // recovery, while rejecting external/open-redirect destinations.
+      const requestedReturnTo = new URLSearchParams(window.location.search).get('returnTo')
+      const safeReturnTo = requestedReturnTo
+        && requestedReturnTo.startsWith('/')
+        && !requestedReturnTo.startsWith('//')
+          ? requestedReturnTo
+          : '/redirect_from_auth'
+      const callbackUrl = `${window.location.origin}${safeReturnTo}`;
 
       const res = await signIn('credentials', {
         redirect: false,
