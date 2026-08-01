@@ -214,12 +214,15 @@ async function proxyRequest(
             access_token: accessToken.value,
             expiry: expiryMs,
           })
-          clearLegacyAuthCookies(response, request)
           response.cookies.set('LH_session', '1', {
             ...getCookieOptions(request),
             httpOnly: false,
             maxAge: REFRESH_TOKEN_MAX_AGE,
           })
+          // Append legacy-domain expirations after setting the canonical
+          // host-only marker; NextResponse's cookie manager otherwise
+          // replaces raw Set-Cookie entries with the same names.
+          clearLegacyAuthCookies(response, request)
           return response
         }
 
@@ -355,10 +358,6 @@ async function proxyRequest(
   if (backendResponse.ok && shouldExtractTokens(pathSegments) && responseData) {
     const cookieOptions = getCookieOptions(request)
 
-    // Remove former parent-domain sessions before setting the canonical
-    // host-only cookies, preventing duplicate cookie names after the cutover.
-    clearLegacyAuthCookies(response, request)
-
     // Handle different response structures
     const tokens = responseData.tokens || responseData
 
@@ -385,6 +384,11 @@ async function proxyRequest(
         maxAge: REFRESH_TOKEN_MAX_AGE,
       })
     }
+
+    // Remove former parent-domain sessions after setting canonical host-only
+    // cookies. Appending last preserves both domain-scoped expirations and the
+    // new cookies in NextResponse's final Set-Cookie header.
+    clearLegacyAuthCookies(response, request)
   }
 
   return response

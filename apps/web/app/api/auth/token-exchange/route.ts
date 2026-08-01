@@ -291,8 +291,6 @@ export async function POST(request: NextRequest) {
     const cookieOptions = getCookieOptions(request)
     const response = NextResponse.json({ ok: true })
 
-    clearLegacyAuthCookies(response, request)
-
     response.cookies.set(ACCESS_TOKEN_COOKIE, access_token, {
       ...cookieOptions,
       maxAge: ACCESS_TOKEN_MAX_AGE,
@@ -306,6 +304,7 @@ export async function POST(request: NextRequest) {
       httpOnly: false,
       maxAge: REFRESH_TOKEN_MAX_AGE,
     })
+    clearLegacyAuthCookies(response, request)
 
     return response
   } catch (err) {
