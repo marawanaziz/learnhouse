@@ -277,10 +277,10 @@ async def refresh(
             raise credentials_exception
 
     new_access_token = create_access_token(
-        data={"sub": email},
+        data={"sub": user.email},
         expires_delta=JWT_ACCESS_TOKEN_EXPIRES,
     )
-    new_refresh_token = create_refresh_token(data={"sub": email})
+    new_refresh_token = create_refresh_token(data={"sub": user.email})
 
     cookie_domain = get_cookie_domain_for_request(request)
     is_secure = is_request_secure(request)
@@ -415,10 +415,10 @@ async def login(
 
     # Step 6: Issue tokens
     access_token = create_access_token(
-        data={"sub": username},
+        data={"sub": user.email},
         expires_delta=JWT_ACCESS_TOKEN_EXPIRES
     )
-    refresh_token = create_refresh_token(data={"sub": username})
+    refresh_token = create_refresh_token(data={"sub": user.email})
 
     set_auth_cookies(response, access_token, refresh_token, request)
 

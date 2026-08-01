@@ -33,6 +33,7 @@ from src.bbu_credentials.models import (
 )
 from src.bbu_credentials import service as svc
 from src.bbu_credentials import applications as app_svc
+from src.services.users.identity import get_canonical_user_by_email
 
 router = APIRouter()
 ADMIN_KEY = os.environ.get("BBU_MIGRATION_KEY") or os.environ.get("BBU_AFFILIATE_ADMIN_KEY", "")
@@ -52,8 +53,7 @@ def _now() -> str:
 
 
 async def _user_by_email(db: AsyncSession, email: str) -> User:
-    u = (await db.execute(select(User).where(
-        User.email == (email or "").strip().lower()))).scalars().first()
+    u = await get_canonical_user_by_email(db, email)
     if not u:
         raise HTTPException(404, "User not found")
     return u
@@ -916,6 +916,7 @@ ACCREDIBLE_CEU_GROUPS = {
     "Newborn Care for Perinatal Professionals": 3,
     "Comfort Measures for Perinatal Professionals": 3,
 }
+ACCREDIBLE_PLACEHOLDER_EMAILS = {"john.doe@example.com"}
 
 
 @router.post("/import-accredible")
@@ -924,22 +925,29 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
     their TRUE issue/expiry dates (the platform's own clock would otherwise restart
     everyone). Body: {items:[{email,name,group_name,issued_on,expired_on}], dry_run?}.
 
-    Per person+type we keep the strongest record (full beats provisional) and use
-    its real dates; 'for Perinatal Professionals' rows become CEU ledger entries.
-    Idempotent: re-running updates in place and never double-counts CEUs."""
+    Per person+type the latest issuance is current, while every professional
+    credential remains in immutable history. 'For Perinatal Professionals' rows
+    become CEU ledger entries. Idempotent: re-running never duplicates history or
+    CEUs and never replaces newer native/manual credential state with older data.
+    """
     b = await request.json()
     _check(request)
     org_id = int(b.get("org_id", 1))
     dry = bool(b.get("dry_run", True))
     items = b.get("items") or []
 
-    # 1) collapse to the strongest credential per (email, credential_type)
+    # 1) collapse to the latest current credential per (email, credential_type)
     best: dict = {}
+    credential_rows = []
+    quarantined_placeholders = 0
     ceu_rows, skipped_groups = [], {}
     for it in items:
         email = (it.get("email") or "").strip().lower()
         grp = (it.get("group_name") or "").strip()
         if not email:
+            continue
+        if email in ACCREDIBLE_PLACEHOLDER_EMAILS:
+            quarantined_placeholders += 1
             continue
         if grp in ACCREDIBLE_CEU_GROUPS:
             ceu_rows.append((email, grp, it))
@@ -949,19 +957,25 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
             skipped_groups[grp] = skipped_groups.get(grp, 0) + 1
             continue
         ctype, tier = mapped
+        credential_rows.append((email, ctype, tier, it))
         key = (email, ctype)
         cur = best.get(key)
-        # full outranks provisional; within a tier keep the most recently issued
-        rank = 1 if tier == "full" else 0
-        if not cur or rank > cur["rank"] or (rank == cur["rank"] and
-                                             (it.get("issued_on") or "") > (cur["it"].get("issued_on") or "")):
-            best[key] = {"rank": rank, "tier": tier, "ctype": ctype, "it": it}
+        # The latest issuance is current. Level and expiration break ties; all
+        # older rows are still retained below in immutable issuance history.
+        score = (
+            it.get("issued_on") or "",
+            1 if tier == "full" else 0,
+            it.get("expired_on") or "",
+        )
+        if not cur or score > cur["score"]:
+            best[key] = {"score": score, "tier": tier, "ctype": ctype, "it": it}
 
-    created = updated = unmatched = ceu_awarded = 0
+    created = updated = current_preserved = unmatched = ceu_awarded = 0
+    issuance_created = issuance_existing = issuance_unmatched = 0
     imported_credentials: list[BBUCredential] = []
     unmatched_emails = []
     for (email, ctype), rec in best.items():
-        user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+        user = await get_canonical_user_by_email(db_session, email)
         if not user:
             unmatched += 1
             if len(unmatched_emails) < 25:
@@ -978,6 +992,19 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
             cred = BBUCredential(org_id=org_id, user_id=user.id, credential_type=ctype)
             created += 1
         else:
+            existing_score = (
+                cred.issued_at or cred.full_effective_at or "",
+                1 if cred.status == "full" else 0,
+                cred.full_expires_at or cred.provisional_expires_at or "",
+            )
+            candidate_score = (
+                issued,
+                1 if tier == "full" else 0,
+                expires,
+            )
+            if existing_score > candidate_score:
+                current_preserved += 1
+                continue
             updated += 1
         cred.issued_at = issued
         cred.source = "accredible"
@@ -996,9 +1023,54 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
         db_session.add(cred)
         imported_credentials.append(cred)
 
+    # Preserve every Accredible professional credential as an immutable
+    # issuance. The current-state table above intentionally collapses records
+    # per person/type, but the certificate history must remain one-for-one
+    # with the source export. ``source_ref`` makes this idempotent.
+    for email, ctype, tier, it in credential_rows:
+        user = await get_canonical_user_by_email(db_session, email)
+        if not user:
+            issuance_unmatched += 1
+            continue
+        if dry:
+            continue
+        source_ref = str(it.get("id") or "").strip()
+        existing = None
+        if source_ref:
+            existing = (
+                await db_session.execute(
+                    select(BBUCredentialIssuance).where(
+                        BBUCredentialIssuance.org_id == org_id,
+                        BBUCredentialIssuance.user_id == user.id,
+                        BBUCredentialIssuance.credential_type == ctype,
+                        BBUCredentialIssuance.source == "accredible",
+                        BBUCredentialIssuance.source_ref == source_ref,
+                    )
+                )
+            ).scalars().first()
+        if existing:
+            issuance_existing += 1
+            continue
+        await app_svc.create_issuance(
+            db_session,
+            org_id=org_id,
+            user_id=user.id or 0,
+            credential_type=ctype,
+            credential_level=(
+                "three_year_full" if tier == "full" else "one_year_provisional"
+            ),
+            effective_at=it.get("issued_on"),
+            expires_at=it.get("expired_on"),
+            source="accredible",
+            source_ref=source_ref,
+            directory_opt_in=True,
+            commit=False,
+        )
+        issuance_created += 1
+
     # 2) CEU-bearing professional courses -> ledger (idempotent per accredible id)
     for email, grp, it in ceu_rows:
-        user = (await db_session.execute(select(User).where(User.email == email))).scalars().first()
+        user = await get_canonical_user_by_email(db_session, email)
         if not user:
             continue
         if dry:
@@ -1015,7 +1087,13 @@ async def import_accredible(request: Request, db_session: AsyncSession = Depends
     return {"dry_run": dry, "input_rows": len(items),
             "people_with_credentials": len(best),
             "created": created, "updated": updated,
+            "current_preserved": current_preserved,
             "unmatched_users": unmatched, "unmatched_sample": unmatched_emails,
+            "credential_history_rows": len(credential_rows),
+            "issuance_created": issuance_created,
+            "issuance_existing": issuance_existing,
+            "issuance_unmatched": issuance_unmatched,
+            "quarantined_placeholders": quarantined_placeholders,
             "ceu_rows": len(ceu_rows), "ceu_awarded": ceu_awarded,
             "skipped_groups": skipped_groups}
 

@@ -48,6 +48,7 @@ from src.services.users.emails import (
     send_account_creation_email,
 )
 from src.services.users.usergroups import add_users_to_usergroup
+from src.services.users.identity import get_canonical_user_by_email
 from src.services.webhooks.dispatch import dispatch_webhooks
 
 
@@ -803,9 +804,11 @@ async def security_get_user(request: Request, db_session: AsyncSession, email: s
     to allow the caller to handle the "user not found" case appropriately
     and prevent email enumeration vulnerabilities.
     """
-    # Check if user exists
-    statement = select(User).where(User.email == email)
-    user = (await db_session.execute(statement)).scalars().first()
+    # Exact historical emails remain as login aliases after account
+    # reconciliation. Resolve them to the canonical learner before issuing or
+    # refreshing a session so courses, credentials, and communities cannot be
+    # split across identities again.
+    user = await get_canonical_user_by_email(db_session, email)
 
     if not user:
         return None

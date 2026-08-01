@@ -4,6 +4,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.core.events.database import get_db_session
 from src.db.users import AnonymousUser, APITokenUser, PublicUser, SuperadminAPITokenUser, User, UserRead
 from src.services.users.users import security_get_user
+from src.services.users.identity import get_raw_user_by_email
 from config.config import get_learnhouse_config
 from pydantic import BaseModel
 from fastapi import Depends, HTTPException, Request, status
@@ -122,8 +123,8 @@ async def authenticate_user(
     password: str,
     db_session: AsyncSession,
 ) -> User | bool:
-    user = await security_get_user(request, db_session, email)
-    if not user:
+    canonical_user = await security_get_user(request, db_session, email)
+    if not canonical_user:
         # SECURITY: run a real password-verify against a dummy hash so
         # unknown-user responses take roughly the same time as known-user
         # wrong-password responses. Without this, an attacker can enumerate
@@ -131,9 +132,24 @@ async def authenticate_user(
         # it is fast).
         security_verify_password(password, _DUMMY_PASSWORD_HASH)
         return False
-    if not security_verify_password(password, user.password):
+    normalized_email = (email or "").strip().lower()
+    raw_user = canonical_user
+    if canonical_user.email.strip().lower() != normalized_email:
+        raw_user = await get_raw_user_by_email(db_session, normalized_email)
+        if raw_user is None:
+            return False
+    # Preserve both paths during consolidation: an alternate historical email
+    # may still have its old password, while a reset requested through that
+    # alias updates the canonical password. Either valid secret authenticates
+    # into the one canonical learner account.
+    raw_matches = security_verify_password(password, raw_user.password)
+    canonical_matches = bool(
+        canonical_user.id != raw_user.id
+        and security_verify_password(password, canonical_user.password)
+    )
+    if not raw_matches and not canonical_matches:
         return False
-    return user
+    return canonical_user or raw_user
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):

@@ -25,6 +25,7 @@ from src.db.users import (
     UserRead,
 )
 from src.services.security.password_validation import validate_password_complexity
+from src.services.users.identity import resolve_canonical_user
 
 
 def _get_redis_connection():
@@ -115,6 +116,10 @@ async def send_reset_password_code(
         # Return same message as success to prevent enumeration
         return "If an account with that email exists, a reset code has been sent"
 
+    user = await resolve_canonical_user(db_session, user)
+    if not user:
+        return "If an account with that email exists, a reset code has been sent"
+
     # Redis init
     LH_CONFIG = get_learnhouse_config()
     redis_conn_string = LH_CONFIG.redis_config.redis_connection_string
@@ -168,7 +173,7 @@ async def send_reset_password_code(
         generated_reset_code=generated_reset_code,
         user=user_read,
         organization=org_read,
-        email=user_read.email,
+        email=str(email),
         base_url=base_url,
         lang=get_org_default_language(org_config),
     )
@@ -235,6 +240,10 @@ async def change_password_with_reset_code(
             status_code=400,
             detail="Invalid reset code or email",
         )
+
+    user = await resolve_canonical_user(db_session, user)
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset code or email")
 
     # Redis init
     LH_CONFIG = get_learnhouse_config()
@@ -323,6 +332,10 @@ async def send_reset_password_code_platform(
         logging.info(f"Password reset requested for non-existent email: {email[:3]}***")
         return "If an account with that email exists, a reset code has been sent"
 
+    user = await resolve_canonical_user(db_session, user)
+    if not user:
+        return "If an account with that email exists, a reset code has been sent"
+
     r = _get_redis_connection()
 
     generated_reset_code = generate_secure_reset_code(length=8)
@@ -350,7 +363,7 @@ async def send_reset_password_code_platform(
     isEmailSent = send_password_reset_email_platform(
         generated_reset_code=generated_reset_code,
         user=user_read,
-        email=user_read.email,
+        email=str(email),
         base_url=base_url,
     )
 
@@ -402,6 +415,10 @@ async def change_password_with_reset_code_platform(
             status_code=400,
             detail="Invalid reset code or email",
         )
+
+    user = await resolve_canonical_user(db_session, user)
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset code or email")
 
     r = _get_redis_connection()
 
