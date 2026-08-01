@@ -2001,7 +2001,7 @@ function createCoupon(){{
 }}
 function toggleCoupon(id){{j('/coupons/'+id+'/toggle',{{method:'POST'}}).then(loadCoupons)}}
 // Cohorts
-let curCohort=null, COHORTS=[];
+let curCohort=null;
 function progDefaults(){{
   // sensible default access window per program (editable)
   const el=document.getElementById('co-access');
@@ -2097,11 +2097,11 @@ function cohortAct(action){{
     if(rosterResult(r,'Member enrolled.'))document.getElementById('co-email').value='';}});
 }}
 function cohortMemberAct(action,userId){{
-  if(action==='remove'&&!confirm('Remove this member and revoke this cohort\'s access?'))return;
+  if(action==='remove'&&!confirm('Remove this member and revoke this cohort\\'s access?'))return;
   j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:action,user_id:userId}})}}).then(r=>rosterResult(r,action==='complete'?'Member marked complete.':'Member removed.'));
 }}
 function editCohortEmail(userId,current){{
-  const next=prompt('Correct this member\'s login email:',current);
+  const next=prompt('Correct this member\\'s login email:',current);
   if(next===null||next.trim()===current)return;
   j('/cohorts/'+curCohort+'/action',{{method:'POST',body:JSON.stringify({{action:'edit_email',user_id:userId,new_email:next.trim()}})}}).then(r=>rosterResult(r,'Email updated.'));
 }}
