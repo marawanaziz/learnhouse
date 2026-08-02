@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query/keys';
 import { applyManualGrade } from './applyManualGrade';
 import { registerAssignmentDraftSave } from '@/lib/assignments/draftSaveRegistry';
+import { allowsMultipleAnswers, updateQuizSelection } from '@/lib/assignments/quizSelection';
 
 type QuizSchema = {
     questionText: string;
@@ -167,7 +168,6 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
 
     async function chooseOption(qIndex: number, oIndex: number) {
         const currentUserSubmissions = userSubmissionsRef.current;
-        const updatedSubmissions = [...currentUserSubmissions.submissions];
         const question = questionsRef.current[qIndex];
         const option = question?.options[oIndex];
 
@@ -178,15 +178,11 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
 
         if (!questionUUID || !optionUUID) return;
 
-        const submissionIndex = updatedSubmissions.findIndex(
-            (submission) => submission.questionUUID === questionUUID && submission.optionUUID === optionUUID
+        const updatedSubmissions = updateQuizSelection(
+            currentUserSubmissions.submissions,
+            question,
+            optionUUID
         );
-
-        if (submissionIndex === -1) {
-            updatedSubmissions.push({ questionUUID, optionUUID, answer: true });
-        } else {
-            updatedSubmissions[submissionIndex].answer = !updatedSubmissions[submissionIndex].answer;
-        }
 
         const nextUserSubmissions = {
             ...currentUserSubmissions,
@@ -508,14 +504,44 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
                                     </div>
                                 )}
                             </div>
-                            <div className="flex flex-col space-y-2">
-                                {question.options.map((option, oIndex) => (
+                            <div
+                                className="flex flex-col space-y-2"
+                                role={view === 'student' && !allowsMultipleAnswers(question) ? 'radiogroup' : undefined}
+                                aria-label={view === 'student' ? question.questionText : undefined}
+                            >
+                                {question.options.map((option, oIndex) => {
+                                    const isSelected = !!userSubmissions.submissions.find(
+                                        (submission) =>
+                                            submission.questionUUID === question.questionUUID &&
+                                            submission.optionUUID === option.optionUUID &&
+                                            submission.answer
+                                    );
+                                    const isMultiSelect = allowsMultipleAnswers(question);
+                                    const isInteractive = view === 'student' && !submissionIsGraded;
+
+                                    return (
                                     <div className="flex" key={oIndex}>
                                         <div
-                                            onClick={() => view === 'student' && !submissionIsGraded && chooseOption(qIndex, oIndex)}
-                                            className={"answer outline outline-3 outline-white pr-2 shadow-sm w-full flex items-center space-x-2 h-[30px] hover:bg-opacity-100 hover:shadow-md rounded-lg bg-white text-sm duration-150 ease-linear nice-shadow " + (view == 'student' && !submissionIsGraded ? 'cursor-pointer active:scale-110' : '')}
+                                            onClick={() => isInteractive && chooseOption(qIndex, oIndex)}
+                                            onKeyDown={(event) => {
+                                                if (isInteractive && (event.key === 'Enter' || event.key === ' ')) {
+                                                    event.preventDefault();
+                                                    chooseOption(qIndex, oIndex);
+                                                }
+                                            }}
+                                            role={view === 'student' ? (isMultiSelect ? 'checkbox' : 'radio') : undefined}
+                                            aria-checked={view === 'student' ? isSelected : undefined}
+                                            aria-disabled={view === 'student' ? submissionIsGraded : undefined}
+                                            tabIndex={isInteractive ? 0 : undefined}
+                                            className={`answer border-2 pr-2 shadow-sm w-full flex items-center space-x-2 min-h-[42px] hover:shadow-md rounded-lg text-sm duration-150 ease-linear nice-shadow ${
+                                                isSelected
+                                                    ? 'border-[#113d5d] bg-[#eef6fa] text-[#113d5d]'
+                                                    : 'border-transparent bg-white text-neutral-600'
+                                            } ${isInteractive ? 'cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#113d5d] focus-visible:ring-offset-2' : ''}`}
                                         >
-                                            <div className="font-bold text-base flex items-center h-full w-[40px] rounded-l-md text-slate-800 bg-slate-100/80">
+                                            <div className={`font-bold text-base flex items-center self-stretch w-[40px] rounded-l-md ${
+                                                isSelected ? 'text-white bg-[#113d5d]' : 'text-slate-800 bg-slate-100/80'
+                                            }`}>
                                                 <p className="mx-auto font-bold text-sm">{String.fromCharCode(65 + oIndex)}</p>
                                             </div>
                                             {view === 'teacher' ? (
@@ -527,7 +553,9 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
                                                     className="w-full mx-2 px-3 pr-6 text-neutral-600 bg-[#00008b00] border-2 border-gray-200 rounded-md border-dotted text-sm font-bold"
                                                 />
                                             ) : (
-                                                <p className="w-full mx-2 px-3 pr-6 text-neutral-600 bg-[#00008b00] text-sm font-bold">
+                                                <p className={`w-full mx-2 px-3 pr-6 bg-[#00008b00] text-sm font-bold ${
+                                                    isSelected ? 'text-[#113d5d]' : 'text-neutral-600'
+                                                }`}>
                                                     {option.text}
                                                 </p>
                                             )}
@@ -585,27 +613,19 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
                                             )}
                                             {view === 'student' && (
                                                 <div
-                                                    className={`w-[20px] flex-none flex items-center h-[20px] rounded-lg ${
-                                                        userSubmissions.submissions.find(
-                                                            (submission) =>
-                                                                submission.questionUUID === question.questionUUID &&
-                                                                submission.optionUUID === option.optionUUID &&
-                                                                submission.answer
-                                                        )
-                                                            ? "bg-green-200/60 text-green-500 hover:bg-green-300"
-                                                            : "bg-slate-200/60 text-slate-500 hover:bg-slate-300"
-                                                    } text-sm transition-all ease-linear ${submissionIsGraded ? '' : 'cursor-pointer'}`}
-                                                    onClick={() => !submissionIsGraded && chooseOption(qIndex, oIndex)}
+                                                    aria-hidden="true"
+                                                    className={`w-[22px] flex-none flex items-center h-[22px] ${
+                                                        isMultiSelect ? 'rounded-md' : 'rounded-full'
+                                                    } border-2 ${
+                                                        isSelected
+                                                            ? 'bg-[#113d5d] border-[#113d5d] text-white'
+                                                            : 'bg-white border-slate-300 text-transparent'
+                                                    } text-sm transition-all ease-linear`}
                                                 >
-                                                    {userSubmissions.submissions.find(
-                                                        (submission) =>
-                                                            submission.questionUUID === question.questionUUID &&
-                                                            submission.optionUUID === option.optionUUID &&
-                                                            submission.answer
-                                                    ) ? (
+                                                    {isSelected ? (
                                                         <Check size={12} className="mx-auto" />
                                                     ) : (
-                                                        <X size={12} className="mx-auto" />
+                                                        <span className="mx-auto w-2 h-2" />
                                                     )}
                                                 </div>
                                             )}
@@ -649,7 +669,8 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
                                             </div>
                                         )}
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}

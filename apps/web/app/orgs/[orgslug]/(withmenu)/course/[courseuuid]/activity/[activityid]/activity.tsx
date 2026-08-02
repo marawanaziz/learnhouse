@@ -1709,6 +1709,7 @@ function AssignmentTools(props: {
   assignment: any
 }) {
   const { t } = useTranslation();
+  const router = useRouter();
   const submission = useAssignmentSubmission() as any
   const session = useLHSession() as any;
   const org = useOrg() as any;
@@ -1720,6 +1721,24 @@ function AssignmentTools(props: {
   // Ensures the auto-open-on-mount logic only fires once per page view,
   // so the modal doesn't pop back open every time gradeData refreshes.
   const hasAutoOpenedRef = React.useRef(false);
+  const { allActivities, currentIndex } = useActivityPosition(props.course, props.activityid);
+  const nextActivity = currentIndex >= 0 && currentIndex < allActivities.length - 1
+    ? allActivities[currentIndex + 1]
+    : null;
+
+  const continueAfterPass = () => {
+    const cleanCourseUuid = props.course?.course_uuid?.replace('course_', '');
+    if (!cleanCourseUuid) {
+      setIsGradeModalOpen(false);
+      return;
+    }
+
+    setIsGradeModalOpen(false);
+    const destination = nextActivity
+      ? `/course/${cleanCourseUuid}/activity/${nextActivity.cleanUuid}`
+      : `/course/${cleanCourseUuid}/activity/end`;
+    router.push(getUriWithOrg(props.orgslug, '') + destination);
+  };
 
   const submitForGradingUI = async () => {
     if (props.assignment && !isSubmitting) {
@@ -2001,6 +2020,17 @@ function AssignmentTools(props: {
 
               {/* Body */}
               <div className="px-6 pt-5 pb-6 space-y-5">
+                {isPassing && (
+                  <button
+                    type="button"
+                    onClick={continueAfterPass}
+                    className="w-full inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-[#113d5d] hover:bg-[#0d3350] text-white text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#113d5d] focus-visible:ring-offset-2"
+                  >
+                    <span>Continue</span>
+                    <ChevronRight size={17} />
+                  </button>
+                )}
+
                 {tasks && tasks.length > 0 && (
                   <div className="space-y-2.5">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
@@ -2065,7 +2095,7 @@ function AssignmentTools(props: {
                   </p>
                 )}
 
-                {allowRetries && (
+                {allowRetries && !isPassing && (
                   <div className="pt-2">
                     {canRetry ? (
                       <div className="rounded-xl border border-fuchsia-100 bg-gradient-to-br from-fuchsia-50 via-pink-50 to-rose-50 p-4">
@@ -2133,6 +2163,28 @@ function AssignmentTools(props: {
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {allowRetries && isPassing && canRetry && (
+                  <div className="pt-1 text-center">
+                    <ConfirmationModal
+                      confirmationButtonText={t('assignments.retry_assignment')}
+                      confirmationMessage={t('assignments.retry_assignment_confirm')}
+                      dialogTitle={t('assignments.retry_assignment_title')}
+                      dialogTrigger={
+                        <button
+                          type="button"
+                          disabled={isRetrying}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                        >
+                          <RotateCcw size={13} />
+                          <span>Retake quiz</span>
+                        </button>
+                      }
+                      functionToExecute={retrySubmissionUI}
+                      status="warning"
+                    />
                   </div>
                 )}
               </div>
