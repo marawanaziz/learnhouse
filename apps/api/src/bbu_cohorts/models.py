@@ -6,7 +6,7 @@ mechanism course-gating uses — so cohort membership unlocks the cohort's cours
 and nothing else. Completing a cohort feeds the credentials engine (bbu_credentials).
 """
 from typing import Optional
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -73,3 +73,29 @@ class BBUCohortMember(SQLModel, table=True):
     status: str = Field(default="active", sa_column=Column(String(16)))
     joined_at: str = Field(default="", sa_column=Column(String(40)))
     completed_at: str = Field(default="", sa_column=Column(String(40)))
+
+
+class BBUCohortNotification(SQLModel, table=True):
+    """Durable delivery ledger for participant cohort emails."""
+
+    __tablename__ = "bbu_cohort_notification"
+    __table_args__ = (
+        UniqueConstraint(
+            "cohort_id", "user_id", "event",
+            name="uq_bbu_cohort_notification_event",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    cohort_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    user_id: int = Field(sa_column=Column(Integer, nullable=False, index=True))
+    event: str = Field(sa_column=Column(String(24), nullable=False))
+    status: str = Field(default="sending", sa_column=Column(String(16), nullable=False))
+    scheduled_for: str = Field(default="", sa_column=Column(String(40)))
+    attempts: int = Field(default=0)
+    last_attempt_at: str = Field(default="", sa_column=Column(String(40)))
+    sent_at: str = Field(default="", sa_column=Column(String(40)))
+    provider_message_id: str = Field(default="", sa_column=Column(String(160)))
+    error: str = Field(default="", sa_column=Column(Text))

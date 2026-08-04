@@ -155,6 +155,19 @@ async def my_workbook(request: Request, course_uuid: str = "",
     return {}
 
 
+@router.post("/run-notifications")
+async def run_notifications(
+    request: Request,
+    org_id: int = 1,
+    dry_run: bool = True,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Preview or run the idempotent mentorship participant email job."""
+    _check(request)
+    from src.bbu_cohorts import notifications
+    return await notifications.run_due(db_session, org_id=org_id, dry=dry_run)
+
+
 @router.get("/{cohort_id}")
 async def get_cohort(cohort_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
     _check(request)

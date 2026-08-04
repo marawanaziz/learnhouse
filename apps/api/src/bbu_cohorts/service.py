@@ -123,6 +123,48 @@ async def _remove_from_group(db: AsyncSession, usergroup_id: int, user_id: int):
         await db.commit()
 
 
+async def reconcile_access_group(db: AsyncSession, cohort: BBUCohort) -> dict:
+    """Make the dedicated cohort group match the official active roster.
+
+    Other groups are untouched, so removing a stray cohort-group membership
+    never removes a learner's generic mentorship-community access.
+    """
+    await ensure_usergroup(db, cohort)
+    official_ids = set((await db.execute(select(BBUCohortMember.user_id).where(
+        BBUCohortMember.cohort_id == cohort.id,
+        BBUCohortMember.status.in_(("active", "completed")),
+    ))).scalars().all())
+    current_rows = (await db.execute(select(UserGroupUser).where(
+        UserGroupUser.usergroup_id == cohort.usergroup_id,
+    ))).scalars().all()
+    current_ids = {row.user_id for row in current_rows}
+
+    added = 0
+    for user_id in sorted(official_ids - current_ids):
+        db.add(UserGroupUser(
+            usergroup_id=cohort.usergroup_id or 0,
+            user_id=user_id,
+            org_id=cohort.org_id,
+            creation_date=_now(),
+            update_date=_now(),
+        ))
+        added += 1
+
+    removed = 0
+    for row in current_rows:
+        if row.user_id not in official_ids:
+            await db.delete(row)
+            removed += 1
+    if added or removed:
+        await db.commit()
+    return {
+        "cohort_id": cohort.id,
+        "official": len(official_ids),
+        "added": added,
+        "removed": removed,
+    }
+
+
 async def active_count(db: AsyncSession, cohort_id: int) -> int:
     rows = (await db.execute(select(BBUCohortMember).where(
         BBUCohortMember.cohort_id == cohort_id,
@@ -158,6 +200,16 @@ async def enroll(db: AsyncSession, cohort: BBUCohort, user_id: int) -> dict:
     if target == "active":
         await _add_to_group(db, cohort.usergroup_id, cohort.org_id, user_id)
         await _zoom_register(db, cohort, user_id)
+        try:
+            from src.bbu_cohorts import notifications
+            await notifications.send_event(db, cohort, user_id, "welcome")
+        except Exception:
+            import traceback
+            print(
+                f"[BBU] cohort welcome failed cohort {cohort.id}:\n"
+                f"{traceback.format_exc()[-400:]}",
+                flush=True,
+            )
     else:
         # mark cohort full when we start waitlisting
         if cohort.status == "open":
@@ -487,6 +539,7 @@ async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dic
     a deliberate admin act). Safe to re-run; returns what it changed."""
     today = _today()
     started, expired, prompts_posted, recordings_added = [], [], 0, 0
+    access_added, access_removed = 0, 0
     cohorts = (await db.execute(select(BBUCohort).where(
         BBUCohort.org_id == org_id, BBUCohort.status != "closed"))).scalars().all()
     for c in cohorts:
@@ -509,6 +562,13 @@ async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dic
         # prompt + pull any new Zoom recordings
         if not dry:
             try:
+                access = await reconcile_access_group(db, c)
+                access_added += access["added"]
+                access_removed += access["removed"]
+            except Exception:
+                import traceback
+                print(f"[BBU] cohort access reconcile failed for cohort {c.id}:\n{traceback.format_exc()[-400:]}", flush=True)
+            try:
                 prompts_posted += await post_due_prompts(db, c)
             except Exception:
                 import traceback
@@ -520,7 +580,8 @@ async def run_lifecycle(db: AsyncSession, org_id: int, dry: bool = False) -> dic
                 print(f"[BBU] recording sync failed for cohort {c.id}:\n{traceback.format_exc()[-400:]}", flush=True)
     return {"ran": True, "dry": dry, "started": started, "expired": expired,
             "started_count": len(started), "expired_count": len(expired),
-            "prompts_posted": prompts_posted, "recordings_added": recordings_added}
+            "prompts_posted": prompts_posted, "recordings_added": recordings_added,
+            "access_added": access_added, "access_removed": access_removed}
 
 
 async def resolve_target_cohort(db: AsyncSession, org_id: int, cohort_id=None, program: str = ""):
