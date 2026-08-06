@@ -1,0 +1,183 @@
+/*
+  Mobile shell styles — only render when the wrapped Capacitor app is active.
+  We intentionally gate every selector under `:root.bbu-native` so desktop
+  layouts ignore the rules. Loaded once via the root layout; the bundle
+  cost is negligible (~2KB minified).
+*/
+
+:root.bbu-native {
+  --bbu-surface: #FFF8F0;
+  --bbu-navy: #0F2F4F;
+  --bbu-coral: #E27063;
+  --bbu-sat-top: env(safe-area-inset-top, 0px);
+  --bbu-sat-right: env(safe-area-inset-right, 0px);
+  --bbu-sat-bottom: env(safe-area-inset-bottom, 0px);
+  --bbu-sat-left: env(safe-area-inset-left, 0px);
+  --bbu-tabbar-h: 56px;
+}
+
+:root.bbu-native,
+:root.bbu-native body {
+  background: var(--bbu-surface);
+}
+
+:root.bbu-native body {
+  /* Disable iOS rubber-band. Pull-to-refresh is questionable inside a webview;
+     if a screen needs it later, we can scope it to specific routes. */
+  overscroll-behavior: none;
+  /* Disable text-selection on long-press for non-editable areas. */
+  -webkit-user-select: none;
+  user-select: none;
+  /* Prevent input zoom: keep base font-size 16px on iOS. */
+  font-size: 16px;
+  -webkit-tap-highlight-color: rgba(226, 112, 99, 0.16);
+}
+
+/* Inputs and textareas still allow native selection when focused. */
+:root.bbu-native input,
+:root.bbu-native textarea,
+:root.bbu-native [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  font-size: 16px;
+}
+
+:root.bbu-native .bbu-mobile-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: var(--bbu-navy);
+  font-family: var(--font-default, "Wix Madefor Text"), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root.bbu-native .bbu-mobile-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: calc(48px + var(--bbu-sat-top));
+  padding: var(--bbu-sat-top) 1rem 0;
+  background: var(--bbu-surface);
+  border-bottom: 1px solid rgba(15, 47, 79, 0.08);
+  box-shadow: 0 1px 0 rgba(15, 47, 79, 0.04);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:root.bbu-native .bbu-mobile-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+:root.bbu-native .bbu-mobile-header__mark {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 30% 30%, var(--bbu-coral) 0%, var(--bbu-coral) 35%, var(--bbu-navy) 36%);
+  box-shadow: 0 4px 12px rgba(15, 47, 79, 0.18);
+}
+
+:root.bbu-native .bbu-mobile-header__title {
+  font-size: 0.95rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+:root.bbu-native .bbu-mobile-main {
+  /* Bottom safe-area + tabbar height, top reserves are handled by the header. */
+  padding-bottom: calc(var(--bbu-tabbar-h) + var(--bbu-sat-bottom) + 8px);
+  /* Allow horizontal bleed for course video players; vertical respects insets. */
+  padding-left: var(--bbu-sat-left);
+  padding-right: var(--bbu-sat-right);
+}
+
+:root.bbu-native .bbu-mobile-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  height: calc(var(--bbu-tabbar-h) + var(--bbu-sat-bottom));
+  padding-bottom: var(--bbu-sat-bottom);
+  background: var(--bbu-surface);
+  border-top: 1px solid rgba(15, 47, 79, 0.08);
+  box-shadow: 0 -1px 0 rgba(15, 47, 79, 0.04), 0 -8px 24px rgba(15, 47, 79, 0.05);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:root.bbu-native .bbu-mobile-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px;
+  color: rgba(15, 47, 79, 0.5);
+  text-decoration: none;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color 0.2s ease;
+}
+
+:root.bbu-native .bbu-mobile-tab__icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+:root.bbu-native .bbu-mobile-tab.is-active {
+  color: var(--bbu-coral);
+}
+
+:root.bbu-native .bbu-mobile-tab:active {
+  background: rgba(226, 112, 99, 0.08);
+  border-radius: 12px;
+}
+
+:root.bbu-native .bbu-offline {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding: 8px 16px calc(8px + var(--bbu-sat-top));
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--bbu-surface);
+  background: linear-gradient(180deg, #C75B4F 0%, var(--bbu-coral) 100%);
+  box-shadow: 0 4px 12px rgba(199, 91, 79, 0.18);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Course / video routes — give the player the full viewport width. The
+   LearnHouse layout already constrains width on >= md, so the override is
+   scoped to those routes only. */
+:root.bbu-native body[class*="course"],
+:root.bbu-native body[class*="playground"] .bbu-mobile-main {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* When Capacitor is in the WebView, hide OS-default focus rings that look
+   desktop-ish on tap. */
+:root.bbu-native *:focus {
+  outline-color: var(--bbu-coral);
+  outline-offset: 2px;
+}
+
+:root.bbu-native *:focus:not(:focus-visible) {
+  outline: none;
+}
