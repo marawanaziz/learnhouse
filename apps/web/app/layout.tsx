@@ -1,6 +1,8 @@
 import '../styles/globals.css'
+import '../styles/mobile/mobile.css'
 import React from 'react'
 import Providers from '@components/Providers'
+import MobileChrome from '@components/Mobile/MobileChrome'
 import { Wix_Madefor_Text } from 'next/font/google'
 
 const wixMadeforText = Wix_Madefor_Text({
@@ -40,6 +42,12 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="BBU" />
+
+        {/* Capacitor mobile shell overrides. Only takes effect when wrapped in the
+            native app — in a regular browser these are no-ops. */}
+        <meta name="bbu-shell-version" content="0.1.0" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5" />
+
         {/* Register the service worker (installability + offline shell). */}
         <script
           dangerouslySetInnerHTML={{
@@ -51,7 +59,7 @@ export default function RootLayout({
       <body suppressHydrationWarning>
         <Providers>
           <main className="animate-fade-in">
-            {children}
+            <MobileChrome>{children}</MobileChrome>
           </main>
         </Providers>
       </body>
