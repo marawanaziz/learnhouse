@@ -16,15 +16,12 @@ import { usePathname } from 'next/navigation'
 import { useTranslation } from 'react-i18next'
 import useAdminStatus from '@components/Hooks/useAdminStatus'
 import {
-  Book,
-  Globe,
   ChatCircleDots,
   ChatCircle,
   SquaresFour,
   ChalkboardSimple,
   Signpost,
 } from '@phosphor-icons/react'
-import { DiscordIcon } from '@components/Objects/Icons/DiscordIcon'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,12 +43,15 @@ import {
   TooltipTrigger,
 } from '@components/ui/tooltip'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
+import { useBrand } from '@components/Contexts/BrandContext'
+import BrandLogo from '@components/Brand/BrandLogo'
 
 export const OrgMenu = (props: any) => {
   const orgslug = props.orgslug
   const session = useLHSession() as any;
   const _access_token = session?.data?.tokens?.access_token;
   const org = useOrg() as any;
+  const brand = useBrand()
   const [isMenuOpen, setIsMenuOpen] = React.useState(false)
   const [isFocusMode, setIsFocusMode] = useState(false)
   const pathname = usePathname()
@@ -60,6 +60,7 @@ export const OrgMenu = (props: any) => {
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false)
   const { isVisible: isJoinBannerVisible } = useJoinBannerVisible()
   const { track } = useLHAnalytics()
+  const bbuDisabledFeature = () => false
 
   // Copilot bubble state
   const [bubbleOpen, setBubbleOpen] = useState(false)
@@ -84,7 +85,9 @@ export const OrgMenu = (props: any) => {
 
   // Get primary color from org config (v2: customization.general.color, v1: general.color)
   const config = org?.config?.config
-  const primaryColor = config?.customization?.general?.color || config?.general?.color || ''
+  const primaryColor = brand.key === 'bold'
+    ? brand.colors.primary
+    : config?.customization?.general?.color || config?.general?.color || ''
   const colors = getMenuColorClasses(primaryColor)
 
   // Filter dashboard menu items by resolved_features from API
@@ -142,7 +145,7 @@ export const OrgMenu = (props: any) => {
       <div className="backdrop-blur-lg h-[60px] blur-3xl" style={{ zIndex: 'var(--z-behind)', marginTop: topOffset }}></div>
       <nav
         aria-label="Top navigation"
-        className={`backdrop-blur-lg fixed left-0 right-0 h-[60px] ${!primaryColor ? 'bg-white/90 nice-shadow' : ''}`}
+        className={`lh-brand-nav backdrop-blur-lg fixed left-0 right-0 h-[60px] ${!primaryColor ? 'bg-white/90 nice-shadow' : ''}`}
         style={{
           zIndex: 'var(--z-nav)',
           backgroundColor: primaryColor || undefined,
@@ -154,11 +157,11 @@ export const OrgMenu = (props: any) => {
             <div className="logo flex md:w-auto w-full justify-center">
               <Link href={getUriWithOrg(orgslug, '/')}>
                 <div className="flex items-center m-auto justify-center">
-                  {org?.name ? (
-                    // BBU wordmark: render the org name as clean text (crisper
-                    // than the raster logo). colors.text adapts to the navbar bg.
+                  {brand.key === 'bold' ? (
+                    <BrandLogo inverse={Boolean(primaryColor)} />
+                  ) : org?.name ? (
                     <span className={`font-semibold text-xl whitespace-nowrap tracking-tight ${colors.text}`}>
-                      {org?.name}
+                      {org.name}
                     </span>
                   ) : (
                     <div className="flex w-auto h-9 rounded-md items-center py-1 justify-center">
@@ -201,7 +204,7 @@ export const OrgMenu = (props: any) => {
               </div>
             </AuthenticatedClientElement>
             {/* Boards — hidden for BBU (LearnHouse feature, not used) */}
-            {false && rf?.boards?.enabled && (
+            {bbuDisabledFeature() && rf?.boards?.enabled && (
               <AuthenticatedClientElement checkMethod="authentication">
                 <div className="hidden md:flex">
                   <TooltipProvider delayDuration={0}>
@@ -224,7 +227,7 @@ export const OrgMenu = (props: any) => {
               </AuthenticatedClientElement>
             )}
             {/* AI Copilot — hidden for BBU (unconfigured / untrained on BBU content) */}
-            {false && rf?.ai?.enabled && config?.admin_toggles?.ai?.copilot_enabled !== false && (
+            {bbuDisabledFeature() && rf?.ai?.enabled && config?.admin_toggles?.ai?.copilot_enabled !== false && (
               <AuthenticatedClientElement checkMethod="authentication">
                 <div className="hidden md:flex">
                   <CopilotMenuButton
@@ -309,7 +312,7 @@ export const OrgMenu = (props: any) => {
         </div>
       </nav>
       <div
-        className={`fixed inset-x-0 bg-white/80 backdrop-blur-lg md:hidden shadow-lg transition-all duration-300 ease-in-out ${
+        className={`lh-brand-mobile-menu fixed inset-x-0 bg-white/80 backdrop-blur-lg md:hidden shadow-lg transition-all duration-300 ease-in-out ${
           isMenuOpen ? 'opacity-100' : '-top-full opacity-0'
         }`}
         style={{
@@ -350,6 +353,18 @@ export const OrgMenu = (props: any) => {
         />
       )}
     </>
+  )
+}
+
+const LearnHouseLogo = ({ logoFilter }: { logoFilter: string }) => {
+  return (
+    <Image
+      src="/lrn-text.svg"
+      alt="LearnHouse logo"
+      width={133}
+      height={40}
+      style={{ height: 'auto', filter: logoFilter }}
+    />
   )
 }
 
@@ -483,17 +498,5 @@ const CopilotMenuButton = ({
         </button>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-const LearnHouseLogo = ({ logoFilter }: { logoFilter: string }) => {
-  return (
-    <Image
-      src="/lrn-text.svg"
-      alt="LearnHouse logo"
-      width={133}
-      height={40}
-      style={{ height: 'auto', filter: logoFilter }}
-    />
   )
 }

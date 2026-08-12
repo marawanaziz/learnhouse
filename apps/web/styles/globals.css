@@ -307,6 +307,121 @@
   }
 }
 
+/* -------------------------------------------------------------------------
+ * Project BOLD host presentation
+ * -------------------------------------------------------------------------
+ * This is a presentation overlay only. The BBU host keeps the existing
+ * selectors and values because this block is scoped to the exact BOLD brand
+ * marker set by the server root layout.
+ */
+html[data-lh-brand='bold'] body {
+  background: var(--lh-brand-paper);
+  color: var(--lh-brand-ink);
+  font-family: var(--lh-brand-body-font), Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: -0.012em;
+}
+
+html[data-lh-brand='bold'] h1,
+html[data-lh-brand='bold'] h2,
+html[data-lh-brand='bold'] h3,
+html[data-lh-brand='bold'] h4 {
+  font-family: var(--lh-brand-heading-font), Fraunces, Georgia, serif;
+  letter-spacing: -0.025em;
+}
+
+html[data-lh-brand='bold'] .bg-gray-50,
+html[data-lh-brand='bold'] .bg-gray-100 {
+  background-color: var(--lh-brand-paper) !important;
+}
+
+html[data-lh-brand='bold'] .bg-white {
+  background-color: var(--lh-brand-surface) !important;
+}
+
+html[data-lh-brand='bold'] .text-gray-900,
+html[data-lh-brand='bold'] .text-gray-800,
+html[data-lh-brand='bold'] .text-black {
+  color: var(--lh-brand-ink) !important;
+}
+
+html[data-lh-brand='bold'] .text-indigo-700,
+html[data-lh-brand='bold'] .text-indigo-600,
+html[data-lh-brand='bold'] .text-blue-600,
+html[data-lh-brand='bold'] .text-blue-700 {
+  color: var(--lh-brand-accent) !important;
+}
+
+html[data-lh-brand='bold'] .bg-indigo-600,
+html[data-lh-brand='bold'] .bg-blue-600,
+html[data-lh-brand='bold'] .bg-black {
+  background-color: var(--lh-brand-primary) !important;
+}
+
+html[data-lh-brand='bold'] .border-indigo-600,
+html[data-lh-brand='bold'] .border-blue-600,
+html[data-lh-brand='bold'] .focus\:border-indigo-500:focus,
+html[data-lh-brand='bold'] .focus\:border-blue-500:focus {
+  border-color: var(--lh-brand-accent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-brand-lockup,
+html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
+  color: inherit;
+}
+
+.lh-brand-lockup,
+.lh-brand-bbu-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  white-space: nowrap;
+}
+
+.lh-brand-emblem {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.lh-brand-wordmark {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.16rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.lh-brand-bbu-wordmark {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lh-brand-lockup--inverse,
+.lh-brand-bbu-wordmark--inverse {
+  color: #fff;
+}
+
+.lh-auth-shell {
+  background: var(--lh-brand-paper);
+}
+
+html[data-lh-brand='bold'] .lh-brand-nav {
+  background: var(--lh-brand-primary) !important;
+  color: var(--lh-brand-paper);
+  box-shadow: 0 8px 24px rgba(24, 55, 74, 0.12);
+}
+
+html[data-lh-brand='bold'] .lh-brand-mobile-menu {
+  background: var(--lh-brand-surface) !important;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -2235,4 +2350,3 @@
   min-height: 200px;
   display: block;
 }
-

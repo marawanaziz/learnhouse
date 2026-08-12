@@ -3,12 +3,14 @@ import { getOrgSlug } from '@services/org/orgResolution'
 import LoginClient from './login'
 import { Metadata } from 'next'
 import OrgNotFound from '@components/Objects/StyledElements/Error/OrgNotFound'
+import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
 
 export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getRequestBrandProfile()
   const orgslug = await getOrgSlug()
 
   if (!orgslug) {
-    return { title: 'Login — LearnHouse' }
+    return { title: `Login — ${brand.displayName}` }
   }
 
   let org: any = null
@@ -22,7 +24,7 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 
   return {
-    title: 'Login' + ` — ${org?.name || 'LearnHouse'}`,
+    title: 'Login' + ` — ${brand.key === 'bold' ? brand.displayName : org?.name || brand.displayName}`,
     robots: { index: false, follow: false },
   }
 }

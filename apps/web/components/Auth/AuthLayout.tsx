@@ -12,7 +12,7 @@ interface AuthLayoutProps {
 
 export default function AuthLayout({ org, welcomeText, children }: AuthLayoutProps) {
   return (
-    <div className="flex flex-col lg:grid lg:grid-cols-[1fr_600px] h-screen">
+    <div className="lh-auth-shell flex flex-col lg:grid lg:grid-cols-[1fr_600px] h-screen">
       <div className="absolute top-4 right-4 z-dropdown">
         <LanguageSwitcher />
       </div>

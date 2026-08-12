@@ -1,4 +1,5 @@
 import { Metadata } from 'next'
+import React from 'react'
 import { OrgProvider } from '@components/Contexts/OrgContext'
 import OrgLanguageSync from '@components/Contexts/OrgLanguageSync'
 import NextTopLoader from 'nextjs-toploader'
@@ -7,12 +8,19 @@ import '@styles/globals.css'
 import Footer from '@components/Footer/Footer'
 import { getOrganizationContextInfo } from '@services/organizations/orgs'
 import { getOrgFaviconMediaDirectory } from '@services/media/media'
+import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
 
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ orgslug: string }>
 }): Promise<Metadata> {
+  const brand = await getRequestBrandProfile()
+  if (brand.key === 'bold') {
+    return {
+      icons: { icon: brand.faviconPath, apple: brand.faviconPath },
+    }
+  }
   const { orgslug } = await params
   try {
     const org = await getOrganizationContextInfo(orgslug, {
@@ -25,7 +33,9 @@ export async function generateMetadata({
         icons: { icon: getOrgFaviconMediaDirectory(org.org_uuid, faviconImage) },
       }
     }
-  } catch {}
+  } catch {
+    // Use the host-level favicon fallback below.
+  }
   return {}
 }
 

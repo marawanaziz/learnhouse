@@ -6,6 +6,8 @@ import learnhouseIcon from 'public/learnhouse_bigicon_1.png'
 import { getOrgLogoMediaDirectory, getOrgAuthBackgroundMediaDirectory } from '@services/media/media'
 import { getUriWithOrg } from '@services/config/config'
 import { cn } from '@/lib/utils'
+import { useBrand } from '@components/Contexts/BrandContext'
+import BrandLogo from '@components/Brand/BrandLogo'
 
 interface AuthBrandingPanelProps {
   org: any
@@ -13,6 +15,7 @@ interface AuthBrandingPanelProps {
 }
 
 export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPanelProps) {
+  const brand = useBrand()
   const authBranding = org?.config?.config?.customization?.auth_branding || org?.config?.config?.general?.auth_branding || {}
   const {
     welcome_message = '',
@@ -27,6 +30,11 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
   const withUtm = (url: string) => (url ? `${url}${UNSPLASH_UTM}` : '')
 
   const getBackgroundStyle = (): React.CSSProperties => {
+    if (brand.key === 'bold') {
+      return {
+        background: 'linear-gradient(145deg, #18364a 0%, #244e61 52%, #b63d32 150%)',
+      }
+    }
     if (background_type === 'gradient' || !background_image) {
       // Keep the original black gradient
       return {
@@ -52,7 +60,9 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
     }
   }
 
-  const displayMessage = welcome_message || welcomeText || ''
+  const displayMessage = brand.key === 'bold'
+    ? brand.partnershipLine
+    : welcome_message || welcomeText || ''
   const hasCustomBackground = background_type !== 'gradient' && background_image
 
   return (
@@ -77,8 +87,13 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
           )}>
             {/* Organization logo */}
             <Link prefetch href={getUriWithOrg(org?.slug, '/')}>
-              <div className="w-72 h-72 rounded-3xl ring-1 ring-inset ring-white/10 bg-white flex items-center justify-center overflow-hidden">
-                {org?.logo_image ? (
+              <div className={cn(
+                "w-72 h-72 rounded-3xl ring-1 ring-inset ring-white/10 bg-white flex items-center justify-center overflow-hidden",
+                brand.key === 'bold' && 'lh-brand-auth-mark'
+              )} style={brand.key === 'bold' ? { color: brand.colors.primary } : undefined}>
+                {brand.key === 'bold' ? (
+                  <BrandLogo />
+                ) : org?.logo_image ? (
                   <img
                     src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}
                     alt={org.name}
@@ -99,7 +114,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
 
             {/* Text content */}
             <div className="space-y-1">
-              <h1 className="font-bold text-3xl tracking-tight">{org?.name}</h1>
+              <h1 className="font-bold text-3xl tracking-tight">{brand.key === 'bold' ? brand.displayName : org?.name}</h1>
               {displayMessage && (
                 <p className={cn(
                   "text-lg max-w-sm leading-relaxed",

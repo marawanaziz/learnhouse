@@ -1,5 +1,5 @@
 'use client';
-import { use, useEffect } from "react";
+import React, { use, useEffect } from "react";
 import '@styles/globals.css'
 import Watermark from '@components/Objects/Watermark'
 import { SessionGate } from '@components/Contexts/LHSessionContext'
@@ -12,6 +12,7 @@ const PodcastPlayer = dynamic(() => import('@components/Objects/Podcasts/Podcast
 import { PageViewTracker } from '@components/Analytics/PageViewTracker'
 import { usePathname } from 'next/navigation'
 import { getGoogleFontUrl, DEFAULT_FONT } from '@/lib/fonts'
+import { useBrand } from '@components/Contexts/BrandContext'
 
 // Helper to convert hex to rgba
 const hexToRgba = (hex: string, alpha: number): string => {
@@ -24,15 +25,15 @@ const hexToRgba = (hex: string, alpha: number): string => {
 
 function OrgFooter() {
   const org = useOrg() as any
+  const brand = useBrand()
   const footerText = org?.config?.config?.customization?.general?.footer_text || org?.config?.config?.general?.footer_text || ''
 
-  // BBU is white-labelled — footer shows only the org's own text, never a
-  // "LearnHouse" logo/link.
-  if (!footerText) return null
+  const resolvedFooterText = brand.key === 'bold' ? brand.partnershipLine : footerText
+  if (!resolvedFooterText) return null
   return (
     <footer className="w-full py-8 mt-12">
       <div className="flex flex-col items-center justify-center space-y-4">
-        <p className="text-sm text-gray-500">{footerText}</p>
+        <p className="text-sm text-gray-500">{resolvedFooterText}</p>
       </div>
     </footer>
   )
@@ -40,6 +41,7 @@ function OrgFooter() {
 
 function LayoutContent({ children, orgslug }: { children: React.ReactNode; orgslug: string }) {
   const org = useOrg() as any
+  const brand = useBrand()
   const primaryColor = org?.config?.config?.customization?.general?.color || org?.config?.config?.general?.color || ''
   const customFont = org?.config?.config?.customization?.general?.font || org?.config?.config?.general?.font || ''
   const pathname = usePathname()
@@ -88,8 +90,12 @@ function LayoutContent({ children, orgslug }: { children: React.ReactNode; orgsl
     <div
       className="flex flex-col min-h-screen"
       style={{
-        backgroundColor: primaryColor ? hexToRgba(primaryColor, 0.05) : 'transparent',
-        ...(customFont ? { fontFamily: `'${customFont}', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` } : {}),
+        backgroundColor: brand.key === 'bold'
+          ? brand.colors.paper
+          : primaryColor ? hexToRgba(primaryColor, 0.05) : 'transparent',
+        ...(brand.key === 'bold'
+          ? { fontFamily: `'${brand.fonts.body}', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif` }
+          : customFont ? { fontFamily: `'${customFont}', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` } : {}),
       }}
     >
       <PageViewTracker />

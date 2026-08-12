@@ -4,6 +4,7 @@ import { getOrgThumbnailMediaDirectory, getOrgOgImageMediaDirectory } from '@ser
 import { getOrgSeoConfig, buildPageTitle } from '@/lib/seo/utils'
 import { getServerCanonicalUrl } from '@/lib/seo/utils.server'
 import HomeClient from './home-client'
+import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
 
 type MetadataProps = {
   params: Promise<{ orgslug: string }>
@@ -11,6 +12,7 @@ type MetadataProps = {
 }
 
 export async function generateMetadata(props: MetadataProps): Promise<Metadata> {
+  const brand = await getRequestBrandProfile()
   const params = await props.params;
   // Get Org context information
   const org = await getOrganizationContextInfo(params.orgslug, {
@@ -24,8 +26,8 @@ export async function generateMetadata(props: MetadataProps): Promise<Metadata> 
     : null
   const imageUrl = ogImageUrl || getOrgThumbnailMediaDirectory(org?.org_uuid, org?.thumbnail_image)
   const canonical = await getServerCanonicalUrl(params.orgslug, '/')
-  const title = buildPageTitle('Home', org.name, seoConfig)
-  const description = org.description || seoConfig.default_meta_description || ''
+  const title = brand.key === 'bold' ? `Home — ${brand.displayName}` : buildPageTitle('Home', org.name, seoConfig)
+  const description = brand.key === 'bold' ? brand.description : org.description || seoConfig.default_meta_description || ''
 
   // SEO
   return {
@@ -60,7 +62,7 @@ export async function generateMetadata(props: MetadataProps): Promise<Metadata> 
           url: imageUrl,
           width: 800,
           height: 600,
-          alt: org.name,
+          alt: brand.key === 'bold' ? brand.displayName : org.name,
         },
       ],
     },

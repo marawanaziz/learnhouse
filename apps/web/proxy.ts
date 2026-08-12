@@ -2,6 +2,7 @@ import { getAPIUrl } from './services/config/config'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { isLocalhost as isLocalhostCheck } from './services/utils/ts/hostUtils'
+import { brandKeyFromProxyHostname } from './services/branding/brandProfile'
 
 // =============================================================================
 // Tenancy
@@ -195,6 +196,9 @@ function tenantRequestHeaders(
   headers.set('x-lh-top-domain', instance.top_domain)
   headers.set('x-lh-frontend-domain', instance.frontend_domain)
   headers.set('x-lh-mode', instance.mode)
+  // Branding is a presentation hint derived from NextRequest.nextUrl.hostname.
+  // It is exact-allowlisted and never reads x-forwarded-host or other proxy input.
+  headers.set('x-lh-brand-key', brandKeyFromProxyHostname(req.nextUrl.hostname))
   if (resolved.customDomain) {
     headers.set('x-lh-custom-domain', resolved.customDomain)
   }

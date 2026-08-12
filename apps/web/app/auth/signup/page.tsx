@@ -5,12 +5,14 @@ import SignUpClient from './signup'
 import { Suspense } from 'react'
 import PageLoading from '@components/Objects/Loaders/PageLoading'
 import OrgNotFound from '@components/Objects/StyledElements/Error/OrgNotFound'
+import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
 
 export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getRequestBrandProfile()
   const orgslug = await getOrgSlug()
 
   if (!orgslug) {
-    return { title: 'Sign up — LearnHouse' }
+    return { title: `Sign up — ${brand.displayName}` }
   }
 
   let org: any = null
@@ -21,7 +23,7 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 
   return {
-    title: 'Sign up' + ` — ${org?.name || 'LearnHouse'}`,
+    title: 'Sign up' + ` — ${brand.key === 'bold' ? brand.displayName : org?.name || brand.displayName}`,
     robots: { index: false, follow: false },
   }
 }

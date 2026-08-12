@@ -11,12 +11,15 @@ import BackgroundTasksPanel from '@components/BackgroundTasks/BackgroundTasksPan
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { makeQueryClient } from '@/lib/query/client'
+import { BrandProvider } from '@components/Contexts/BrandContext'
+import type { BrandKey } from '@services/branding/brandProfile'
 
-export default function Providers({ children }: { children: React.ReactNode }) {
+export default function Providers({ children, brandKey = 'bbu' }: { children: React.ReactNode; brandKey?: BrandKey }) {
   const [queryClient] = useState(() => makeQueryClient())
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <BrandProvider brandKey={brandKey}>
+      <QueryClientProvider client={queryClient}>
       <SessionProvider refetchInterval={600000}>
         <AuthFetchInterceptor />
         <LHSessionProvider>
@@ -29,8 +32,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             </I18nProvider>
           </PostHogProvider>
         </LHSessionProvider>
-      </SessionProvider>
-      {process.env.NODE_ENV === 'development' && <ReactQueryDevtools initialIsOpen={false} />}
-    </QueryClientProvider>
+        </SessionProvider>
+        {process.env.NODE_ENV === 'development' && <ReactQueryDevtools initialIsOpen={false} />}
+      </QueryClientProvider>
+    </BrandProvider>
   )
 }

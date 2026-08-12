@@ -7,10 +7,12 @@ import { JsonLd } from '@components/SEO/JsonLd'
 import { getStorefrontOffers } from '@services/payments/offers'
 import { getServerSession } from '@/lib/auth/server'
 import Store from './store'
+import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
 
 type PageParams = Promise<{ orgslug: string }>
 
 export async function generateMetadata({ params }: { params: PageParams }): Promise<Metadata> {
+  const brand = await getRequestBrandProfile()
   const { orgslug } = await params
   const org = await getOrganizationContextInfo(orgslug, { revalidate: 120, tags: ['organizations'] })
   const seoConfig = getOrgSeoConfig(org)
@@ -18,8 +20,8 @@ export async function generateMetadata({ params }: { params: PageParams }): Prom
     ? getOrgOgImageMediaDirectory(org?.org_uuid, seoConfig.default_og_image)
     : null
   const imageUrl = ogImageUrl || (org ? getOrgThumbnailMediaDirectory(org.org_uuid, org.thumbnail_image) : undefined)
-  const title = buildPageTitle('Store', org?.name || 'Organization', seoConfig)
-  const description = `Browse offers and subscriptions from ${org?.name || 'this organization'}`
+  const title = brand.key === 'bold' ? `Opportunities — ${brand.displayName}` : buildPageTitle('Store', org?.name || 'Organization', seoConfig)
+  const description = brand.key === 'bold' ? brand.partnershipLine : `Browse offers and subscriptions from ${org?.name || 'this organization'}`
   const canonical = await getServerCanonicalUrl(orgslug, '/store')
 
   return {
