@@ -22,6 +22,28 @@ interface CourseEndViewProps {
   trailData: any;
 }
 
+const BBU_COURSE_END_SURFACE_ID = 'bbu-course-end-certificate-surface';
+
+function formatCertificateDate(raw?: string): string {
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (isNaN(date.getTime())) return raw;
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function bbuExpirationDate(userCertificate: any): string {
+  const years = Number(userCertificate?.certification?.config?.bbu_validity_years || 0);
+  if (!years) return '';
+  const date = new Date(userCertificate?.certificate_user?.created_at);
+  if (isNaN(date.getTime())) return '';
+  date.setFullYear(date.getFullYear() + years);
+  return formatCertificateDate(date.toISOString());
+}
+
 const CourseEndView: React.FC<CourseEndViewProps> = ({ 
   courseName, 
   orgslug, 
@@ -116,9 +138,43 @@ const CourseEndView: React.FC<CourseEndViewProps> = ({
     fetchUserCertificate();
   }, [isCourseCompleted, courseUuid, session?.data?.tokens?.access_token, org?.id]);
 
+  const downloadBBUCertificate = async () => {
+    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+      import('html2canvas'),
+      import('jspdf'),
+    ]);
+    const certificateSurface = document.getElementById(BBU_COURSE_END_SURFACE_ID);
+    if (!certificateSurface) throw new Error('certificate surface not found');
+
+    const canvas = await html2canvas(certificateSurface as HTMLElement, {
+      scale: 3,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+    });
+    const pdf = new jsPDF('landscape', 'mm', [279.4, 215.9]);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
+
+    const fileName = (userCertificate?.certification?.config?.certification_name || 'certificate')
+      .replace(/[^a-zA-Z0-9]/g, '_');
+    pdf.save(`${fileName}_Certificate.pdf`);
+  };
+
   // Generate PDF using canvas
   const downloadCertificate = async () => {
     if (!userCertificate) return;
+
+    if (userCertificate.certification.config.certificate_pattern === 'bbu') {
+      try {
+        await downloadBBUCertificate();
+      } catch (error) {
+        console.error('Error generating BBU PDF:', error);
+        toast.error('Failed to generate PDF. Please try again.');
+      }
+      return;
+    }
 
     try {
       const [{ default: html2canvas }, { default: jsPDF }, QRCode] = await Promise.all([
@@ -484,12 +540,14 @@ const CourseEndView: React.FC<CourseEndViewProps> = ({
                     certificatePattern={userCertificate.certification.config.certificate_pattern}
                     certificateInstructor={userCertificate.certification.config.certificate_instructor}
                     certificateId={userCertificate.certificate_user.user_certification_uuid}
-                    awardedDate={new Date(userCertificate.certificate_user.created_at).toLocaleDateString(i18n.language === 'fr' ? 'fr-FR' : 'en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric'
-                    })}
+                    awardedDate={formatCertificateDate(userCertificate.certificate_user.created_at)}
                     qrCodeLink={qrCodeLink}
+                    bbuTemplate={userCertificate.certification.config.bbu_template}
+                    bbuLayout={userCertificate.certification.config.bbu_layout}
+                    recipientName={userCertificate.recipient_name}
+                    issueDate={formatCertificateDate(userCertificate.certificate_user.created_at)}
+                    expirationDate={bbuExpirationDate(userCertificate)}
+                    surfaceId={BBU_COURSE_END_SURFACE_ID}
                   />
                 </div>
               </div>
@@ -610,4 +668,4 @@ const CourseEndView: React.FC<CourseEndViewProps> = ({
   }
 };
 
-export default CourseEndView; 
+export default CourseEndView;
