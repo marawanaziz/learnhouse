@@ -24,6 +24,10 @@ from src.db.users import User
 from src.db.user_organizations import UserOrganization
 from src.db.organizations import Organization
 from src.services.users.password_reset import generate_secure_reset_code
+from src.services.users.password_reset_config import (
+    RESET_TOKEN_TTL_SECONDS,
+    build_canonical_reset_url,
+)
 from config.config import get_learnhouse_config
 
 router = APIRouter()
@@ -100,8 +104,8 @@ async def backfill(request: Request,
 async def password_setup_blast(request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Mint per-user password-setup (reset) links and push them into GHL as a
     contact field + a trigger tag, so a GHL workflow can send the 'set your
-    password' email (the Monday launch email). Links use a long TTL so they stay
-    valid through launch. Body: {test_email?, limit?, ttl_days?, tag?, base_url?,
+    password' email. Reset links always use the shared 48-hour TTL and canonical
+    BBU host. Body: {test_email?, limit?, tag?, dry_run?,
     dry_run?}. DRY-RUN by default (counts targets, writes nothing)."""
     _check(request)
     if not is_configured():
@@ -114,10 +118,8 @@ async def password_setup_blast(request: Request, db_session: AsyncSession = Depe
     dry_run = str(body.get("dry_run", True)).lower() != "false"
     test_email = (body.get("test_email") or "").strip().lower()
     limit = int(body.get("limit") or 0)
-    ttl = int(body.get("ttl_days") or 45) * 86400
+    ttl = RESET_TOKEN_TTL_SECONDS
     tag = body.get("tag") or "bbu-password-setup"
-    base = (body.get("base_url") or os.environ.get("BBU_PUBLIC_BASE_URL")
-            or "https://app-production-500b.up.railway.app").rstrip("/")
 
     org = (await db_session.execute(select(Organization).where(Organization.id == 1))).scalars().first()
     if not org:
@@ -151,7 +153,7 @@ async def password_setup_blast(request: Request, db_session: AsyncSession = Depe
                        "created_by": u.user_uuid, "org_uuid": org.org_uuid}
                 r.set(f"pwd_reset:user:{u.user_uuid}:org:{org.org_uuid}:code:{code}",
                       json.dumps(obj), ex=ttl)
-                url = f"{base}/reset?email={quote(u.email)}&resetCode={code}"
+                url = build_canonical_reset_url(u.email, code)
                 await ghl.upsert_contact(email=u.email, first_name=u.first_name or "",
                                          last_name=u.last_name or "",
                                          fields={field_key: url}, tags=[tag])

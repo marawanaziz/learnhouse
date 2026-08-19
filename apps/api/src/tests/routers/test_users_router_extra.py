@@ -432,6 +432,12 @@ class TestMutationEndpoints:
 
 
 class TestPasswordResetEndpoints:
+    def test_password_reset_retry_guidance_is_actionable(self):
+        from src.routers.users import _password_reset_retry_message
+
+        assert "5 seconds" in _password_reset_retry_message(5)
+        assert "2 minutes" in _password_reset_retry_message(61)
+
     async def test_reset_password_with_code_success(self, client):
         with (
             patch(

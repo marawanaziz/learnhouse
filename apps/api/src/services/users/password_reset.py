@@ -17,7 +17,6 @@ from src.services.users.emails import (
     send_password_reset_email,
     send_password_reset_email_platform,
 )
-from src.services.email.utils import get_base_url_from_request
 from src.db.users import (
     AnonymousUser,
     PublicUser,
@@ -26,6 +25,11 @@ from src.db.users import (
 )
 from src.services.security.password_validation import validate_password_complexity
 from src.services.users.identity import resolve_canonical_user
+from src.services.users.password_reset_config import (
+    RESET_TOKEN_TTL_SECONDS,
+    get_canonical_reset_base_url,
+    reset_code_is_expired,
+)
 
 
 def _get_redis_connection():
@@ -143,7 +147,7 @@ async def send_reset_password_code(
     # Increased from 5 to 8 characters for better entropy
     generated_reset_code = generate_secure_reset_code(length=8)
 
-    ttl = 60 * 60 * 1  # 1 hour in seconds
+    ttl = RESET_TOKEN_TTL_SECONDS
 
     resetCodeObject = {
         "reset_code": generated_reset_code,
@@ -168,7 +172,7 @@ async def send_reset_password_code(
     org_config = (await db_session.execute(org_config_stmt)).scalars().first()
 
     # Send reset code via email
-    base_url = get_base_url_from_request(request)
+    base_url = get_canonical_reset_base_url()
     isEmailSent = send_password_reset_email(
         generated_reset_code=generated_reset_code,
         user=user_read,
@@ -287,7 +291,7 @@ async def change_password_with_reset_code(
     reset_code_object = json.loads(reset_code_value)
 
     # Check if reset code is expired
-    if reset_code_object["reset_code_expires"] < int(datetime.now().timestamp()):
+    if reset_code_is_expired(reset_code_object["reset_code_expires"]):
         # Delete expired code
         r.delete(reset_key)
         logging.info(f"Expired reset code used for user: {user.user_uuid}")
@@ -340,7 +344,7 @@ async def send_reset_password_code_platform(
 
     generated_reset_code = generate_secure_reset_code(length=8)
 
-    ttl = 60 * 60 * 1  # 1 hour in seconds
+    ttl = RESET_TOKEN_TTL_SECONDS
 
     resetCodeObject = {
         "reset_code": generated_reset_code,
@@ -359,7 +363,7 @@ async def send_reset_password_code_platform(
 
     user_read = UserRead.model_validate(user)
 
-    base_url = get_base_url_from_request(request)
+    base_url = get_canonical_reset_base_url()
     isEmailSent = send_password_reset_email_platform(
         generated_reset_code=generated_reset_code,
         user=user_read,
@@ -442,7 +446,7 @@ async def change_password_with_reset_code_platform(
 
     reset_code_object = json.loads(reset_code_value)
 
-    if reset_code_object["reset_code_expires"] < int(datetime.now().timestamp()):
+    if reset_code_is_expired(reset_code_object["reset_code_expires"]):
         r.delete(reset_key)
         logging.info(f"Expired reset code used for user: {user.user_uuid}")
         raise HTTPException(

@@ -299,7 +299,7 @@ export default async function proxy(req: NextRequest) {
   // -------------------------------------------------------------------------
   // 3. Auth pages — resolve tenant for cookie context, rewrite to /auth
   // -------------------------------------------------------------------------
-  const authPaths = ['/login', '/signup', '/reset', '/forgot', '/verify-email']
+  const authPaths = ['/login', '/signup', '/reset', '/reset-password', '/forgot', '/verify-email']
   if (authPaths.includes(pathname)) {
     const resolved = await resolveTenant(req, instance)
     const requestHeaders = tenantRequestHeaders(req, resolved, instance)

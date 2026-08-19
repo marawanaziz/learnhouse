@@ -313,3 +313,14 @@ def test_email_based_wrappers_lowercase_inputs(func, input_value, expected_key):
     assert retry_after == 33
     mock_check.assert_called_once()
     assert mock_check.call_args.kwargs["key"] == expected_key
+
+
+def test_password_reset_rate_limit_stays_five_per_five_minutes():
+    with patch(
+        "src.services.security.rate_limiting.check_rate_limit",
+        return_value=(True, 1, 300),
+    ) as mock_check:
+        assert check_password_reset_rate_limit("User@Example.com") == (True, 300)
+
+    assert mock_check.call_args.kwargs["max_attempts"] == 5
+    assert mock_check.call_args.kwargs["window_seconds"] == 300

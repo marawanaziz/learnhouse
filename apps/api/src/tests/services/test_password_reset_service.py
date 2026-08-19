@@ -108,8 +108,8 @@ class TestPasswordResetService:
             "src.services.users.password_reset.redis.Redis.from_url",
             return_value=fake_redis,
         ), patch(
-            "src.services.users.password_reset.get_base_url_from_request",
-            return_value="https://learnhouse.test",
+            "src.services.users.password_reset.get_canonical_reset_base_url",
+            return_value="https://learn.birthandbabyuniversity.com",
         ), patch(
             "src.services.users.password_reset.send_password_reset_email",
             return_value=True,
@@ -131,6 +131,7 @@ class TestPasswordResetService:
         assert payload["created_by"] == user.user_uuid
         assert payload["org_uuid"] == org.org_uuid
         assert payload["reset_code_type"] == "password_reset"
+        assert fake_redis.set.call_args.kwargs["ex"] == 172800
         assert mock_send.call_count == 1
 
         missing_platform = await send_reset_password_code_platform(
@@ -148,8 +149,8 @@ class TestPasswordResetService:
             "src.services.users.password_reset._get_redis_connection",
             return_value=fake_redis,
         ), patch(
-            "src.services.users.password_reset.get_base_url_from_request",
-            return_value="https://learnhouse.test",
+            "src.services.users.password_reset.get_canonical_reset_base_url",
+            return_value="https://learn.birthandbabyuniversity.com",
         ), patch(
             "src.services.users.password_reset.send_password_reset_email_platform",
             return_value=True,
@@ -165,6 +166,7 @@ class TestPasswordResetService:
         mock_platform_send.assert_called_once()
         platform_key = fake_redis.set.call_args_list[-1].args[0]
         assert platform_key == f"pwd_reset:user:{user.user_uuid}:platform:code:RESET456"
+        assert fake_redis.set.call_args_list[-1].kwargs["ex"] == 172800
 
     @pytest.mark.asyncio
     async def test_send_reset_password_code_error_paths(self, mock_request, db, org):
@@ -258,8 +260,8 @@ class TestPasswordResetService:
             "src.services.users.password_reset.redis.Redis.from_url",
             return_value=Mock(set=Mock()),
         ), patch(
-            "src.services.users.password_reset.get_base_url_from_request",
-            return_value="https://learnhouse.test",
+            "src.services.users.password_reset.get_canonical_reset_base_url",
+            return_value="https://learn.birthandbabyuniversity.com",
         ), patch(
             "src.services.users.password_reset.send_password_reset_email",
             return_value=False,
@@ -513,8 +515,8 @@ class TestPasswordResetService:
             "src.services.users.password_reset._get_redis_connection",
             return_value=fake_redis,
         ), patch(
-            "src.services.users.password_reset.get_base_url_from_request",
-            return_value="https://learnhouse.test",
+            "src.services.users.password_reset.get_canonical_reset_base_url",
+            return_value="https://learn.birthandbabyuniversity.com",
         ), patch(
             "src.services.users.password_reset.send_password_reset_email_platform",
             return_value=True,
@@ -728,7 +730,7 @@ class TestPasswordResetService:
         set_redis.set = Mock()
         with patch("src.services.users.password_reset.generate_secure_reset_code", return_value="FAIL1234"), \
              patch("src.services.users.password_reset._get_redis_connection", return_value=set_redis), \
-             patch("src.services.users.password_reset.get_base_url_from_request", return_value="https://test"), \
+             patch("src.services.users.password_reset.get_canonical_reset_base_url", return_value="https://learn.birthandbabyuniversity.com"), \
              patch("src.services.users.password_reset.send_password_reset_email_platform", return_value=False):
             with pytest.raises(HTTPException) as exc351:
                 await send_reset_password_code_platform(mock_request, db, AnonymousUser(), regular_user.email)

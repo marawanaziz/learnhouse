@@ -37,8 +37,8 @@ EMAIL_TRANSLATIONS: dict[str, dict[str, str]] = {
         "password_reset.heading": "Reset your password",
         "password_reset.body": "Hi {username}, we received a request to reset your password. Use the code below or click the button.",
         "password_reset.cta": "Reset Password",
-        "password_reset.footer_org": "If you didn't request a password reset, you can safely ignore this email. This link will expire shortly.",
-        "password_reset.footer_platform": "If you didn't request a password reset, you can safely ignore this email. This link will expire in 1 hour.",
+        "password_reset.footer_org": "If you didn't request a password reset, you can safely ignore this email. This link will expire in 48 hours.",
+        "password_reset.footer_platform": "If you didn't request a password reset, you can safely ignore this email. This link will expire in 48 hours.",
 
         "invitation.subject": "You've been invited to join {org_name}",
         "invitation.heading": "You've been invited!",

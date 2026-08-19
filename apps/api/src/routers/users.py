@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from typing import List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
@@ -54,6 +55,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SESSION_CACHE_TTL = 600  # 10 minutes
+
+
+def _password_reset_retry_message(retry_after: int) -> str:
+    """Give an accurate short retry hint without conflating it with token TTL."""
+    seconds = max(1, int(retry_after))
+    if seconds < 60:
+        wait = f"{seconds} second{'s' if seconds != 1 else ''}"
+    else:
+        minutes = math.ceil(seconds / 60)
+        wait = f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return f"Too many password reset attempts. Please try again in about {wait}."
 
 
 def _get_session_cache(user_id: int) -> Optional[dict]:
@@ -487,7 +499,7 @@ async def api_change_password_with_reset_code_v2(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
 
     return await change_password_with_reset_code(
@@ -525,7 +537,7 @@ async def api_change_password_with_reset_code(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
 
     return await change_password_with_reset_code(
@@ -557,7 +569,7 @@ async def api_send_password_reset_email_v2(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
     return await send_reset_password_code(
         request, db_session, current_user, body.org_id, body.email
@@ -589,7 +601,7 @@ async def api_send_password_reset_email(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
     return await send_reset_password_code(
         request, db_session, current_user, org_id, email
@@ -627,7 +639,7 @@ async def api_send_password_reset_email_platform_v2(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
     return await send_reset_password_code_platform(
         request, db_session, current_user, body.email
@@ -656,7 +668,7 @@ async def api_send_password_reset_email_platform(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
 
     return await send_reset_password_code_platform(
@@ -687,7 +699,7 @@ async def api_change_password_with_reset_code_platform_v2(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
     return await change_password_with_reset_code_platform(
         request, db_session, current_user, body.new_password, body.email, body.reset_code
@@ -717,7 +729,7 @@ async def api_change_password_with_reset_code_platform(
     if not is_allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
+            detail=_password_reset_retry_message(retry_after),
         )
 
     return await change_password_with_reset_code_platform(

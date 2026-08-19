@@ -73,8 +73,11 @@ class TestEmailsService:
         first_body = send_email.call_args_list[0].kwargs["body"]
         second_body = send_email.call_args_list[1].kwargs["body"]
         assert "reset?email=user%2Btag%40test.com&amp;resetCode=code%20123" in first_body
-        assert "reset-password?email=user%2Btag%40test.com&amp;resetCode=code%20123" in second_body
+        assert "https://learn.birthandbabyuniversity.com/reset?email=user%2Btag%40test.com&amp;resetCode=code%20123" in second_body
         for body in (first_body, second_body):
+            assert "reset-password" not in body
+            assert "localhost" not in body
+            assert "railway.app" not in body
             assert "Birth &amp; Baby University" in body
             assert "birth-and-baby-logo-tm.png" in body
             assert "#113d5d" in body

@@ -8,6 +8,7 @@ from src.db.organizations import OrganizationRead
 from src.db.users import UserRead
 from src.services.email.translations import t
 from src.services.email.utils import send_email
+from src.services.users.password_reset_config import build_canonical_reset_url
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +125,9 @@ def send_password_reset_email(
 ):
     safe_username = html.escape(user.username)
     safe_code = html.escape(generated_reset_code)
-    safe_email = quote(str(email), safe='')
-    safe_code_param = quote(generated_reset_code, safe='')
-    reset_url = f"{base_url}/reset?email={safe_email}&amp;resetCode={safe_code_param}"
+    reset_url = build_canonical_reset_url(str(email), generated_reset_code).replace(
+        "&", "&amp;"
+    )
 
     heading = t(lang, "password_reset.heading")
     body_text = t(lang, "password_reset.body", username=safe_username)
@@ -165,9 +166,9 @@ def send_password_reset_email_platform(
 ):
     safe_username = html.escape(user.username)
     safe_code = html.escape(generated_reset_code)
-    safe_email = quote(str(email), safe='')
-    safe_code_param = quote(generated_reset_code, safe='')
-    reset_url = f"{base_url}/reset-password?email={safe_email}&amp;resetCode={safe_code_param}"
+    reset_url = build_canonical_reset_url(str(email), generated_reset_code).replace(
+        "&", "&amp;"
+    )
 
     heading = t(lang, "password_reset.heading")
     body_text = t(lang, "password_reset.body", username=safe_username)

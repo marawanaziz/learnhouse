@@ -10,6 +10,10 @@ import ipaddress
 from typing import Tuple
 from fastapi import HTTPException, Request
 from src.core.redis import get_redis_client as _get_redis_pool_client
+from src.services.users.password_reset_config import (
+    RESET_EMAIL_MAX_ATTEMPTS,
+    RESET_EMAIL_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 class RateLimitExceeded(Exception):
@@ -242,8 +246,8 @@ def check_password_reset_rate_limit(email: str) -> Tuple[bool, int]:
 
     is_allowed, count, retry_after = check_rate_limit(
         key=key,
-        max_attempts=5,
-        window_seconds=5 * 60  # 5 minutes
+        max_attempts=RESET_EMAIL_MAX_ATTEMPTS,
+        window_seconds=RESET_EMAIL_RATE_LIMIT_WINDOW_SECONDS,
     )
 
     return is_allowed, retry_after
