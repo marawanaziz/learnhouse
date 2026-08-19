@@ -1,5 +1,6 @@
 import { getAPIUrl } from '@services/config/config'
 import { RequestBody, getResponseMetadata } from '@services/utils/ts/requests'
+import { buildOrgResetRequest } from './reset-request'
 
 // ⚠️ mvp phase code
 // TODO : everything in this file need to be refactored including security issues fix
@@ -70,9 +71,10 @@ export async function loginWithOAuthToken(
 }
 
 export async function sendResetLink(email: string, org_id: number) {
+  const { url, body } = buildOrgResetRequest(getAPIUrl(), email, org_id)
   const result = await fetch(
-    `${getAPIUrl()}users/reset_password/send_reset_code/${email}?org_id=${org_id}`,
-    RequestBody('POST', null, null)
+    url,
+    RequestBody('POST', body, null)
   )
   const res = await getResponseMetadata(result)
   return res
