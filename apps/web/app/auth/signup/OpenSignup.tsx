@@ -161,7 +161,7 @@ function OpenSignUpComponent() {
 
       {/* Signup Form Card */}
       <div className="bg-white rounded-xl p-6 nice-shadow">
-        <FormLayout onSubmit={formik.handleSubmit}>
+        <FormLayout onSubmit={formik.handleSubmit} noValidate>
           <FormField name="email">
             <FormLabelAndMessage
               label={t('auth.email')}
@@ -248,21 +248,38 @@ function OpenSignUpComponent() {
               <FormLabelAndMessage
                 label="Are you wanting to become a doula, or are you already a doula or perinatal professional?"
                 message={formik.touched.bbu_audience ? formik.errors.bbu_audience : undefined}
+                labelId="bbu-audience-label"
+                messageId="bbu-audience-error"
               />
-              <Form.Control asChild>
-                <select
-                  name="bbu_audience"
-                  onChange={formik.handleChange}
-                  onBlur={formik.handleBlur}
-                  value={formik.values.bbu_audience}
-                  required
-                  className="flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-                >
-                  <option value="">Select an answer</option>
-                  <option value="professional">Yes</option>
-                  <option value="family">No</option>
-                </select>
-              </Form.Control>
+              <div
+                role="radiogroup"
+                aria-labelledby="bbu-audience-label"
+                aria-describedby={formik.touched.bbu_audience && formik.errors.bbu_audience ? 'bbu-audience-error' : undefined}
+                aria-required="true"
+                aria-invalid={formik.touched.bbu_audience && !!formik.errors.bbu_audience}
+                className="flex gap-4 pt-1"
+              >
+                {[
+                  { value: 'professional', label: 'Yes' },
+                  { value: 'family', label: 'No' },
+                ].map((option) => (
+                  <label
+                    key={option.value}
+                    className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 transition-colors hover:border-gray-400 focus-within:border-gray-500 focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1"
+                  >
+                    <input
+                      type="radio"
+                      name="bbu_audience"
+                      value={option.value}
+                      checked={formik.values.bbu_audience === option.value}
+                      onChange={formik.handleChange}
+                      onBlur={formik.handleBlur}
+                      className="h-4 w-4 accent-black"
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
             </FormField>
           )}
 

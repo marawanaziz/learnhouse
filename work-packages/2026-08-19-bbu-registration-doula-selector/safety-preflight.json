@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "client": "cfd-bbu-ar",
+  "environment": "production",
+  "resource_class": "deployment",
+  "target": "https://learn.birthandbabyuniversity.com/",
+  "action": "Deploy the verified registration selector fix as one frontend revision",
+  "materiality": "material",
+  "mutation": true,
+  "external_content_authority": false,
+  "recovery": {
+    "method": "previous-release",
+    "reference": "pre-change HEAD e363034e98328deed7a637bbeaec11b3360c7879",
+    "verified": true
+  },
+  "impact": {
+    "unit": "services",
+    "expected": 1,
+    "maximum": 1
+  },
+  "execution": {
+    "canary_or_reason": "Single frontend release; anonymous route verification is the canary before broader acceptance",
+    "concurrency_control": "Deploy only the committed candidate from the active BBU repository branch",
+    "idempotency_or_reason": "One immutable Git revision and one provider deployment identifier",
+    "monitoring_window": "Fresh desktop and mobile registration checks immediately after deployment"
+  },
+  "validation": {
+    "method": "Read back the exact production signup route and exercise Yes/No pointer, touch, keyboard, validation, and forward-progress behavior",
+    "rollback_or_containment": "Stop further changes and redeploy the retained prior healthy revision if route load or registration validation regresses"
+  },
+  "authorization": {
+    "classification": "yellow",
+    "exact_owner_authorized": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "created_at": "2026-08-19T20:53:05Z",
+  "id": "2026-08-19-bbu-registration-doula-selector",
+  "kind": "fix",
+  "risk": "standard",
+  "root": ".",
+  "schema_version": 1,
+  "scope": "client:cfd-bbu-ar",
+  "status": "draft",
+  "title": "Fix BBU registration doula Yes/No selector",
+  "updated_at": "2026-08-19T20:53:05Z"
+}

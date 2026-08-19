@@ -1,0 +1,16 @@
+{
+  "decision": "pass",
+  "mode": "shadow",
+  "preflight_id": "sha256:1b6c21ef9e3099c0b7f55f560d2020254b69f498ed62fb8bb89802bc2ee028d0",
+  "resource_registered": false,
+  "warning": "Material mutation uses an explicit ad-hoc target rather than a registry entry",
+  "gates": {
+    "correct_target": true,
+    "recovery_point": true,
+    "impact_preview": true,
+    "safe_execution": true,
+    "verification": true
+  },
+  "impact": { "unit": "services", "expected": 1, "maximum": 1 },
+  "rollback_reference": "pre-change HEAD e363034e98328deed7a637bbeaec11b3360c7879"
+}

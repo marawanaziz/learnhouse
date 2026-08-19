@@ -4,13 +4,14 @@ import { Info } from 'lucide-react'
 
 interface FormLayoutProps {
   children: React.ReactNode
-  onSubmit: (e: any) => void
+  onSubmit: (_event: any) => void
   className?: string
+  noValidate?: boolean
 }
 
-const FormLayout = ({ children, onSubmit, className }: FormLayoutProps) => {
+const FormLayout = ({ children, onSubmit, className, noValidate }: FormLayoutProps) => {
   return (
-    <Form.Root onSubmit={onSubmit} className={className}>
+    <Form.Root onSubmit={onSubmit} className={className} noValidate={noValidate}>
       {children}
     </Form.Root>
   )
@@ -19,11 +20,17 @@ const FormLayout = ({ children, onSubmit, className }: FormLayoutProps) => {
 export const FormLabelAndMessage = (props: {
   label: string
   message?: string
+  labelId?: string
+  messageId?: string
 }) => (
   <div className="flex items-center space-x-3">
-    <FormLabel className="grow text-sm">{props.label}</FormLabel>
+    <FormLabel id={props.labelId} className="grow text-sm">{props.label}</FormLabel>
     {(props.message && (
-      <div className="text-red-700 text-sm items-center  rounded-md flex  space-x-1">
+      <div
+        id={props.messageId}
+        role="alert"
+        className="text-red-700 text-sm items-center  rounded-md flex  space-x-1"
+      >
         <Info size={10} />
         <div>{props.message}</div>
       </div>
