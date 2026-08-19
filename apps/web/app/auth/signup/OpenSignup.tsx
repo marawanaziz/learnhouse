@@ -173,7 +173,6 @@ function OpenSignUpComponent() {
                 onBlur={formik.handleBlur}
                 value={formik.values.email}
                 type="email"
-                required
               />
             </Form.Control>
           </FormField>
@@ -221,7 +220,6 @@ function OpenSignUpComponent() {
                 value={formik.values.password}
                 type="password"
                 autoComplete="new-password"
-                required
               />
             </Form.Control>
             <PasswordStrengthIndicator password={formik.values.password} />
@@ -238,7 +236,6 @@ function OpenSignUpComponent() {
                 onBlur={formik.handleBlur}
                 value={formik.values.username}
                 type="text"
-                required
               />
             </Form.Control>
           </FormField>

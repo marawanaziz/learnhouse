@@ -25,6 +25,7 @@ describe("BBU registration audience selector", () => {
     assert.match(signupSource, /aria-required="true"/);
     assert.match(signupSource, /aria-describedby=\{formik\.touched\.bbu_audience/);
     assert.match(signupSource, /extra_metadata:[\s\S]*bbu_audience/);
+    assert.doesNotMatch(signupSource, /\brequired\b/);
   });
 
   test("does not weaken the other existing required validators", () => {
