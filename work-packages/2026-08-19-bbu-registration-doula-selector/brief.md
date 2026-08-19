@@ -51,8 +51,8 @@ The active implementation repository is the `learnhouse-bbu` entry in `context.j
 
 ## Acceptance Criteria
 
-- [ ] Live anonymous route reproduced pre-edit at desktop and mobile, with the selector failure and exact root cause documented.
-- [ ] Yes and No are selectable by pointer/touch/keyboard, persist in state, show focus, and clear only the targeted required validation.
-- [ ] Automated tests cover both values and unanswered regression without weakening other required fields.
-- [ ] Relevant lint/type/unit/component/e2e checks pass.
-- [ ] Verified revision is deployed to production and fresh desktop/mobile destination checks after deployment confirm Yes and No paths advance without unintended accounts/charges.
+- [x] Live anonymous route reproduced pre-edit at desktop and mobile, with the selector failure and exact root cause documented.
+- [x] Yes and No are selectable by pointer/touch/keyboard, persist in state, show focus, and clear only the targeted required validation.
+- [x] Automated tests cover both values and unanswered regression without weakening other required fields.
+- [x] Relevant lint/type/unit/component/e2e checks pass.
+- [x] Verified revision is deployed to production and fresh desktop/mobile destination checks after deployment confirm Yes and No paths advance without unintended accounts/charges.
