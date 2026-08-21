@@ -6,6 +6,7 @@ import { Award, BadgeDollarSign, User, Lock, ShoppingBag, Settings } from 'lucid
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import UserAvatar from '@components/Objects/UserAvatar'
 import { getUriWithOrg } from '@services/config/config'
+import { useBrand } from '@components/Contexts/BrandContext'
 
 interface AccountSidebarProps {
   orgslug: string
@@ -25,9 +26,10 @@ export function AccountSidebar({ orgslug, currentSubpage }: AccountSidebarProps)
   const { t } = useTranslation()
   const session = useLHSession() as any
   const user = session?.data?.user
+  const brand = useBrand()
 
   return (
-    <div className="space-y-4">
+    <div className="lh-account-sidebar space-y-4" data-brand={brand.key}>
       {/* User Info Card */}
       <div className="bg-white nice-shadow rounded-lg overflow-hidden">
         {/* User Profile Header */}
@@ -66,13 +68,14 @@ export function AccountSidebar({ orgslug, currentSubpage }: AccountSidebarProps)
                 <Link
                   key={item.id}
                   href={getUriWithOrg(orgslug, `/account/${item.id}`)}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-gray-900 text-white'
-                      : 'text-gray-700 hover:bg-gray-100'
+                  className={`lh-account-nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    isActive ? 'lh-account-nav-item--active' : 'lh-account-nav-item--inactive'
                   }`}
                 >
-                  <Icon size={18} className={isActive ? 'text-white' : 'text-gray-500'} />
+                  <Icon
+                    size={18}
+                    className={isActive ? 'lh-account-sidebar-icon--active' : 'lh-account-sidebar-icon--inactive'}
+                  />
                   <span className="text-sm font-medium">{item.label || t(item.labelKey)}</span>
                 </Link>
               )

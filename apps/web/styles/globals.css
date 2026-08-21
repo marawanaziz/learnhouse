@@ -507,6 +507,117 @@ html[data-lh-brand='bold'] :focus-visible {
   outline-offset: 2px;
 }
 
+/* Authenticated navigation surfaces. Base values preserve BBU; the BOLD
+ * overrides are selected only by the exact host marker on <html>. */
+.lh-account-nav-item--active {
+  background: #111827;
+  color: #fff;
+}
+
+.lh-account-nav-item--inactive {
+  color: #374151;
+}
+
+.lh-account-nav-item--inactive:hover {
+  background: #f3f4f6;
+}
+
+.lh-account-sidebar-icon--active {
+  color: currentColor;
+}
+
+.lh-account-sidebar-icon--inactive {
+  color: #6b7280;
+}
+
+.lh-dashboard-sidebar {
+  background: #0f0f10;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar {
+  background: var(--lh-brand-primary) !important;
+  border-color: color-mix(in srgb, var(--lh-brand-band-text) 18%, transparent) !important;
+  color: var(--lh-brand-band-text);
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="border-white/[0.08]"] {
+  border-color: color-mix(in srgb, var(--lh-brand-band-text) 18%, transparent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-white/50"],
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-white/40"],
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-white/30"] {
+  color: color-mix(in srgb, var(--lh-brand-band-text) 72%, transparent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-white/20"] {
+  color: color-mix(in srgb, var(--lh-brand-band-text) 54%, transparent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-white/70"],
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-white/90"] {
+  color: var(--lh-brand-band-text) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="hover:bg-white/[0.08]"]:hover,
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="hover:bg-white/[0.05]"]:hover {
+  background: color-mix(in srgb, var(--lh-brand-accent) 20%, transparent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="bg-white/[0.08]"] {
+  background: var(--lh-brand-accent) !important;
+  color: var(--lh-brand-band-text) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="bg-white"] {
+  background: var(--lh-brand-coral) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="text-red-500"] {
+  color: var(--lh-brand-coral) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="hover:text-red-400"]:hover {
+  color: var(--lh-brand-band-text) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar [class~="bg-[#1a1a1b]"] {
+  background: var(--lh-brand-primary-dark) !important;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar :focus-visible {
+  outline-color: var(--lh-brand-coral);
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar::selection,
+html[data-lh-brand='bold'] .lh-account-sidebar::selection {
+  background: var(--lh-brand-accent);
+  color: var(--lh-brand-band-text);
+}
+
+html[data-lh-brand='bold'] .lh-account-sidebar .lh-account-nav-item--active {
+  background: var(--lh-brand-primary) !important;
+  color: var(--lh-brand-band-text) !important;
+  box-shadow: inset 3px 0 0 var(--lh-brand-accent);
+}
+
+html[data-lh-brand='bold'] .lh-account-sidebar .lh-account-nav-item--inactive {
+  color: var(--lh-brand-ink) !important;
+}
+
+html[data-lh-brand='bold'] .lh-account-sidebar .lh-account-nav-item--inactive:hover {
+  background: color-mix(in srgb, var(--lh-brand-accent) 10%, var(--lh-brand-surface)) !important;
+  color: var(--lh-brand-primary) !important;
+}
+
+html[data-lh-brand='bold'] .lh-account-sidebar .lh-account-sidebar-icon--inactive {
+  color: var(--lh-brand-muted) !important;
+}
+
+html[data-lh-brand='bold'] .lh-account-sidebar .lh-account-sidebar-icon--active {
+  color: var(--lh-brand-band-text) !important;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

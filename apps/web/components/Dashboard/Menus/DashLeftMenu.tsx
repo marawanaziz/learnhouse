@@ -81,9 +81,12 @@ import { getDeploymentMode } from '@services/config/config'
 import PlanBadge from '@components/Dashboard/Shared/PlanRestricted/PlanBadge'
 import { usePlan } from '@components/Hooks/usePlan'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
+import { useBrand } from '@components/Contexts/BrandContext'
+import BrandLogo from '@components/Brand/BrandLogo'
 
 function DashLeftMenu() {
   const org = useOrg() as any
+  const brand = useBrand()
   const session = useLHSession() as any
   const { t, i18n } = useTranslation()
   const { track } = useLHAnalytics('dashboard')
@@ -191,7 +194,8 @@ function DashLeftMenu() {
     <nav
       aria-label="Dashboard sidebar navigation"
       className={cn(
-        "flex flex-col text-white h-screen sticky top-0 z-overlay border-r border-white/[0.08] bg-[#0f0f10] transition-all duration-300",
+        "lh-dashboard-sidebar flex flex-col text-white h-screen sticky top-0 z-overlay border-r border-white/[0.08] transition-all duration-300",
+        brand.key === 'bold' && 'lh-dashboard-sidebar--bold',
         isCollapsed ? "w-[72px]" : "w-64"
       )}
     >
@@ -204,7 +208,9 @@ function DashLeftMenu() {
           className={cn("flex items-center transition-opacity hover:opacity-70", isCollapsed ? "" : "space-x-3")}
           href={'/'}
         >
-          {org?.logo_image ? (
+          {brand.key === 'bold' ? (
+            <BrandLogo compact className="h-10 w-10 shrink-0" />
+          ) : org?.logo_image ? (
             <img
               src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}
               alt={org?.name}
@@ -223,7 +229,7 @@ function DashLeftMenu() {
           {!isCollapsed && (
             <div className="flex flex-col min-w-0">
               <span className="font-semibold text-sm text-white truncate">
-                {org?.name}
+                {brand.key === 'bold' ? brand.displayName : org?.name}
               </span>
               <span className={cn(
                 "text-[9px] font-medium uppercase tracking-wider",
