@@ -209,7 +209,7 @@ function DashLeftMenu() {
           href={'/'}
         >
           {brand.key === 'bold' ? (
-            <BrandLogo compact className="h-10 w-10 shrink-0" />
+            <BrandLogo compact className="h-9 w-9 shrink-0" />
           ) : org?.logo_image ? (
             <img
               src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}

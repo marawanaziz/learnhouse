@@ -85,9 +85,9 @@ const BOLD_PROFILE: BrandProfile = {
     body: 'Inter',
     heading: 'Fraunces',
   },
-  // project-bold-emblem.png is derived from BOLD_ASSET_SOURCES.logo by taking
-  // the official favicon crop (x=111,y=111,w=290,h=290) and applying a
-  // centered radius-144 alpha mask. This keeps only the emblem, with no type.
+  // project-bold-emblem.png is derived from the official favicon crop
+  // (x=111,y=111,w=290,h=290), retaining the original artwork while removing
+  // the source's outer white/gray fringe and clearing the transparent corners.
   logoPath: '/api/branding/logo',
   logoAlt: 'Project B.O.L.D. emblem',
   faviconPath: '/api/branding/icon',

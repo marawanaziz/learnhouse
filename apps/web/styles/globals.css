@@ -403,6 +403,25 @@ html[data-lh-brand='bold'] .lh-brand-lockup--compact .lh-brand-logo {
   height: 100%;
 }
 
+/* Keep the BOLD sidebar emblem centered in its fixed header slot. The auth
+ * mark intentionally keeps its larger responsive sizing above. */
+html[data-lh-brand='bold'] .lh-dashboard-sidebar .lh-brand-lockup--compact {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 2.25rem;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+}
+
+html[data-lh-brand='bold'] .lh-dashboard-sidebar .lh-brand-lockup--compact .lh-brand-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
 .lh-brand-bbu-wordmark {
   font-size: 1.15rem;
   font-weight: 600;

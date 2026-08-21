@@ -27,6 +27,8 @@ describe('host-scoped authenticated shell branding', () => {
 
   test('BOLD overrides are host-scoped and cover active, inactive, hover, focus, and selection states', () => {
     assert.match(globalStyles, /html\[data-lh-brand='bold'\] \.lh-dashboard-sidebar/)
+    assert.match(globalStyles, /html\[data-lh-brand='bold'\] \.lh-dashboard-sidebar \.lh-brand-lockup--compact/)
+    assert.match(dashboardMenu, /<BrandLogo compact className="h-9 w-9 shrink-0" \/>/)
     assert.match(globalStyles, /html\[data-lh-brand='bold'\] \.lh-account-sidebar/)
     assert.match(globalStyles, /lh-brand-primary/)
     assert.match(globalStyles, /lh-brand-accent/)
