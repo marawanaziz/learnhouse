@@ -3,7 +3,7 @@ import React from 'react'
 import Providers from '@components/Providers'
 import { Wix_Madefor_Text } from 'next/font/google'
 import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
-import { type BrandKey } from '@services/branding/brandProfile'
+import { type BrandKey, BOLD_ASSET_SOURCES } from '@services/branding/brandProfile'
 import { Metadata } from 'next'
 
 const wixMadeforText = Wix_Madefor_Text({
@@ -47,6 +47,10 @@ export default async function RootLayout({
     '--lh-brand-coral': brand.colors.coral,
     '--lh-brand-paper': brand.colors.paper,
     '--lh-brand-surface': brand.colors.surface,
+    '--lh-brand-primary-dark': brand.key === 'bold' ? '#082340' : brand.colors.primary,
+    '--lh-brand-muted': brand.key === 'bold' ? '#4c5a68' : '#6b7280',
+    '--lh-brand-border': brand.key === 'bold' ? '#E6DECF' : '#e5e7eb',
+    '--lh-brand-band-text': brand.key === 'bold' ? '#EAF1F7' : '#ffffff',
     '--lh-brand-body-font': brand.fonts.body,
     '--lh-brand-heading-font': brand.fonts.heading,
     ...(brand.key === 'bold' ? { '--font-default': 'Inter' } : {}),
@@ -77,7 +81,7 @@ export default async function RootLayout({
         {brand.key === 'bold' && <>
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" />
+          <link rel="stylesheet" href={BOLD_ASSET_SOURCES.fonts} />
         </>}
         <meta name="theme-color" content={brand.colors.primary} />
         <meta name="apple-mobile-web-app-capable" content="yes" />

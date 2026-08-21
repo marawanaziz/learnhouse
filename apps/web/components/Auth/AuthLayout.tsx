@@ -31,7 +31,7 @@ export default function AuthLayout({ org, welcomeText, children }: AuthLayoutPro
       </div>
 
       {/* Right Panel - Content */}
-      <div className="bg-gray-50 flex flex-col relative flex-1 lg:h-full overflow-auto">
+      <div className="lh-auth-panel bg-gray-50 flex flex-col relative flex-1 lg:h-full overflow-auto">
         {children}
       </div>
     </div>

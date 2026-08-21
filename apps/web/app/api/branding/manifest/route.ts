@@ -12,7 +12,7 @@ export function GET(request: Request) {
     background_color: profile.colors.paper,
     theme_color: profile.colors.primary,
     icons: [
-      { src: profile.faviconPath, sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: profile.faviconPath, sizes: 'any', type: profile.key === 'bold' ? 'image/png' : 'image/x-icon', purpose: 'any maskable' },
     ],
   }, {
     headers: { 'Cache-Control': 'public, max-age=300, s-maxage=300' },

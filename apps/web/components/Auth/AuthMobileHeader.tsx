@@ -27,7 +27,7 @@ export default function AuthMobileHeader({ org }: AuthMobileHeaderProps) {
 
   const getBackgroundStyle = (): React.CSSProperties => {
     if (brand.key === 'bold') {
-      return { background: 'linear-gradient(145deg, #18364a 0%, #244e61 52%, #b63d32 150%)' }
+      return { background: `linear-gradient(145deg, ${brand.colors.primary} 0%, #082340 72%, ${brand.colors.accent} 150%)` }
     }
     if (background_type === 'gradient' || !background_image) {
       return {

@@ -13,9 +13,9 @@ export default function BrandLogo({ compact = false, inverse = false, className 
 
   if (brand.key === 'bold') {
     return (
-      <span className={cn('lh-brand-lockup', inverse && 'lh-brand-lockup--inverse', className)} aria-label={brand.displayName}>
-        <span className="lh-brand-emblem" aria-hidden="true">&amp;</span>
-        {!compact && <span className="lh-brand-wordmark">Project BOLD</span>}
+      <span className={cn('lh-brand-lockup', compact && 'lh-brand-lockup--compact', inverse && 'lh-brand-lockup--inverse', className)}>
+        <img src={brand.logoPath} alt={brand.logoAlt} className="lh-brand-logo" />
+        {!compact && <span className="lh-brand-wordmark" aria-hidden="true">Project B.O.L.D.</span>}
       </span>
     )
   }

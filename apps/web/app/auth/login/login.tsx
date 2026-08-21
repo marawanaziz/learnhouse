@@ -277,12 +277,12 @@ const LoginClient = (props: LoginClientProps) => {
         <div className="m-auto w-full max-w-md px-6 py-10 sm:py-0">
           {/* Header */}
           <div className="mb-7">
-            <h1 className="text-[1.9rem] leading-[1.15] font-semibold tracking-tight text-slate-900">{t('auth.welcome_back')}</h1>
-            <p className="text-slate-500 mt-2 text-[0.95rem]">{t('auth.enter_credentials')}</p>
+            <h1 className="lh-auth-heading text-[1.9rem] leading-[1.15] font-semibold tracking-tight text-slate-900">{t('auth.welcome_back')}</h1>
+            <p className="lh-auth-copy text-slate-500 mt-2 text-[0.95rem]">{t('auth.enter_credentials')}</p>
           </div>
 
           {/* Login Form Card */}
-          <div className="bg-white rounded-2xl p-8 shadow-xl shadow-slate-300/40 ring-1 ring-slate-900/[0.06]">
+          <div className="lh-auth-card bg-white rounded-2xl p-8 shadow-xl shadow-slate-300/40 ring-1 ring-slate-900/[0.06]">
             <FormLayout onSubmit={formik.handleSubmit}>
               <FormField name="email">
                 <FormLabelAndMessage
@@ -291,6 +291,7 @@ const LoginClient = (props: LoginClientProps) => {
                 />
                 <Form.Control asChild>
                   <Input
+                    className="lh-brand-input"
                     onChange={formik.handleChange}
                     onBlur={formik.handleBlur}
                     value={formik.values.email}
@@ -306,6 +307,7 @@ const LoginClient = (props: LoginClientProps) => {
                 />
                 <Form.Control asChild>
                   <Input
+                    className="lh-brand-input"
                     onChange={formik.handleChange}
                     onBlur={formik.handleBlur}
                     value={formik.values.password}
@@ -318,7 +320,7 @@ const LoginClient = (props: LoginClientProps) => {
               <div className="flex justify-end">
                 <Link
                   href="/forgot"
-                  className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                  className="lh-auth-link text-xs text-gray-500 hover:text-gray-700 transition-colors"
                 >
                   {t('auth.forgot_password')}
                 </Link>
@@ -326,7 +328,7 @@ const LoginClient = (props: LoginClientProps) => {
 
               <div className="pt-2">
                 <Form.Submit asChild>
-                  <button className="w-full bg-[#113d5d] text-white font-semibold text-center py-3 rounded-xl hover:bg-[#0d3350] shadow-lg shadow-[#113d5d]/20 transition-all active:scale-[0.99]">
+                  <button className="lh-brand-primary-button w-full text-white font-semibold text-center py-3 rounded-xl shadow-lg transition-all active:scale-[0.99]">
                     {isSubmitting ? t('common.loading') : t('auth.login')}
                   </button>
                 </Form.Submit>
@@ -340,13 +342,13 @@ const LoginClient = (props: LoginClientProps) => {
                     <div className="w-full border-t border-gray-200"></div>
                   </div>
                   <div className="relative flex justify-center text-sm">
-                    <span className="px-3 bg-white text-gray-400">{t('common.or')}</span>
+                    <span className="lh-auth-divider px-3 bg-white text-gray-400">{t('common.or')}</span>
                   </div>
                 </div>
                 <button
                   onClick={handleSSOLogin}
                   disabled={ssoLoading}
-                  className="flex items-center justify-center gap-2 w-full py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  className="lh-brand-primary-button flex items-center justify-center gap-2 w-full py-2.5 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
                 >
                   <Shield size={16} />
                   <span>{ssoLoading ? t('common.loading') : t('auth.sign_in_with_sso')}</span>
@@ -356,9 +358,9 @@ const LoginClient = (props: LoginClientProps) => {
           </div>
 
           {/* Sign Up Link */}
-          <p className="text-center text-gray-600 mt-6">
+          <p className="lh-auth-copy text-center text-gray-600 mt-6">
             {t('auth.no_account')}{' '}
-            <Link href="/signup" className="font-semibold text-[#113d5d] hover:underline">
+            <Link href="/signup" className="lh-auth-link font-semibold hover:underline">
               {t('auth.sign_up')}
             </Link>
           </p>

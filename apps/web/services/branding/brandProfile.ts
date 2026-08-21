@@ -3,6 +3,12 @@ export const BRAND_HOSTS = {
   bold: 'learn.boldmovement.org',
 } as const
 
+export const BOLD_ASSET_SOURCES = {
+  logo: 'https://boldmovement.org/wp-content/themes/project-bold/assets/images/bold-emblem.png?v=3.4.0',
+  favicon: 'https://boldmovement.org/wp-content/themes/project-bold/assets/images/bold-favicon.png?v=3.4.0',
+  fonts: 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap',
+} as const
+
 export type BrandKey = keyof typeof BRAND_HOSTS
 
 export interface BrandProfile {
@@ -25,6 +31,8 @@ export interface BrandProfile {
     body: string
     heading: string
   }
+  logoPath: string
+  logoAlt: string
   faviconPath: string
   manifestPath: string
 }
@@ -49,6 +57,8 @@ const BBU_PROFILE: BrandProfile = {
     body: 'Wix Madefor Text',
     heading: 'Wix Madefor Text',
   },
+  logoPath: '/favicon.ico',
+  logoAlt: 'Birth & Baby University',
   faviconPath: '/favicon.ico',
   manifestPath: '/manifest.webmanifest',
 }
@@ -62,17 +72,19 @@ const BOLD_PROFILE: BrandProfile = {
   description: 'Project BOLD learning portal for families and perinatal professionals.',
   partnershipLine: 'Project BOLD partners with Birth & Baby University to bring trainings and courses.',
   colors: {
-    ink: '#182735',
-    primary: '#18364a',
-    accent: '#b63d32',
-    coral: '#e97562',
-    paper: '#f8f1e8',
-    surface: '#fffdf9',
+    ink: '#16324C',
+    primary: '#0E335D',
+    accent: '#CD2E3A',
+    coral: '#E8897F',
+    paper: '#FAF6EE',
+    surface: '#FFFDF8',
   },
   fonts: {
     body: 'Inter',
     heading: 'Fraunces',
   },
+  logoPath: '/api/branding/logo',
+  logoAlt: 'Project B.O.L.D. emblem',
   faviconPath: '/api/branding/icon',
   manifestPath: '/api/branding/manifest',
 }

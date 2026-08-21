@@ -32,7 +32,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
   const getBackgroundStyle = (): React.CSSProperties => {
     if (brand.key === 'bold') {
       return {
-        background: 'linear-gradient(145deg, #18364a 0%, #244e61 52%, #b63d32 150%)',
+        background: `linear-gradient(145deg, ${brand.colors.primary} 0%, #082340 72%, ${brand.colors.accent} 150%)`,
       }
     }
     if (background_type === 'gradient' || !background_image) {
@@ -92,7 +92,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
                 brand.key === 'bold' && 'lh-brand-auth-mark'
               )} style={brand.key === 'bold' ? { color: brand.colors.primary } : undefined}>
                 {brand.key === 'bold' ? (
-                  <BrandLogo />
+                  <BrandLogo compact className="w-full h-full p-5" />
                 ) : org?.logo_image ? (
                   <img
                     src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}

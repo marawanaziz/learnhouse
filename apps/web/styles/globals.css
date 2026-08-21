@@ -377,17 +377,12 @@ html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
   white-space: nowrap;
 }
 
-.lh-brand-emblem {
-  display: inline-flex;
-  width: 2rem;
-  height: 2rem;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid currentColor;
-  border-radius: 999px;
-  font-family: Fraunces, Georgia, serif;
-  font-size: 1.35rem;
-  line-height: 1;
+.lh-brand-logo {
+  display: block;
+  width: 2.35rem;
+  height: 2.35rem;
+  object-fit: contain;
+  flex: 0 0 auto;
 }
 
 .lh-brand-wordmark {
@@ -395,6 +390,17 @@ html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
   font-size: 1.16rem;
   font-weight: 700;
   letter-spacing: -0.035em;
+}
+
+.lh-brand-lockup--compact {
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+}
+
+.lh-brand-lockup--compact .lh-brand-logo {
+  width: 100%;
+  height: 100%;
 }
 
 .lh-brand-bbu-wordmark {
@@ -420,6 +426,85 @@ html[data-lh-brand='bold'] .lh-brand-nav {
 
 html[data-lh-brand='bold'] .lh-brand-mobile-menu {
   background: var(--lh-brand-surface) !important;
+}
+
+/* Project BOLD component tokens. The BBU host never receives this selector. */
+html[data-lh-brand='bold'] .lh-auth-shell,
+html[data-lh-brand='bold'] .lh-auth-panel {
+  background: var(--lh-brand-paper) !important;
+  color: var(--lh-brand-ink);
+}
+
+html[data-lh-brand='bold'] .lh-auth-card {
+  background: var(--lh-brand-surface) !important;
+  box-shadow: 0 22px 55px -30px rgb(14 51 93 / 42%), 0 0 0 1px var(--lh-brand-border) !important;
+}
+
+html[data-lh-brand='bold'] .lh-auth-heading,
+html[data-lh-brand='bold'] .lh-auth-copy,
+html[data-lh-brand='bold'] .lh-auth-card label {
+  color: var(--lh-brand-ink) !important;
+}
+
+html[data-lh-brand='bold'] .lh-auth-copy,
+html[data-lh-brand='bold'] .lh-auth-card label,
+html[data-lh-brand='bold'] .lh-auth-card .text-gray-500 {
+  color: var(--lh-brand-muted) !important;
+}
+
+html[data-lh-brand='bold'] .lh-auth-link {
+  color: var(--lh-brand-primary) !important;
+}
+
+html[data-lh-brand='bold'] .lh-auth-link:hover {
+  color: var(--lh-brand-accent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-brand-primary-button {
+  background: var(--lh-brand-primary) !important;
+  color: var(--lh-brand-band-text) !important;
+}
+
+html[data-lh-brand='bold'] .lh-brand-primary-button:hover {
+  background: var(--lh-brand-primary-dark) !important;
+}
+
+html[data-lh-brand='bold'] .lh-brand-input {
+  background: var(--lh-brand-surface) !important;
+  color: var(--lh-brand-ink) !important;
+  box-shadow: 0 0 0 1px var(--lh-brand-border) !important;
+}
+
+html[data-lh-brand='bold'] .lh-brand-input:hover,
+html[data-lh-brand='bold'] .lh-brand-input:focus {
+  box-shadow: 0 0 0 2px var(--lh-brand-accent) !important;
+}
+
+html[data-lh-brand='bold'] .lh-brand-input::selection {
+  background: var(--lh-brand-accent);
+  color: #fff;
+}
+
+html[data-lh-brand='bold'] .lh-auth-divider {
+  background: var(--lh-brand-surface) !important;
+  color: var(--lh-brand-muted) !important;
+}
+
+html[data-lh-brand='bold'] .border-gray-200,
+html[data-lh-brand='bold'] .border-gray-300 {
+  border-color: var(--lh-brand-border) !important;
+}
+
+html[data-lh-brand='bold'] .text-gray-500,
+html[data-lh-brand='bold'] .text-gray-600,
+html[data-lh-brand='bold'] .text-slate-500,
+html[data-lh-brand='bold'] .text-neutral-500 {
+  color: var(--lh-brand-muted) !important;
+}
+
+html[data-lh-brand='bold'] :focus-visible {
+  outline: 2px solid var(--lh-brand-accent);
+  outline-offset: 2px;
 }
 
 @layer base {

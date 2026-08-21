@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
+  BOLD_ASSET_SOURCES,
+  BRAND_PROFILES,
   BRAND_HOSTS,
   brandKeyFromHostname,
   getBrandProfile,
@@ -28,5 +30,19 @@ describe('Project BOLD host brand contract', () => {
     assert.equal(getBrandProfile('bold').displayName, 'Project BOLD')
     assert.match(getBrandProfile('bold').partnershipLine, /Birth & Baby University/)
     assert.equal(getBrandProfile('bbu').displayName, 'Birth & Baby University')
+  })
+
+  test('keeps the official BOLD assets, tokens, and type contract explicit', () => {
+    const bold = BRAND_PROFILES.bold
+    assert.equal(bold.logoPath, '/api/branding/logo')
+    assert.equal(bold.faviconPath, '/api/branding/icon')
+    assert.equal(bold.colors.primary, '#0E335D')
+    assert.equal(bold.colors.accent, '#CD2E3A')
+    assert.equal(bold.colors.paper, '#FAF6EE')
+    assert.equal(bold.colors.ink, '#16324C')
+    assert.equal(bold.fonts.body, 'Inter')
+    assert.equal(bold.fonts.heading, 'Fraunces')
+    assert.match(BOLD_ASSET_SOURCES.logo, /bold-emblem\.png/)
+    assert.match(BOLD_ASSET_SOURCES.favicon, /bold-favicon\.png/)
   })
 })

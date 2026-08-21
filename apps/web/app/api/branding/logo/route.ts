@@ -5,8 +5,8 @@ export async function GET(request: Request) {
   const profile = getBrandProfileForHostname(request.headers.get('host') || new URL(request.url).hostname)
   if (profile.key !== 'bold') return new NextResponse(null, { status: 404 })
 
-  const upstream = await fetch(BOLD_ASSET_SOURCES.favicon, { cache: 'force-cache' })
-  if (!upstream.ok) return new NextResponse('Unable to load the official Project BOLD favicon', { status: 502 })
+  const upstream = await fetch(BOLD_ASSET_SOURCES.logo, { cache: 'force-cache' })
+  if (!upstream.ok) return new NextResponse('Unable to load the official Project BOLD logo', { status: 502 })
 
   return new NextResponse(await upstream.arrayBuffer(), {
     headers: {
