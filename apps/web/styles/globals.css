@@ -369,7 +369,7 @@ html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
   color: inherit;
 }
 
-.lh-brand-lockup,
+html[data-lh-brand='bold'] .lh-brand-lockup,
 .lh-brand-bbu-wordmark {
   display: inline-flex;
   align-items: center;
@@ -377,7 +377,7 @@ html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
   white-space: nowrap;
 }
 
-.lh-brand-logo {
+html[data-lh-brand='bold'] .lh-brand-logo {
   display: block;
   width: 2.35rem;
   height: 2.35rem;
@@ -385,20 +385,20 @@ html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
   flex: 0 0 auto;
 }
 
-.lh-brand-wordmark {
+html[data-lh-brand='bold'] .lh-brand-wordmark {
   font-family: Fraunces, Georgia, serif;
   font-size: 1.16rem;
   font-weight: 700;
   letter-spacing: -0.035em;
 }
 
-.lh-brand-lockup--compact {
+html[data-lh-brand='bold'] .lh-brand-lockup--compact {
   width: 100%;
   height: 100%;
   justify-content: center;
 }
 
-.lh-brand-lockup--compact .lh-brand-logo {
+html[data-lh-brand='bold'] .lh-brand-lockup--compact .lh-brand-logo {
   width: 100%;
   height: 100%;
 }
@@ -409,13 +409,9 @@ html[data-lh-brand='bold'] .lh-brand-bbu-wordmark {
   letter-spacing: -0.02em;
 }
 
-.lh-brand-lockup--inverse,
+html[data-lh-brand='bold'] .lh-brand-lockup--inverse,
 .lh-brand-bbu-wordmark--inverse {
   color: #fff;
-}
-
-.lh-auth-shell {
-  background: var(--lh-brand-paper);
 }
 
 html[data-lh-brand='bold'] .lh-brand-nav {
@@ -433,6 +429,19 @@ html[data-lh-brand='bold'] .lh-auth-shell,
 html[data-lh-brand='bold'] .lh-auth-panel {
   background: var(--lh-brand-paper) !important;
   color: var(--lh-brand-ink);
+}
+
+html[data-lh-brand='bold'] .lh-brand-auth-mark {
+  overflow: hidden;
+}
+
+html[data-lh-brand='bold'] .lh-brand-auth-mark .lh-brand-logo {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
 }
 
 html[data-lh-brand='bold'] .lh-auth-card {

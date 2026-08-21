@@ -328,7 +328,7 @@ const LoginClient = (props: LoginClientProps) => {
 
               <div className="pt-2">
                 <Form.Submit asChild>
-                  <button className="lh-brand-primary-button w-full text-white font-semibold text-center py-3 rounded-xl shadow-lg transition-all active:scale-[0.99]">
+                  <button className="lh-brand-primary-button w-full bg-[#113d5d] text-white font-semibold text-center py-3 rounded-xl hover:bg-[#0d3350] shadow-lg shadow-[#113d5d]/20 transition-all active:scale-[0.99]">
                     {isSubmitting ? t('common.loading') : t('auth.login')}
                   </button>
                 </Form.Submit>
@@ -348,7 +348,7 @@ const LoginClient = (props: LoginClientProps) => {
                 <button
                   onClick={handleSSOLogin}
                   disabled={ssoLoading}
-                  className="lh-brand-primary-button flex items-center justify-center gap-2 w-full py-2.5 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+                  className="lh-brand-primary-button flex items-center justify-center gap-2 w-full py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
                 >
                   <Shield size={16} />
                   <span>{ssoLoading ? t('common.loading') : t('auth.sign_in_with_sso')}</span>

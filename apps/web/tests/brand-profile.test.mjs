@@ -42,7 +42,7 @@ describe('Project BOLD host brand contract', () => {
     assert.equal(bold.colors.ink, '#16324C')
     assert.equal(bold.fonts.body, 'Inter')
     assert.equal(bold.fonts.heading, 'Fraunces')
-    assert.match(BOLD_ASSET_SOURCES.logo, /bold-emblem\.png/)
+    assert.match(BOLD_ASSET_SOURCES.logo, /bold-favicon\.png/)
     assert.match(BOLD_ASSET_SOURCES.favicon, /bold-favicon\.png/)
   })
 })
