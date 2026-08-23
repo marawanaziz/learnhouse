@@ -16,6 +16,7 @@ import { useOrg } from '@components/Contexts/OrgContext'
 import { useTranslation } from 'react-i18next'
 import { PasswordStrengthIndicator, validatePasswordStrength } from '@components/Auth/PasswordStrengthIndicator'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
+import { useBrand } from '@components/Contexts/BrandContext'
 
 const validate = (values: any, t: any) => {
   const errors: any = {}
@@ -53,6 +54,7 @@ interface InviteOnlySignUpProps {
 
 function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
   const { t } = useTranslation()
+  const brand = useBrand()
   const { track } = useLHAnalytics('public')
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const org = useOrg() as any
@@ -111,7 +113,9 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
         </h1>
         <p className="text-gray-500 mt-1">
           {props.programName
-            ? 'Project BOLD partners with Birth & Baby University and Through to THRIVE to provide this learning space.'
+            ? brand.key === 'bold'
+              ? brand.partnershipLine
+              : 'Project BOLD partners with Birth & Baby University and Through to THRIVE to provide this learning space.'
             : t('auth.fill_in_details')}
         </p>
       </div>

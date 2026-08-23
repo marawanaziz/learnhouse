@@ -10,6 +10,16 @@ const courseEndSource = readFileSync(
   "utf8"
 );
 
+const certificatePreviewSource = readFileSync(
+  fileURLToPath(
+    new URL(
+      "../components/Dashboard/Pages/Course/EditCourseCertification/CertificatePreview.tsx",
+      import.meta.url
+    )
+  ),
+  "utf8"
+);
+
 describe("BBU course-end certificate export", () => {
   test("captures only the branded certificate surface", () => {
     assert.match(courseEndSource, /const BBU_COURSE_END_SURFACE_ID = 'bbu-course-end-certificate-surface'/);
@@ -32,5 +42,15 @@ describe("BBU course-end certificate export", () => {
     assert.match(courseEndSource, /issueDate=\{formatCertificateDate\(/);
     assert.match(courseEndSource, /expirationDate=\{bbuExpirationDate\(/);
     assert.match(courseEndSource, /surfaceId=\{BBU_COURSE_END_SURFACE_ID\}/);
+  });
+
+  test("encodes the page verification URL in the BBU artwork", () => {
+    assert.match(certificatePreviewSource, /const \[qrCodeUrl, setQrCodeUrl\]/);
+    assert.match(certificatePreviewSource, /const certificateData = qrCodeLink \|\| `\$\{certificateId\}`/);
+    assert.match(certificatePreviewSource, /src=\{qrCodeUrl\}/);
+    assert.doesNotMatch(
+      certificatePreviewSource,
+      /cert-qr\/\$\{encodeURIComponent\(certificateId\)\}/
+    );
   });
 });

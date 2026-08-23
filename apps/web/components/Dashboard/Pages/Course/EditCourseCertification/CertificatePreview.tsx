@@ -37,6 +37,40 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
   expirationDate,
   surfaceId,
 }) => {
+  // Generate the QR from the page-provided public verification URL for every
+  // certificate layout. BBU certificates use the exact same URL as the
+  // in-app verification link instead of reconstructing a possibly different
+  // host inside the API's QR endpoint.
+  const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const generateQRCode = async () => {
+      try {
+        const certificateData = qrCodeLink || `${certificateId}`;
+        const QRCode = (await import('qrcode')).default;
+        const qrUrl = await QRCode.toDataURL(certificateData, {
+          width: 185,
+          margin: 1,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF'
+          },
+          errorCorrectionLevel: 'M',
+          type: 'image/png'
+        });
+        if (!cancelled) setQrCodeUrl(qrUrl);
+      } catch (error) {
+        console.error('Error generating QR code:', error);
+      }
+    };
+
+    generateQRCode();
+    return () => { cancelled = true };
+  }, [certificateId, qrCodeLink]);
+
+  const org = useOrg() as any;
+
   // ---- BBU-branded certificate ------------------------------------------
   // Renders the client's exact Canva artwork as the background and overlays
   // only the live fields onto the blank lines.
@@ -105,11 +139,11 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
         )}
 
         {/* Verification QR. Box measured clear of artwork on all 13 templates.
-            Served same-origin as SVG so the html2canvas PDF export doesn't taint
-            the canvas and produce a blank file. */}
-        {certificateId ? (
+            The page-provided URL is the same BBU/BOLD-host verification URL
+            shown by the in-app Verify Certificate link. */}
+        {qrCodeUrl ? (
           <img
-            src={`/api/v1/bbu/cert-qr/${encodeURIComponent(certificateId)}`}
+            src={qrCodeUrl}
             alt="Scan to verify this certificate"
             style={{
               position: 'absolute', left: '78%', top: '70%',
@@ -121,33 +155,6 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
     );
   }
   // ---- default (non-BBU) LearnHouse patterns ----------------------------
-  const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
-  const org = useOrg() as any;
-
-  // Generate QR code
-  useEffect(() => {
-    const generateQRCode = async () => {
-      try {
-        const certificateData = qrCodeLink || `${certificateId}`;
-        const QRCode = (await import('qrcode')).default;
-        const qrUrl = await QRCode.toDataURL(certificateData, {
-          width: 185,
-          margin: 1,
-          color: {
-            dark: '#000000',
-            light: '#FFFFFF'
-          },
-          errorCorrectionLevel: 'M',
-          type: 'image/png'
-        });
-        setQrCodeUrl(qrUrl);
-      } catch (error) {
-        console.error('Error generating QR code:', error);
-      }
-    };
-
-    generateQRCode();
-  }, [certificateId, qrCodeLink]);
   // Function to get theme colors for each pattern
   const getPatternTheme = (pattern: string) => {
     switch (pattern) {
