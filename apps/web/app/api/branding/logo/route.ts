@@ -7,8 +7,7 @@ export async function GET(request: Request) {
   const profile = getBrandProfileForHostname(request.headers.get('host') || new URL(request.url).hostname)
   if (profile.key !== 'bold') return new NextResponse(null, { status: 404 })
 
-  // Serve the deterministic, alpha-masked circle-only derivative. Keeping the
-  // existing endpoint preserves the host-aware branding contract for clients.
+  // Serve the deterministic, alpha-masked circle-only derivative.
   let logo: Uint8Array
   try {
     logo = Uint8Array.from(await readFile(join(process.cwd(), 'public', 'project-bold-emblem.png')))

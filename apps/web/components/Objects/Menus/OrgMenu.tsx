@@ -158,7 +158,10 @@ export const OrgMenu = (props: any) => {
               <Link href={getUriWithOrg(orgslug, '/')}>
                 <div className="flex items-center m-auto justify-center">
                   {brand.key === 'bold' ? (
-                    <BrandLogo inverse={Boolean(primaryColor)} />
+                    <>
+                      <BrandLogo compact inverse={Boolean(primaryColor)} className="h-9 w-9 shrink-0" />
+                      <span className="font-semibold text-lg whitespace-nowrap tracking-tight">{brand.displayName}</span>
+                    </>
                   ) : org?.name ? (
                     <span className={`font-semibold text-xl whitespace-nowrap tracking-tight ${colors.text}`}>
                       {org.name}

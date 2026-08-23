@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { NextResponse } from 'next/server'
 import { getBrandProfileForHostname } from '@services/branding/brandProfile'
 
 export async function GET(request: Request) {
@@ -8,8 +8,8 @@ export async function GET(request: Request) {
   if (profile.key !== 'bold') return new NextResponse(null, { status: 404 })
 
   try {
-    const icon = Uint8Array.from(await readFile(join(process.cwd(), 'public', 'project-bold-icon.png')))
-    const body = icon.buffer.slice(icon.byteOffset, icon.byteOffset + icon.byteLength) as ArrayBuffer
+    const logo = Uint8Array.from(await readFile(join(process.cwd(), 'public', 'project-bold-logo.png')))
+    const body = logo.buffer.slice(logo.byteOffset, logo.byteOffset + logo.byteLength) as ArrayBuffer
     return new NextResponse(body, {
       headers: {
         'Content-Type': 'image/png',
@@ -17,6 +17,6 @@ export async function GET(request: Request) {
       },
     })
   } catch {
-    return new NextResponse('Unable to load the Project BOLD icon', { status: 502 })
+    return new NextResponse('Unable to load the Project BOLD full logo', { status: 502 })
   }
 }

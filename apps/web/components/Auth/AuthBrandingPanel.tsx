@@ -32,7 +32,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
   const getBackgroundStyle = (): React.CSSProperties => {
     if (brand.key === 'bold') {
       return {
-        background: `linear-gradient(145deg, ${brand.colors.primary} 0%, #082340 72%, ${brand.colors.accent} 150%)`,
+        background: `linear-gradient(145deg, ${brand.colors.paper} 0%, ${brand.colors.surface} 72%, #f0e2d8 150%)`,
       }
     }
     if (background_type === 'gradient' || !background_image) {
@@ -63,7 +63,8 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
   const displayMessage = brand.key === 'bold'
     ? brand.partnershipLine
     : welcome_message || welcomeText || ''
-  const hasCustomBackground = background_type !== 'gradient' && background_image
+  const effectiveTextColor = brand.key === 'bold' ? 'dark' : text_color
+  const hasCustomBackground = brand.key !== 'bold' && background_type !== 'gradient' && background_image
 
   return (
     <div
@@ -83,16 +84,16 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
         <div className="flex-1 flex items-center justify-center">
           <div className={cn(
             "flex flex-col items-center text-center gap-6",
-            text_color === 'light' ? "text-white" : "text-gray-900"
+            effectiveTextColor === 'light' ? "text-white" : "text-gray-900"
           )}>
             {/* Organization logo */}
             <Link prefetch href={getUriWithOrg(org?.slug, '/')}>
               <div className={cn(
                 "w-72 h-72 rounded-3xl ring-1 ring-inset ring-white/10 bg-white flex items-center justify-center overflow-hidden",
                 brand.key === 'bold' && 'lh-brand-auth-mark'
-              )} style={brand.key === 'bold' ? { color: brand.colors.primary } : undefined}>
+              )}>
                 {brand.key === 'bold' ? (
-                  <BrandLogo compact className="w-full h-full p-5" />
+                  <BrandLogo className="w-full h-full p-5" />
                 ) : org?.logo_image ? (
                   <img
                     src={getOrgLogoMediaDirectory(org.org_uuid, org.logo_image)}
@@ -118,7 +119,7 @@ export default function AuthBrandingPanel({ org, welcomeText }: AuthBrandingPane
               {displayMessage && (
                 <p className={cn(
                   "text-lg max-w-sm leading-relaxed",
-                  text_color === 'light' ? "text-white/70" : "text-gray-600"
+                  effectiveTextColor === 'light' ? "text-white/70" : "text-gray-600"
                 )}>
                   {displayMessage}
                 </p>

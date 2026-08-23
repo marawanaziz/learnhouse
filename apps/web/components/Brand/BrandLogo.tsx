@@ -12,10 +12,10 @@ export default function BrandLogo({ compact = false, inverse = false, className 
   const brand = useBrand()
 
   if (brand.key === 'bold') {
+    const logoPath = compact ? brand.logoPath : brand.fullLogoPath
     return (
       <span className={cn('lh-brand-lockup', compact && 'lh-brand-lockup--compact', inverse && 'lh-brand-lockup--inverse', className)}>
-        <img src={brand.logoPath} alt={brand.logoAlt} className="lh-brand-logo" />
-        {!compact && <span className="lh-brand-wordmark" aria-hidden="true">Project B.O.L.D.</span>}
+        <img src={logoPath} alt={brand.logoAlt} className={cn('lh-brand-logo', !compact && 'lh-brand-logo--full')} />
       </span>
     )
   }

@@ -35,6 +35,7 @@ describe('Project BOLD host brand contract', () => {
   test('keeps the official BOLD assets, tokens, and type contract explicit', () => {
     const bold = BRAND_PROFILES.bold
     assert.equal(bold.logoPath, '/api/branding/logo')
+    assert.equal(bold.fullLogoPath, '/api/branding/full-logo')
     assert.equal(bold.faviconPath, '/api/branding/icon')
     assert.equal(bold.colors.primary, '#0E335D')
     assert.equal(bold.colors.accent, '#CD2E3A')
@@ -42,7 +43,6 @@ describe('Project BOLD host brand contract', () => {
     assert.equal(bold.colors.ink, '#16324C')
     assert.equal(bold.fonts.body, 'Inter')
     assert.equal(bold.fonts.heading, 'Fraunces')
-    assert.match(BOLD_ASSET_SOURCES.logo, /bold-favicon\.png/)
-    assert.match(BOLD_ASSET_SOURCES.favicon, /bold-favicon\.png/)
+    assert.match(BOLD_ASSET_SOURCES.fonts, /fonts\.googleapis\.com/)
   })
 })

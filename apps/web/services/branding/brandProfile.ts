@@ -4,10 +4,6 @@ export const BRAND_HOSTS = {
 } as const
 
 export const BOLD_ASSET_SOURCES = {
-  // The official favicon is the source for the transparent circle-only render
-  // asset. The older bold-emblem.png canvas includes clipped surrounding type.
-  logo: 'https://boldmovement.org/wp-content/themes/project-bold/assets/images/bold-favicon.png?v=3.4.0',
-  favicon: 'https://boldmovement.org/wp-content/themes/project-bold/assets/images/bold-favicon.png?v=3.4.0',
   fonts: 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap',
 } as const
 
@@ -34,6 +30,7 @@ export interface BrandProfile {
     heading: string
   }
   logoPath: string
+  fullLogoPath: string
   logoAlt: string
   faviconPath: string
   manifestPath: string
@@ -60,6 +57,7 @@ const BBU_PROFILE: BrandProfile = {
     heading: 'Wix Madefor Text',
   },
   logoPath: '/favicon.ico',
+  fullLogoPath: '/favicon.ico',
   logoAlt: 'Birth & Baby University',
   faviconPath: '/favicon.ico',
   manifestPath: '/manifest.webmanifest',
@@ -85,11 +83,11 @@ const BOLD_PROFILE: BrandProfile = {
     body: 'Inter',
     heading: 'Fraunces',
   },
-  // project-bold-emblem.png is derived from the official favicon crop
-  // (x=111,y=111,w=290,h=290), retaining the original artwork while removing
-  // the source's outer white/gray fringe and clearing the transparent corners.
+  // The compact emblem and full vertical lockup are deterministic transparent
+  // derivatives of the owner-supplied Project BOLD source image.
   logoPath: '/api/branding/logo',
-  logoAlt: 'Project B.O.L.D. emblem',
+  fullLogoPath: '/api/branding/full-logo',
+  logoAlt: 'Project BOLD emblem',
   faviconPath: '/api/branding/icon',
   manifestPath: '/api/branding/manifest',
 }
