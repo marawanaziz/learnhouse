@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+import stripe
 from starlette.requests import Request
 
 from src.bbu_payments import affiliate_router
@@ -62,6 +63,28 @@ def test_connect_state_covers_every_member_facing_state():
         "details_submitted": True,
         "requirements": {"currently_due": []},
     })["status"] == "connected"
+
+
+def test_connect_state_accepts_stripe_sdk_objects_and_missing_requirements():
+    account = stripe.StripeObject.construct_from(
+        {
+            "payouts_enabled": False,
+            "details_submitted": True,
+            "requirements": {
+                "currently_due": [],
+                "past_due": [],
+            },
+        },
+        "sk_test",
+    )
+
+    assert affiliate_router._connect_state(account) == {
+        "status": "pending_review",
+        "payouts_enabled": False,
+        "details_submitted": True,
+        "currently_due_count": 0,
+        "disabled_reason": "",
+    }
 
 
 def test_apply_connect_state_never_reactivates_suspended_affiliate():

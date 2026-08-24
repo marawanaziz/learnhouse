@@ -94,6 +94,13 @@ def _member_account_url(request: Request, orgslug: str, result: str = "") -> str
     return f"{_base_url(request)}{path}"
 
 
+def _stripe_value(obj, key, default=None):
+    """Read a field from either StripeObject responses or test mappings."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def _connect_state(account) -> dict:
     """Translate Stripe's account object into the learner-facing payout states."""
     if not account:
@@ -104,11 +111,11 @@ def _connect_state(account) -> dict:
             "currently_due_count": 0,
             "disabled_reason": "",
         }
-    requirements = account.get("requirements") or {}
-    currently_due = requirements.get("currently_due") or []
-    disabled_reason = requirements.get("disabled_reason") or ""
-    payouts_enabled = bool(account.get("payouts_enabled"))
-    details_submitted = bool(account.get("details_submitted"))
+    requirements = _stripe_value(account, "requirements") or {}
+    currently_due = _stripe_value(requirements, "currently_due") or []
+    disabled_reason = _stripe_value(requirements, "disabled_reason") or ""
+    payouts_enabled = bool(_stripe_value(account, "payouts_enabled"))
+    details_submitted = bool(_stripe_value(account, "details_submitted"))
     if payouts_enabled:
         status = "connected"
     elif disabled_reason:
