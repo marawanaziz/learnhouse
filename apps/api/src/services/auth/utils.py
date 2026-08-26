@@ -280,4 +280,10 @@ async def signWithGoogle(
     client_ip = get_client_ip(request)
     await update_login_info(user, client_ip, db_session)
 
+    from src.bbu_migration.bold_access import ensure_bold_access_for_request
+
+    await ensure_bold_access_for_request(
+        request, db_session, user.id or 0, org_id or 1, source="host_login"
+    )
+
     return UserRead.model_validate(user)

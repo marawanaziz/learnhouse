@@ -174,6 +174,8 @@ from src.bbu_payments import cert_admin as bbu_cert_admin_router  # noqa: E402
 v1_router.include_router(bbu_cert_admin_router.router, prefix="/bbu/cert-admin", tags=["bbu-cert-admin"])
 from src.bbu_migration import router as bbu_migration_router  # noqa: E402
 v1_router.include_router(bbu_migration_router.router, prefix="/bbu/migrate", tags=["bbu-migration"])
+from src.bbu_migration import bold_access as bbu_bold_access  # noqa: E402
+v1_router.include_router(bbu_bold_access.router, prefix="/bbu/migrate", tags=["bbu-migration"])
 from src.bbu_migration import quiz_to_assignment as bbu_quiz_migration  # noqa: E402
 v1_router.include_router(bbu_quiz_migration.router, prefix="/bbu/migrate", tags=["bbu-migration"])
 from src.bbu_migration import groupings as bbu_groupings  # noqa: E402

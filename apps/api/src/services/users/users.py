@@ -163,6 +163,15 @@ async def create_user(
             user.extra_metadata,
         )
 
+    # The BOLD host is a durable access signal. This runs after the user and
+    # organization membership exist, so the shared LearnHouse access models can
+    # be used without creating a parallel authorization system.
+    from src.bbu_migration.bold_access import ensure_bold_access_for_request
+
+    await ensure_bold_access_for_request(
+        request, db_session, user.id or 0, org_id, source="host_signup"
+    )
+
     user_read = UserRead.model_validate(user)
 
     await increase_feature_usage("members", org_id, db_session)

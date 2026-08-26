@@ -413,6 +413,12 @@ async def login(
     client_ip = get_client_ip(request)
     await update_login_info(user, client_ip, db_session)
 
+    from src.bbu_migration.bold_access import ensure_bold_access_for_request
+
+    await ensure_bold_access_for_request(
+        request, db_session, user.id or 0, source="host_login"
+    )
+
     # Step 6: Issue tokens
     access_token = create_access_token(
         data={"sub": user.email},

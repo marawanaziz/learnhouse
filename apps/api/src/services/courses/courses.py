@@ -666,6 +666,10 @@ async def create_course(
         await db_session.rollback()
         raise
 
+    from src.bbu_migration.bold_access import ensure_bold_course_access
+
+    await ensure_bold_course_access(db_session, course)
+
     # Get course authors with their roles
     authors_statement = (
         select(ResourceAuthor, User)
@@ -872,6 +876,10 @@ async def update_course(
     db_session.add(course)
     await db_session.commit()
     await db_session.refresh(course)
+
+    from src.bbu_migration.bold_access import ensure_bold_course_access
+
+    await ensure_bold_course_access(db_session, course)
 
     # Dispatch webhook if published state changed
     if course_object.published is not None and course.published != old_published:
