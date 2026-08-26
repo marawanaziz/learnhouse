@@ -172,6 +172,10 @@ async function proxyRequest(
   const headers: HeadersInit = {}
   const cookieStore = await cookies()
 
+  // Auth requests are proxied to the backend service, whose Host is internal.
+  // Carry the actual public white-label host for host-specific access rules.
+  headers['X-LearnHouse-Public-Host'] = request.headers.get('host') || ''
+
   // Forward content-type
   const contentType = request.headers.get('content-type')
   if (contentType) {

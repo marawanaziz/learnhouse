@@ -48,7 +48,9 @@ def _now() -> str:
 
 def _request_hostname(request: Request) -> str:
     """Return the public request hostname, without trusting arbitrary paths."""
-    forwarded = request.headers.get("x-forwarded-host")
+    forwarded = request.headers.get("x-learnhouse-public-host")
+    if not forwarded:
+        forwarded = request.headers.get("x-forwarded-host")
     raw = forwarded or request.headers.get("host", "")
     return raw.split(",", 1)[0].strip().split(":", 1)[0].rstrip(".").lower()
 

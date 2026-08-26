@@ -24,6 +24,10 @@ async function proxyToBackend(request: NextRequest): Promise<Response> {
       headers.set(key, value)
     }
   })
+  // The backend receives an internal service URL, so its Host header is not
+  // the public white-label host. Preserve the actual browser-facing host for
+  // host-specific access rules, while overriding any caller-supplied copy.
+  headers.set('x-learnhouse-public-host', request.headers.get('host') || '')
 
   // Forward request body as-is (no parsing/re-serializing)
   const body = request.method !== 'GET' && request.method !== 'HEAD'

@@ -34,6 +34,20 @@ def _request(host: str) -> Request:
     )
 
 
+def _proxied_request(public_host: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [
+                (b"host", b"app-production-500b.up.railway.app"),
+                (b"x-learnhouse-public-host", public_host.encode()),
+            ],
+        }
+    )
+
+
 async def _bold_access_fixture(db, org):
     now = str(datetime.now())
     groups = []
@@ -78,6 +92,10 @@ def test_host_attribution_is_exact_and_bbu_host_is_unchanged():
     assert is_bold_host_request(_request("learn.boldmovement.org:443"))
     assert not is_bold_host_request(_request("learn.birthandbabyuniversity.com"))
     assert not is_bold_host_request(_request("evil-learn.boldmovement.org"))
+    assert is_bold_host_request(_proxied_request("learn.boldmovement.org"))
+    assert not is_bold_host_request(
+        _proxied_request("learn.birthandbabyuniversity.com")
+    )
 
 
 def test_course_matching_is_case_insensitive():
