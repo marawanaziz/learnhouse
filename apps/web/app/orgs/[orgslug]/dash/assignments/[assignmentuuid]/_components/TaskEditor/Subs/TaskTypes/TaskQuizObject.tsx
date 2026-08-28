@@ -14,6 +14,7 @@ import { queryKeys } from '@/lib/query/keys';
 import { applyManualGrade } from './applyManualGrade';
 import { registerAssignmentDraftSave } from '@/lib/assignments/draftSaveRegistry';
 import { allowsMultipleAnswers, updateQuizSelection } from '@/lib/assignments/quizSelection';
+import { normalizeQuizQuestions } from '@/lib/assignments/quizContents';
 
 type QuizSchema = {
     questionText: string;
@@ -73,9 +74,10 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
 
 
     /* TEACHER VIEW CODE */
-    const [questions, setQuestions] = useState<QuizSchema[]>([
-        { questionText: '', questionUUID: 'question_' + uuidv4(), options: [{ text: '', fileID: '', type: 'text', assigned_right_answer: false, optionUUID: 'option_' + uuidv4() }] },
-    ]);
+    const [questions, setQuestions] = useState<QuizSchema[]>(() => view === 'teacher'
+        ? [{ questionText: '', questionUUID: 'question_' + uuidv4(), options: [{ text: '', fileID: '', type: 'text', assigned_right_answer: false, optionUUID: 'option_' + uuidv4() }] }]
+        : []);
+    const [taskHydrated, setTaskHydrated] = useState(view === 'teacher');
 
     const handleQuestionChange = (index: number, value: string) => {
         const updatedQuestions = [...questions];
@@ -198,9 +200,9 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
             const res = await getAssignmentTask(assignmentTaskUUID, access_token);
             if (res.success) {
                 setAssignmentTaskOutsideProvider(res.data);
-                setQuestions(res.data.contents.questions);
+                setQuestions(normalizeQuizQuestions(res.data.contents) as QuizSchema[]);
             }
-
+            setTaskHydrated(true);
         }
     }
 
@@ -211,9 +213,8 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
         );
         if (task) {
             setAssignmentTaskOutsideProvider(task);
-            if (task.contents?.questions) {
-                setQuestions(task.contents.questions);
-            }
+            setQuestions(normalizeQuizQuestions(task.contents) as QuizSchema[]);
+            setTaskHydrated(true);
         }
     }
 
@@ -459,8 +460,8 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
             setSelectedAssignmentTaskUUID: assignmentTaskUUID,
         });
         // Teacher area
-        if (view == 'teacher' && assignmentTaskState.assignmentTask.contents?.questions) {
-            setQuestions(assignmentTaskState.assignmentTask.contents.questions);
+        if (view == 'teacher' && assignmentTaskState.assignmentTask.contents) {
+            setQuestions(normalizeQuizQuestions(assignmentTaskState.assignmentTask.contents) as QuizSchema[]);
         }
         // Student area: hydrate from already-fetched context payloads.
         else if (view == 'student') {
@@ -476,7 +477,14 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
         }
     }, [assignmentTaskState, assignment, assignmentTaskStateHook, access_token, taskSubmissionsMap]);
 
-    if (questions && questions.length >= 0) {
+    if (view !== 'teacher' && !taskHydrated) {
+        return <div className='flex flex-row space-x-2 text-sm items-center'>
+            <Info size={12} />
+            <p>Loading questions...</p>
+        </div>;
+    }
+
+    if (questions.length > 0 || view === 'teacher') {
         return (
             <AssignmentBoxUI submitFC={submitFC} saveFC={saveFC} gradeFC={gradeFC} gradeCustomFC={gradeCustomFC} view={view} currentPoints={userSubmissionObject?.grade} currentFeedback={userSubmissionObject?.task_submission_grade_feedback} maxPoints={assignmentTaskOutsideProvider?.max_grade_value} showSavingDisclaimer={showSavingDisclaimer} type="quiz" autoGradable={true}>
                 <div className="flex flex-col space-y-6">
