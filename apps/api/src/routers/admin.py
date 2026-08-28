@@ -10,12 +10,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from src.core.events.database import get_db_session
 from src.db.trails import TrailRead
-from src.db.users import UserRead
+from src.db.users import APITokenUser, UserRead
 from src.routers.auth import set_auth_cookies
-from src.security.auth import get_current_user
+from src.security.auth import get_current_user, resolve_acting_user_id
+from src.security.org_auth import require_org_admin
+from src.db.organizations import Organization
 from src.services.admin.admin import (
     _require_api_token,
     _resolve_org_slug,
@@ -214,6 +217,31 @@ class AwardCertificateResponse(BaseModel):
 class RevokeCertificateResponse(BaseModel):
     detail: str
     user_certification_uuid: str
+
+
+async def _certificate_admin_principal(org_slug: str, current_user, db_session: AsyncSession) -> APITokenUser:
+    """Authorize certificate deletion for API tokens and dashboard admins.
+
+    The headless admin API remains API-token compatible. The in-app member
+    drawer uses the normal session JWT, so it gets the same org-scoped service
+    operation after an explicit organization-admin check.
+    """
+    if isinstance(current_user, APITokenUser):
+        token_user = _require_api_token(current_user)
+        await _resolve_org_slug(org_slug, token_user, db_session)
+        return token_user
+
+    user_id = resolve_acting_user_id(current_user)
+    org = (await db_session.execute(
+        select(Organization).where(Organization.slug == org_slug)
+    )).scalars().first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    await require_org_admin(user_id, org.id, db_session)
+    scoped_principal = APITokenUser(org_id=org.id, created_by_user_id=user_id)
+    # Keep the existing admin API's plan and slug checks for the session path.
+    await _resolve_org_slug(org_slug, scoped_principal, db_session)
+    return scoped_principal
 
 
 class UserGroupMemberResponse(BaseModel):
@@ -1140,7 +1168,10 @@ async def api_admin_award_certificate(
     "/{org_slug}/certifications/{user_id}/{user_certification_uuid}",
     response_model=RevokeCertificateResponse,
     summary="Revoke a user's certificate",
-    description="Delete a certificate row. Does not affect course enrollment or progress.",
+    description=(
+        "Delete a certificate row. Does not affect course enrollment or progress. "
+        "Requires an organization admin session or scoped admin API token."
+    ),
     responses={
         200: {"description": "Certificate revoked. The cert row is hard-deleted.", "model": RevokeCertificateResponse},
         404: {"description": "Certificate not found"},
@@ -1153,8 +1184,7 @@ async def api_admin_revoke_certificate(
     current_user=Depends(get_current_user),
     db_session: AsyncSession = Depends(get_db_session),
 ) -> RevokeCertificateResponse:
-    token_user = _require_api_token(current_user)
-    await _resolve_org_slug(org_slug, token_user, db_session)
+    token_user = await _certificate_admin_principal(org_slug, current_user, db_session)
     result = await revoke_certificate(
         token_user, user_id, user_certification_uuid, db_session
     )

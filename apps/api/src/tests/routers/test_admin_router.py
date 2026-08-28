@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.core.events.database import get_db_session
 from src.db.trails import TrailRead
-from src.db.users import APITokenUser, UserRead
+from src.db.users import APITokenUser, PublicUser, UserRead
 from src.db.usergroups import UserGroupRead
 from src.routers.admin import router as admin_router
 from src.security.auth import get_current_user
@@ -125,6 +125,65 @@ def _admin_context(api_user):
 
 
 class TestAdminRouter:
+    async def test_session_admin_certificate_delete_uses_org_scoped_service(self, app, client, db_session):
+        session_user = PublicUser(
+            id=99,
+            username="bbu-admin",
+            first_name="BBU",
+            last_name="Admin",
+            email="admin@example.com",
+            user_uuid="user_admin",
+            email_verified=True,
+        )
+        org = Mock(id=1, slug="acme")
+        db_result = Mock()
+        db_result.scalars.return_value.first.return_value = org
+        db_session.execute = AsyncMock(return_value=db_result)
+        app.dependency_overrides[get_current_user] = lambda: session_user
+
+        with patch(
+            "src.routers.admin.require_org_admin",
+            new_callable=AsyncMock,
+        ) as require_admin, patch(
+            "src.routers.admin._resolve_org_slug",
+            new_callable=AsyncMock,
+        ), patch(
+            "src.routers.admin.revoke_certificate",
+            new_callable=AsyncMock,
+            return_value={"detail": "Certificate revoked", "user_certification_uuid": "cert_1"},
+        ) as revoke:
+            response = await client.delete("/api/v1/admin/acme/certifications/2/cert_1")
+
+        assert response.status_code == 200
+        require_admin.assert_awaited_once_with(99, 1, db_session)
+        revoke.assert_awaited_once()
+
+    async def test_session_non_admin_certificate_delete_is_denied(self, app, client, db_session):
+        session_user = PublicUser(
+            id=100,
+            username="bbu-student",
+            first_name="BBU",
+            last_name="Student",
+            email="student@example.com",
+            user_uuid="user_student",
+            email_verified=True,
+        )
+        org = Mock(id=1, slug="acme")
+        db_result = Mock()
+        db_result.scalars.return_value.first.return_value = org
+        db_session.execute = AsyncMock(return_value=db_result)
+        app.dependency_overrides[get_current_user] = lambda: session_user
+
+        with patch(
+            "src.routers.admin.require_org_admin",
+            new_callable=AsyncMock,
+            side_effect=HTTPException(status_code=403, detail="Only organization administrators and maintainers can perform this action"),
+        ), patch("src.routers.admin.revoke_certificate", new_callable=AsyncMock) as revoke:
+            response = await client.delete("/api/v1/admin/acme/certifications/2/cert_1")
+
+        assert response.status_code == 403
+        revoke.assert_not_awaited()
+
     async def test_auth_progress_and_certifications(self, client, api_user):
         """The auth/token, aggregate progress, and certificates endpoints all
         operate on a single user_id and are grouped here for a smoke check."""

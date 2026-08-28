@@ -402,7 +402,7 @@ function MembersManager() {
       )}
 
       {profileUserId && (
-        <MemberProfile userId={profileUserId} onClose={() => setProfileUserId(null)} />
+        <MemberProfile userId={profileUserId} orgSlug={org?.slug || ''} onClose={() => setProfileUserId(null)} />
       )}
     </div>
   )

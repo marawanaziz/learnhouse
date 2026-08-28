@@ -1,6 +1,7 @@
 'use client'
 import React from 'react'
 import { getAPIUrl } from '@services/config/config'
+import { deleteUserCertificate } from '@services/admin/certificates'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import { X, GraduationCap, ClipboardCheck, Award, BadgeCheck, Users, CreditCard, ChevronDown } from 'lucide-react'
 
@@ -27,22 +28,63 @@ function Card({ icon, title, count, children }: any) {
   )
 }
 
-export default function MemberProfile({ userId, onClose }: { userId: number; onClose: () => void }) {
+export default function MemberProfile({ userId, orgSlug, onClose }: { userId: number; orgSlug: string; onClose: () => void }) {
   const session = useLHSession() as any
   const token = session?.data?.tokens?.access_token
   const [d, setD] = React.useState<any>(null)
   const [loading, setLoading] = React.useState(true)
   const [openQuiz, setOpenQuiz] = React.useState<number | null>(null)
+  const [certificatePendingDelete, setCertificatePendingDelete] = React.useState<any>(null)
+  const [deletingCertificateUuid, setDeletingCertificateUuid] = React.useState<string | null>(null)
+  const [certificateError, setCertificateError] = React.useState<string | null>(null)
+
+  const loadProfile = React.useCallback(async () => {
+    const response = await fetch(`${getAPIUrl()}bbu/people/${userId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include',
+      cache: 'no-store',
+    })
+    if (!response.ok) throw new Error('Could not refresh this member profile.')
+    return response.json()
+  }, [userId, token])
 
   React.useEffect(() => {
     let alive = true
     setLoading(true)
-    fetch(`${getAPIUrl()}bbu/people/${userId}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include',
-    }).then(r => r.json()).then(j => { if (alive) { setD(j); setLoading(false) } })
+    loadProfile().then(j => { if (alive) { setD(j); setLoading(false) } })
       .catch(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [userId, token])
+  }, [loadProfile])
+
+  const requestCertificateDelete = (certificate: any) => {
+    setCertificateError(null)
+    setCertificatePendingDelete(certificate)
+  }
+
+  const confirmCertificateDelete = async () => {
+    const certificate = certificatePendingDelete
+    if (!certificate || deletingCertificateUuid) return
+    const uuid = certificate.uuid
+    setDeletingCertificateUuid(uuid)
+    setCertificateError(null)
+    try {
+      await deleteUserCertificate(orgSlug, userId, uuid, token)
+      // The server has succeeded, so remove this exact row before the fresh readback.
+      setD((previous: any) => previous ? {
+        ...previous,
+        certificates: (previous.certificates || []).filter((item: any) => item.uuid !== uuid),
+      } : previous)
+      setCertificatePendingDelete(null)
+      try {
+        setD(await loadProfile())
+      } catch {
+        setCertificateError('Certificate deleted, but the list could not be refreshed. Please reload the profile.')
+      }
+    } catch (error: any) {
+      setCertificateError(error?.message || 'Could not delete the certificate. No changes were made.')
+    } finally {
+      setDeletingCertificateUuid(null)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-modal bg-slate-900/40 backdrop-blur-sm flex justify-end" onClick={onClose}>
@@ -68,6 +110,11 @@ export default function MemberProfile({ userId, onClose }: { userId: number; onC
           <div className="p-10 text-center text-slate-400">Couldn't load this profile.</div>
         ) : (
           <div className="p-6 space-y-5">
+            {certificateError && (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {certificateError}
+              </div>
+            )}
             {/* Enrollments & progress */}
             <Card icon={<GraduationCap size={18} />} title="Courses & progress" count={d.enrollments?.length}>
               {d.enrollments?.length ? (
@@ -131,15 +178,26 @@ export default function MemberProfile({ userId, onClose }: { userId: number; onC
               <Card icon={<BadgeCheck size={18} />} title="Certificates" count={d.certificates?.length}>
                 {d.certificates?.length ? d.certificates.map((c: any, i: number) => (
                   <div key={i} className="flex items-center justify-between text-sm py-1">
-                    {c.verify_url ? (
-                      <a href={c.verify_url} target="_blank" rel="noopener noreferrer"
-                        className="text-slate-700 truncate pr-2 hover:text-sky-700 hover:underline">
-                        {c.course}
-                      </a>
-                    ) : (
-                      <span className="text-slate-700 truncate pr-2">{c.course}</span>
-                    )}
-                    <span className="text-xs text-slate-400 shrink-0">{c.issued}</span>
+                    <div className="min-w-0 flex items-center gap-2">
+                      {c.verify_url ? (
+                        <a href={c.verify_url} target="_blank" rel="noopener noreferrer"
+                          className="text-slate-700 truncate pr-2 hover:text-sky-700 hover:underline">
+                          {c.course}
+                        </a>
+                      ) : (
+                        <span className="text-slate-700 truncate pr-2">{c.course}</span>
+                      )}
+                      <span className="text-xs text-slate-400 shrink-0">{c.issued}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => requestCertificateDelete(c)}
+                      disabled={deletingCertificateUuid === c.uuid}
+                      className="ml-2 shrink-0 rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-50"
+                      aria-label={`Delete certificate ${c.course || c.uuid}`}
+                    >
+                      {deletingCertificateUuid === c.uuid ? 'Deleting…' : 'Delete'}
+                    </button>
                   </div>
                 )) : <p className="text-sm text-slate-400">None.</p>}
               </Card>
@@ -167,6 +225,43 @@ export default function MemberProfile({ userId, onClose }: { userId: number; onC
           </div>
         )}
       </div>
+      {certificatePendingDelete && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4" onClick={() => !deletingCertificateUuid && setCertificatePendingDelete(null)}>
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-certificate-title"
+            aria-describedby="delete-certificate-description"
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <h2 id="delete-certificate-title" className="text-lg font-semibold text-slate-900">Delete issued certificate?</h2>
+            <p id="delete-certificate-description" className="mt-3 text-sm leading-6 text-slate-600">
+              This removes the issued certificate for <strong>{d?.name || d?.email || 'this member'}</strong>.
+              The certificate is <strong>{certificatePendingDelete.course || 'Certificate'}</strong> and its ID is <code className="break-all">{certificatePendingDelete.uuid}</code>.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setCertificatePendingDelete(null)}
+                disabled={!!deletingCertificateUuid}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmCertificateDelete}
+                disabled={!!deletingCertificateUuid}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-wait disabled:opacity-50"
+              >
+                {deletingCertificateUuid ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
