@@ -1528,6 +1528,15 @@ body.credential-drawer-open{{overflow:hidden}}
 .member-drawer-table{{overflow-x:auto;border:1px solid rgba(17,61,93,.06);border-radius:10px}}
 .member-drawer-table table{{min-width:650px}}
 .member-drawer-loading{{display:grid;place-items:center;min-height:220px;text-align:center}}
+.cert-delete-dialog{{position:fixed;inset:0;z-index:1100;display:none;place-items:center;padding:1rem;background:rgba(15,35,50,.5);backdrop-filter:blur(2px)}}
+.cert-delete-dialog.open{{display:grid}}
+.cert-delete-dialog-panel{{width:min(480px,100%);background:#fff;border-radius:16px;padding:1.35rem;box-shadow:0 22px 60px rgba(17,61,93,.3)}}
+.cert-delete-dialog-panel h2{{margin:0;color:{NAVY};font-family:'Open Sans',system-ui,sans-serif;font-size:1.15rem}}
+.cert-delete-dialog-panel p{{margin:.8rem 0 0;line-height:1.55;color:#5b6b78;font-size:.86rem}}
+.cert-delete-dialog-actions{{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.2rem}}
+.cert-delete-dialog-error{{color:#a3261e!important;background:#fff1f0;border:1px solid #f2c2bd;border-radius:9px;padding:.6rem .7rem}}
+button.danger{{background:#a3261e}}
+button.danger:hover{{background:#7f1d1d}}
 @keyframes credentialDrawerIn{{from{{transform:translateX(24px);opacity:.7}}to{{transform:translateX(0);opacity:1}}}}
 @media(max-width:640px){{
   .member-drawer-head{{align-items:flex-start;padding:.9rem}}
@@ -1756,6 +1765,17 @@ body.credential-drawer-open{{overflow:hidden}}
       </div>
     </header>
     <div id=cm-record class=member-drawer-body></div>
+  </section>
+</div>
+<div id=certificate-delete-dialog class=cert-delete-dialog role=dialog aria-modal=true aria-labelledby=certificate-delete-title aria-describedby=certificate-delete-description aria-hidden=true>
+  <section class=cert-delete-dialog-panel>
+    <h2 id=certificate-delete-title>Delete issued certificate?</h2>
+    <p id=certificate-delete-description>This removes the issued certificate for <strong id=certificate-delete-recipient></strong>. The certificate is <strong id=certificate-delete-course></strong> and its ID is <code id=certificate-delete-id style="word-break:break-all"></code>.</p>
+    <p id=certificate-delete-error class=cert-delete-dialog-error role=alert hidden></p>
+    <div class=cert-delete-dialog-actions>
+      <button id=certificate-delete-cancel class=ghost type=button>Cancel</button>
+      <button id=certificate-delete-confirm class=danger type=button>Delete</button>
+    </div>
   </section>
 </div>
 <script>
@@ -2118,6 +2138,8 @@ function closeCohort(){{
 }}
 // Credentials
 let CAPAGE=1, CURRENT_CREDENTIAL_MEMBER=0, CURRENT_APPLICATION=0;
+let PENDING_CERTIFICATE_DELETE=null, CERTIFICATE_DELETE_BUSY=false, CERTIFICATE_DELETE_OPENER=null;
+const CERTIFICATE_ORG_SLUG='bbu';
 const credLabel=t=>t==='birth'?'Birth Doula':'Postpartum';
 const levelLabel=l=>l==='one_year_provisional'?'One-year provisional':'Three-year full';
 const localToday=()=>{{
@@ -2210,6 +2232,7 @@ function searchCredentialMembers(){{
 }}
 let CREDENTIAL_MEMBER_OPENER=null;
 function closeCredentialMember(){{
+  if(document.getElementById('certificate-delete-dialog').classList.contains('open'))closeCertificateDelete();
   const drawer=document.getElementById('credential-member-drawer');
   drawer.classList.remove('open');
   drawer.setAttribute('aria-hidden','true');
@@ -2244,7 +2267,10 @@ function openCredentialMember(userId){{
     document.getElementById('credential-member-email').textContent=m.email||'';
     document.getElementById('credential-member-number').textContent='Member #'+m.user_id;
     document.getElementById('credential-member-ceus').textContent=(d.ceu_total||0)+' approved CEUs';
-    const training=(d.training_certificates||[]).map(c=>`<tr><td>${{esc(c.course)}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{c.is_cross_cert?'Cross-certification':'Full training'}}</td><td>${{esc((c.issued_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{esc(c.verify_url)}}">Open</a></td></tr>`).join('')
+    const training=(d.training_certificates||[]).map(c=>{{
+      const deleteAction=c.uuid&&c.id!=null?` <button class="danger certificate-delete-trigger" type="button" data-certificate-uuid="${{esc(c.uuid)}}" data-certificate-course="${{esc(c.course)}}" onclick="requestCertificateDelete(this)">Delete</button>`:'';
+      return `<tr><td>${{esc(c.course)}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{c.is_cross_cert?'Cross-certification':'Full training'}}</td><td>${{esc((c.issued_at||'').slice(0,10))}}</td><td style="white-space:nowrap"><a class=ghost target=_blank href="${{esc(c.verify_url)}}">Open</a>${{deleteAction}}</td></tr>`;
+    }}).join('')
       ||'<tr><td colspan=5 class=muted>No mapped training certificates.</td></tr>';
     const issues=(d.issuances||[]).map(i=>`<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a> <a class=ghost href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/certificate.pdf">Download PDF</a></td></tr>`).join('')
       ||'<tr><td colspan=6 class=muted>No professional credential issuances.</td></tr>';
@@ -2265,8 +2291,59 @@ function openCredentialMember(userId){{
   }});
 }}
 document.addEventListener('keydown',event=>{{
+  if(event.key==='Escape'&&document.getElementById('certificate-delete-dialog').classList.contains('open')){{closeCertificateDelete();return;}}
   if(event.key==='Escape'&&document.getElementById('credential-member-drawer').classList.contains('open'))closeCredentialMember();
 }});
+function requestCertificateDelete(button){{
+  const uuid=button&&button.dataset.certificateUuid;
+  if(!uuid||!CURRENT_CREDENTIAL_MEMBER)return;
+  PENDING_CERTIFICATE_DELETE={{
+    userId:CURRENT_CREDENTIAL_MEMBER,
+    uuid:uuid,
+    course:button.dataset.certificateCourse||'Certificate',
+    recipient:document.getElementById('credential-member-title').textContent||'this member',
+    email:document.getElementById('credential-member-email').textContent||''
+  }};
+  document.getElementById('certificate-delete-recipient').textContent=PENDING_CERTIFICATE_DELETE.recipient+(PENDING_CERTIFICATE_DELETE.email?' ('+PENDING_CERTIFICATE_DELETE.email+')':'');
+  document.getElementById('certificate-delete-course').textContent=PENDING_CERTIFICATE_DELETE.course;
+  document.getElementById('certificate-delete-id').textContent=PENDING_CERTIFICATE_DELETE.uuid;
+  document.getElementById('certificate-delete-error').hidden=true;
+  const dialog=document.getElementById('certificate-delete-dialog');
+  dialog.classList.add('open');dialog.setAttribute('aria-hidden','false');
+  CERTIFICATE_DELETE_OPENER=button;
+  document.getElementById('certificate-delete-cancel').focus();
+}}
+function closeCertificateDelete(force=false){{
+  if(CERTIFICATE_DELETE_BUSY&&!force)return;
+  const dialog=document.getElementById('certificate-delete-dialog');
+  dialog.classList.remove('open');dialog.setAttribute('aria-hidden','true');
+  PENDING_CERTIFICATE_DELETE=null;
+  if(CERTIFICATE_DELETE_OPENER&&CERTIFICATE_DELETE_OPENER.isConnected)CERTIFICATE_DELETE_OPENER.focus();
+  CERTIFICATE_DELETE_OPENER=null;
+}}
+async function confirmCertificateDelete(){{
+  const pending=PENDING_CERTIFICATE_DELETE;
+  if(!pending||CERTIFICATE_DELETE_BUSY)return;
+  CERTIFICATE_DELETE_BUSY=true;
+  const confirmButton=document.getElementById('certificate-delete-confirm');
+  const cancelButton=document.getElementById('certificate-delete-cancel');
+  const error=document.getElementById('certificate-delete-error');
+  confirmButton.disabled=true;cancelButton.disabled=true;confirmButton.textContent='Deleting…';error.hidden=true;
+  try{{
+    const response=await fetch('/api/v1/admin/'+encodeURIComponent(CERTIFICATE_ORG_SLUG)+'/certifications/'+pending.userId+'/'+encodeURIComponent(pending.uuid),{{method:'DELETE',credentials:'include',headers:{{'Content-Type':'application/json'}}}});
+    let result={{}};try{{result=await response.json();}}catch{{}}
+    if(!response.ok)throw new Error(result.detail||'Could not delete the certificate. No changes were made.');
+    closeCertificateDelete(true);
+    openCredentialMember(pending.userId);
+  }}catch(errorValue){{
+    error.textContent=errorValue&&errorValue.message?errorValue.message:'Could not delete the certificate. No changes were made.';
+    error.hidden=false;
+  }}finally{{
+    CERTIFICATE_DELETE_BUSY=false;confirmButton.disabled=false;cancelButton.disabled=false;confirmButton.textContent='Delete';
+  }}
+}}
+document.getElementById('certificate-delete-cancel').onclick=closeCertificateDelete;
+document.getElementById('certificate-delete-confirm').onclick=confirmCertificateDelete;
 function addCredentialYears(value,years){{
   const p=(value||'').split('-').map(Number);if(p.length!==3||!p[0])return '—';
   let y=p[0]+years,m=p[1],d=p[2];

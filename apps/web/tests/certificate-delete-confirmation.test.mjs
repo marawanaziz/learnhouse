@@ -11,6 +11,10 @@ const serviceSource = readFileSync(
   fileURLToPath(new URL("../services/admin/certificates.ts", import.meta.url)),
   "utf8"
 );
+const operationsSource = readFileSync(
+  fileURLToPath(new URL("../../api/src/bbu_admin/console.py", import.meta.url)),
+  "utf8"
+);
 
 describe("admin certificate deletion", () => {
   test("gates deletion behind an explicit, safely focused confirmation dialog", () => {
@@ -43,5 +47,26 @@ describe("admin certificate deletion", () => {
     assert.match(profileSource, /role="alert"/);
     assert.match(profileSource, /await deleteUserCertificate[\s\S]*catch \(error: any\)/);
     assert.doesNotMatch(profileSource, /catch \(error: any\)[\s\S]*setD\(\(previous/);
+  });
+
+  test("adds the same guarded action to Operations member training certificates only", () => {
+    assert.match(operationsSource, /certificate-delete-trigger/);
+    assert.match(operationsSource, /data-certificate-uuid=/);
+    assert.match(operationsSource, /requestCertificateDelete\(this\)/);
+    assert.match(operationsSource, /Delete issued certificate\?/);
+    assert.match(operationsSource, /This removes the issued certificate for/);
+    assert.match(operationsSource, /id=certificate-delete-cancel[^>]*>Cancel/);
+    assert.match(operationsSource, /id=certificate-delete-confirm[^>]*>Delete/);
+    assert.match(operationsSource, /method:'DELETE'/);
+    assert.match(operationsSource, /CERTIFICATE_ORG_SLUG='bbu'/);
+    assert.match(operationsSource, /openCredentialMember\(pending\.userId\)/);
+    assert.match(operationsSource, /closeCertificateDelete\(true\)/);
+  });
+
+  test("Operations cancel path closes the dialog without issuing DELETE", () => {
+    assert.match(operationsSource, /document\.getElementById\('certificate-delete-cancel'\)\.onclick=closeCertificateDelete/);
+    assert.match(operationsSource, /function closeCertificateDelete\(force=false\)/);
+    assert.match(operationsSource, /if\(!pending\|\|CERTIFICATE_DELETE_BUSY\)return/);
+    assert.match(operationsSource, /error\.textContent=errorValue&&errorValue\.message/);
   });
 });
