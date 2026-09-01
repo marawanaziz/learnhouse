@@ -470,6 +470,7 @@ async def _public_issuance_status(
             select(BBUCredentialIssuance).where(
                 BBUCredentialIssuance.org_id == issuance.org_id,
                 BBUCredentialIssuance.supersedes_issuance_id == issuance.id,
+                BBUCredentialIssuance.status != "revoked",
             )
         )
     ).scalars().first()

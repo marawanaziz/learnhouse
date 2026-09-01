@@ -23,6 +23,7 @@ from src.db.courses.activities import Activity
 from src.db.courses.certifications import CertificateUser, Certifications
 from src.bbu_payments.models import BBUOrder
 from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
+from src.bbu_credentials import applications as credential_app_svc
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
 from src.bbu_people.models import BBUQuizSubmission
 
@@ -283,6 +284,9 @@ async def profile(user_id: int, request: Request,
         "issued": (c.full_effective_at or c.issued_at or "")[:10],
         "expires": (c.full_expires_at or c.provisional_expires_at or "")[:10],
     } for c in creds]
+    credential_issuances = credential_app_svc.issuance_history_to_dicts(
+        await credential_app_svc.list_user_issuances(db_session, ORG, user_id)
+    )
 
     # --- cohorts ---
     cms = (await db_session.execute(select(BBUCohortMember).where(
@@ -306,5 +310,6 @@ async def profile(user_id: int, request: Request,
         "ceu_total": int(ceu_total),
         "lifetime_spend": round(sum((o.amount_cents or 0) for o in orders if o.status == "paid") / 100, 2),
         "enrollments": enrollments, "quizzes": quizzes, "certificates": certificates,
-        "credentials": credentials, "cohorts": cohorts, "purchases": purchases,
+        "credentials": credentials, "credential_issuances": credential_issuances,
+        "cohorts": cohorts, "purchases": purchases,
     }

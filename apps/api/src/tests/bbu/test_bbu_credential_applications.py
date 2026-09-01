@@ -18,6 +18,7 @@ from src.bbu_credentials.models import (
     BBUCredentialApplication,
     BBUCredentialApplicationDocument,
     BBUCredentialApplicationItem,
+    BBUCredentialAuditEvent,
     BBUCredentialIssuance,
 )
 from src.db.courses.certifications import CertificateUser, Certifications
@@ -99,7 +100,7 @@ async def test_issuance_history_marks_the_superseded_certificate_replaced(
         user_id=regular_user.id,
         credential_type="postpartum",
         credential_level="one_year_provisional",
-        effective_at=datetime(2025, 1, 1, tzinfo=UTC),
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
         source="training",
         source_ref="original-course",
     )
@@ -109,7 +110,7 @@ async def test_issuance_history_marks_the_superseded_certificate_replaced(
         user_id=regular_user.id,
         credential_type="postpartum",
         credential_level="three_year_full",
-        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        effective_at=datetime(2026, 6, 1, tzinfo=UTC),
         source="ceu_application",
         source_ref="renewal-application",
         supersedes_issuance_id=original.id,
@@ -121,6 +122,212 @@ async def test_issuance_history_marks_the_superseded_certificate_replaced(
     assert history[0]["supersedes_issuance_id"] == original.id
     assert history[1]["status"] == "replaced"
     assert history[1]["superseded_by_issuance_id"] == replacement.id
+
+
+@pytest.mark.asyncio
+async def test_revoked_replacement_does_not_hide_prior_current_issuance(
+    db, regular_user
+):
+    original = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="one_year_provisional",
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        source="training",
+        source_ref="revoked-original",
+    )
+    replacement = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="three_year_full",
+        effective_at=datetime(2026, 6, 1, tzinfo=UTC),
+        source="manual",
+        source_ref="revoked-replacement",
+        supersedes_issuance_id=original.id,
+    )
+    replacement.status = "revoked"
+
+    history = app_svc.issuance_history_to_dicts([replacement, original])
+
+    assert history[0]["status"] == "revoked"
+    assert history[1]["status"] == "provisional"
+    assert history[1]["is_current"] is True
+
+
+@pytest.mark.asyncio
+async def test_revoking_latest_issuance_restores_prior_current_projection(
+    db, regular_user, admin_user
+):
+    prior = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="one_year_provisional",
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        source="training",
+        source_ref="birth-training",
+    )
+    latest = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="three_year_full",
+        effective_at=datetime(2026, 6, 1, tzinfo=UTC),
+        source="mentorship",
+        source_ref="birth-mentorship",
+        supersedes_issuance_id=prior.id,
+    )
+    db.add(
+        BBUCredential(
+            org_id=1,
+            user_id=regular_user.id,
+            credential_type="birth",
+            status="full",
+            issued_at=prior.effective_at,
+            full_effective_at=latest.effective_at,
+            full_expires_at=latest.expires_at,
+            source="mentorship",
+            source_ref="birth-mentorship",
+        )
+    )
+    await db.commit()
+
+    result = await app_svc.revoke_credential_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        issuance_id=latest.id,
+        actor_user_id=admin_user.id,
+    )
+
+    assert result["issuance_id"] == latest.id
+    assert result["current_issuance_id"] == prior.id
+    assert result["idempotent"] is False
+    await db.refresh(latest)
+    assert latest.status == "revoked"
+    current = (
+        await db.execute(
+            select(BBUCredential).where(
+                BBUCredential.org_id == 1,
+                BBUCredential.user_id == regular_user.id,
+                BBUCredential.credential_type == "birth",
+            )
+        )
+    ).scalars().all()
+    assert len(current) == 1
+    assert current[0].status == "provisional"
+    assert current[0].provisional_expires_at == prior.expires_at
+    assert current[0].full_effective_at == ""
+    audit = (
+        await db.execute(
+            select(BBUCredentialAuditEvent).where(
+                BBUCredentialAuditEvent.action == "professional_credential_revoked",
+                BBUCredentialAuditEvent.target_id == latest.id,
+            )
+        )
+    ).scalars().all()
+    assert len(audit) == 1
+    assert audit[0].before_data["status"] == "full"
+    assert audit[0].after_data["status"] == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_revoking_only_issuance_removes_current_projection_and_is_idempotent(
+    db, regular_user, admin_user
+):
+    issuance = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="postpartum",
+        credential_level="three_year_full",
+        effective_at=datetime(2025, 1, 1, tzinfo=UTC),
+        source="manual",
+        source_ref="only-issuance",
+    )
+    db.add(
+        BBUCredential(
+            org_id=1,
+            user_id=regular_user.id,
+            credential_type="postpartum",
+            status="full",
+            issued_at=issuance.effective_at,
+            full_effective_at=issuance.effective_at,
+            full_expires_at=issuance.expires_at,
+        )
+    )
+    await db.commit()
+
+    first = await app_svc.revoke_credential_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        issuance_id=issuance.id,
+        actor_user_id=admin_user.id,
+    )
+    second = await app_svc.revoke_credential_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        issuance_id=issuance.id,
+        actor_user_id=admin_user.id,
+    )
+
+    assert first["current_issuance_id"] is None
+    assert second["idempotent"] is True
+    assert (
+        await db.execute(
+            select(BBUCredential).where(
+                BBUCredential.org_id == 1,
+                BBUCredential.user_id == regular_user.id,
+                BBUCredential.credential_type == "postpartum",
+            )
+        )
+    ).scalars().all() == []
+    audit = (
+        await db.execute(
+            select(BBUCredentialAuditEvent).where(
+                BBUCredentialAuditEvent.target_id == issuance.id,
+                BBUCredentialAuditEvent.action == "professional_credential_revoked",
+            )
+        )
+    ).scalars().all()
+    assert len(audit) == 1
+
+
+@pytest.mark.asyncio
+async def test_revoking_issuance_from_another_org_is_not_found(
+    db, regular_user, admin_user, other_org
+):
+    issuance = await app_svc.create_issuance(
+        db,
+        org_id=other_org.id,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="three_year_full",
+        effective_at=datetime(2025, 1, 1, tzinfo=UTC),
+        source="manual",
+        source_ref="other-org-issuance",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await app_svc.revoke_credential_issuance(
+            db,
+            org_id=1,
+            user_id=regular_user.id,
+            issuance_id=issuance.id,
+            actor_user_id=admin_user.id,
+        )
+
+    assert exc.value.status_code == 404
+    await db.refresh(issuance)
+    assert issuance.status == "issued"
 
 
 @pytest.mark.asyncio

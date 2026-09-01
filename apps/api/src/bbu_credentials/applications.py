@@ -120,16 +120,185 @@ def issuance_history_to_dicts(
     superseded_by = {
         row.supersedes_issuance_id: row.id
         for row in rows
-        if row.supersedes_issuance_id is not None
+        if row.supersedes_issuance_id is not None and row.status != "revoked"
     }
+    active_rows = [row for row in rows if row.status != "revoked"]
+    current_id = max(active_rows, key=lambda row: row.id or 0).id if active_rows else None
     history = []
     for row in rows:
         payload = issuance_to_dict(row)
         payload["superseded_by_issuance_id"] = superseded_by.get(row.id)
+        payload["is_current"] = row.id == current_id
         if row.id in superseded_by and row.status != "revoked":
             payload["status"] = "replaced"
         history.append(payload)
     return history
+
+
+async def _reconcile_current_projection_after_revocation(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    user_id: int,
+    credential_type: str,
+) -> int | None:
+    """Keep the legacy current-state projection aligned with issuance history.
+
+    The issuance table is the authoritative history.  A revoked latest issuance
+    must reveal the newest remaining issuance, while revoking the only issuance
+    removes the projection entirely.  Both queries are org/user/type scoped so a
+    correction can never borrow another organization's credential.
+    """
+    history = (
+        await db.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.org_id == org_id,
+                BBUCredentialIssuance.user_id == user_id,
+                BBUCredentialIssuance.credential_type == credential_type,
+            )
+        )
+    ).scalars().all()
+    active = [row for row in history if row.status != "revoked"]
+    projections = (
+        await db.execute(
+            select(BBUCredential).where(
+                BBUCredential.org_id == org_id,
+                BBUCredential.user_id == user_id,
+                BBUCredential.credential_type == credential_type,
+            )
+        )
+    ).scalars().all()
+
+    if not active:
+        for projection in projections:
+            await db.delete(projection)
+        return None
+
+    latest = max(active, key=lambda row: row.id or 0)
+    effective_status = issuance_effective_status(latest)
+    if effective_status not in {"provisional", "full", "lapsed", "expired"}:
+        effective_status = (
+            "full" if latest.credential_level == "three_year_full" else "provisional"
+        )
+
+    if not projections:
+        projections = [
+            BBUCredential(
+                org_id=org_id,
+                user_id=user_id,
+                credential_type=credential_type,
+            )
+        ]
+    renewal_baseline = (
+        await legacy_svc.approved_ceu_total(db, org_id, user_id)
+        if latest.credential_level == "three_year_full"
+        else 0
+    )
+    for projection in projections:
+        projection.status = effective_status
+        if not projection.issued_at:
+            projection.issued_at = latest.effective_at
+        projection.provisional_expires_at = (
+            latest.expires_at
+            if latest.credential_level == "one_year_provisional"
+            else ""
+        )
+        projection.full_effective_at = (
+            latest.effective_at
+            if latest.credential_level == "three_year_full"
+            else ""
+        )
+        projection.full_expires_at = (
+            latest.expires_at
+            if latest.credential_level == "three_year_full"
+            else ""
+        )
+        projection.source = latest.source
+        projection.source_ref = latest.source_ref
+        projection.directory_opt_in = bool(latest.directory_opt_in)
+        projection.renewal_ceu_baseline = renewal_baseline
+        projection.updated_at = _now()
+        db.add(projection)
+    return latest.id
+
+
+async def revoke_credential_issuance(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    user_id: int,
+    issuance_id: int,
+    actor_user_id: int | None,
+) -> dict:
+    """Revoke exactly one professional issuance within one organization.
+
+    Revocation is intentionally soft and audited: the public credential becomes
+    invalid, the selected history row remains recoverable, and the current
+    projection is rebuilt from the newest non-revoked issuance.
+    """
+    issuance = (
+        await db.execute(
+            select(BBUCredentialIssuance).where(
+                BBUCredentialIssuance.id == issuance_id,
+                BBUCredentialIssuance.org_id == org_id,
+                BBUCredentialIssuance.user_id == user_id,
+            )
+        )
+    ).scalars().first()
+    if not issuance:
+        raise HTTPException(404, "Professional credential not found")
+
+    if issuance.status == "revoked":
+        current_id = await _reconcile_current_projection_after_revocation(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            credential_type=issuance.credential_type,
+        )
+        return {
+            "detail": "Professional credential already revoked",
+            "issuance_id": issuance.id,
+            "user_id": user_id,
+            "credential_type": issuance.credential_type,
+            "status": "revoked",
+            "current_issuance_id": current_id,
+            "idempotent": True,
+        }
+
+    before = issuance_to_dict(issuance)
+    issuance.status = "revoked"
+    db.add(issuance)
+    current_id = await _reconcile_current_projection_after_revocation(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        credential_type=issuance.credential_type,
+    )
+    after = issuance_to_dict(issuance)
+    after["current_issuance_id"] = current_id
+    await add_audit_event(
+        db,
+        org_id=org_id,
+        actor_user_id=actor_user_id,
+        action="professional_credential_revoked",
+        target_type="credential_issuance",
+        target_id=issuance.id,
+        before_data=before,
+        after_data=after,
+        reason="Professional credential revoked by organization administrator.",
+        commit=False,
+    )
+    await db.commit()
+    await db.refresh(issuance)
+    return {
+        "detail": "Professional credential revoked",
+        "issuance_id": issuance.id,
+        "user_id": user_id,
+        "credential_type": issuance.credential_type,
+        "status": "revoked",
+        "current_issuance_id": current_id,
+        "idempotent": False,
+    }
 
 
 def _public_credential_id(credential_type: str, effective_at: datetime) -> str:

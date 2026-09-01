@@ -184,6 +184,91 @@ class TestAdminRouter:
         assert response.status_code == 403
         revoke.assert_not_awaited()
 
+    async def test_session_admin_professional_credential_delete_is_org_scoped(
+        self, app, client, db_session
+    ):
+        session_user = PublicUser(
+            id=99,
+            username="bbu-admin",
+            first_name="BBU",
+            last_name="Admin",
+            email="admin@example.com",
+            user_uuid="user_admin",
+            email_verified=True,
+        )
+        org = Mock(id=1, slug="acme")
+        db_result = Mock()
+        db_result.scalars.return_value.first.return_value = org
+        db_session.execute = AsyncMock(return_value=db_result)
+        app.dependency_overrides[get_current_user] = lambda: session_user
+
+        with patch(
+            "src.routers.admin.require_org_admin", new_callable=AsyncMock
+        ) as require_admin, patch(
+            "src.routers.admin._resolve_org_slug", new_callable=AsyncMock
+        ), patch(
+            "src.routers.admin.credential_app_svc.revoke_credential_issuance",
+            new_callable=AsyncMock,
+            return_value={
+                "detail": "Professional credential revoked",
+                "issuance_id": 7,
+                "user_id": 2,
+                "credential_type": "birth",
+                "status": "revoked",
+                "current_issuance_id": None,
+                "idempotent": False,
+            },
+        ) as revoke:
+            response = await client.delete(
+                "/api/v1/admin/acme/credential-issuances/2/7"
+            )
+
+        assert response.status_code == 200
+        require_admin.assert_awaited_once_with(99, 1, db_session)
+        revoke.assert_awaited_once_with(
+            db_session,
+            org_id=1,
+            user_id=2,
+            issuance_id=7,
+            actor_user_id=99,
+        )
+
+    async def test_session_non_admin_professional_credential_delete_is_denied(
+        self, app, client, db_session
+    ):
+        session_user = PublicUser(
+            id=100,
+            username="bbu-student",
+            first_name="BBU",
+            last_name="Student",
+            email="student@example.com",
+            user_uuid="user_student",
+            email_verified=True,
+        )
+        org = Mock(id=1, slug="acme")
+        db_result = Mock()
+        db_result.scalars.return_value.first.return_value = org
+        db_session.execute = AsyncMock(return_value=db_result)
+        app.dependency_overrides[get_current_user] = lambda: session_user
+
+        with patch(
+            "src.routers.admin.require_org_admin",
+            new_callable=AsyncMock,
+            side_effect=HTTPException(
+                status_code=403,
+                detail="Only organization administrators and maintainers can perform this action",
+            ),
+        ), patch(
+            "src.routers.admin.credential_app_svc.revoke_credential_issuance",
+            new_callable=AsyncMock,
+        ) as revoke:
+            response = await client.delete(
+                "/api/v1/admin/acme/credential-issuances/2/7"
+            )
+
+        assert response.status_code == 403
+        revoke.assert_not_awaited()
+
     async def test_auth_progress_and_certifications(self, client, api_user):
         """The auth/token, aggregate progress, and certificates endpoints all
         operate on a single user_id and are grouped here for a smoke check."""

@@ -19,6 +19,7 @@ from src.routers.auth import set_auth_cookies
 from src.security.auth import get_current_user, resolve_acting_user_id
 from src.security.org_auth import require_org_admin
 from src.db.organizations import Organization
+from src.bbu_credentials import applications as credential_app_svc
 from src.services.admin.admin import (
     _require_api_token,
     _resolve_org_slug,
@@ -217,6 +218,16 @@ class AwardCertificateResponse(BaseModel):
 class RevokeCertificateResponse(BaseModel):
     detail: str
     user_certification_uuid: str
+
+
+class RevokeCredentialIssuanceResponse(BaseModel):
+    detail: str
+    issuance_id: int
+    user_id: int
+    credential_type: str
+    status: str
+    current_issuance_id: Optional[int] = None
+    idempotent: bool = False
 
 
 async def _certificate_admin_principal(org_slug: str, current_user, db_session: AsyncSession) -> APITokenUser:
@@ -1189,6 +1200,35 @@ async def api_admin_revoke_certificate(
         token_user, user_id, user_certification_uuid, db_session
     )
     return RevokeCertificateResponse(**result)
+
+
+@router.delete(
+    "/{org_slug}/credential-issuances/{user_id}/{issuance_id}",
+    response_model=RevokeCredentialIssuanceResponse,
+    summary="Revoke a professional credential issuance",
+    description=(
+        "Revoke one BBU professional credential issuance within the selected "
+        "organization. The immutable history row is retained for audit and the "
+        "current credential projection is reconciled."
+    ),
+    responses={404: {"description": "Professional credential not found"}},
+)
+async def api_admin_revoke_credential_issuance(
+    org_slug: str,
+    user_id: int,
+    issuance_id: int,
+    current_user=Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
+) -> RevokeCredentialIssuanceResponse:
+    token_user = await _certificate_admin_principal(org_slug, current_user, db_session)
+    result = await credential_app_svc.revoke_credential_issuance(
+        db_session,
+        org_id=token_user.org_id,
+        user_id=user_id,
+        issuance_id=issuance_id,
+        actor_user_id=token_user.created_by_user_id,
+    )
+    return RevokeCredentialIssuanceResponse(**result)
 
 
 # ── User group membership ────────────────────────────────────────────────────

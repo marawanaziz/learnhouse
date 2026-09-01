@@ -26,8 +26,8 @@ def test_operations_console_inline_script_is_valid_javascript():
     assert result.returncode == 0, result.stderr
 
 
-def test_operations_console_has_guarded_delete_for_training_certificates_only():
-    """The Operations member drawer exposes deletion only for issued cert rows."""
+def test_operations_console_has_separate_guarded_delete_actions_for_both_record_types():
+    """Training and professional credential rows use separate delete routes."""
     page = console._PAGE
     assert "certificate-delete-trigger" in page
     assert "data-certificate-uuid" in page
@@ -46,4 +46,12 @@ def test_operations_console_has_guarded_delete_for_training_certificates_only():
     assert "c.uuid&&c.id!=null" in training_source
 
     issues_source = page[issues_start:page.index("const apps=", issues_start)]
-    assert "certificate-delete-trigger" not in issues_source
+    assert "credential-delete-trigger" in issues_source
+    assert "data-credential-id" in issues_source
+    assert "requestCredentialDelete(this)" in issues_source
+    assert "data-credential-public-id" in issues_source
+    assert "credential-delete-trigger" not in training_source
+    assert "certifications/" in page
+    assert "credentials/member/" in page
+    assert "professional-credential-delete-dialog" in page
+    assert "professional-credential-delete-cancel" in page

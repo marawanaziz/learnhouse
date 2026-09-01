@@ -24,7 +24,11 @@ describe("admin certificate deletion", () => {
     assert.match(profileSource, /\n\s+Cancel\n\s+<\/button>/);
     assert.match(profileSource, /deletingCertificateUuid \? 'Deleting…' : 'Delete'/);
     assert.match(profileSource, /autoFocus[\s\S]*>\s*Cancel/);
-    const destructiveButton = profileSource.slice(profileSource.lastIndexOf('onClick={confirmCertificateDelete}'));
+    const trainingDialog = profileSource.slice(
+      profileSource.lastIndexOf('{certificatePendingDelete &&'),
+      profileSource.indexOf('{credentialPendingDelete &&')
+    );
+    const destructiveButton = trainingDialog.slice(trainingDialog.lastIndexOf('onClick={confirmCertificateDelete}'));
     assert.doesNotMatch(destructiveButton, /autoFocus/);
   });
 
@@ -47,6 +51,18 @@ describe("admin certificate deletion", () => {
     assert.match(profileSource, /role="alert"/);
     assert.match(profileSource, /await deleteUserCertificate[\s\S]*catch \(error: any\)/);
     assert.doesNotMatch(profileSource, /catch \(error: any\)[\s\S]*setD\(\(previous/);
+  });
+
+  test("renders professional credential rows with preserved verification actions and a named delete dialog", () => {
+    assert.match(profileSource, /d\?\.credential_issuances/);
+    assert.match(profileSource, /professionalCredentialLabel\(c\.credential_type\)/);
+    assert.match(profileSource, /deleteUserCredentialIssuance\(orgSlug, userId, issuanceId, token\)/);
+    assert.match(profileSource, /Delete professional credential\?/);
+    assert.match(profileSource, /delete-professional-credential-description/);
+    assert.match(profileSource, /Verify <ExternalLink/);
+    assert.match(profileSource, /Download PDF <Download/);
+    assert.match(profileSource, /onClick=\{\(\) => setCredentialPendingDelete\(null\)\}/);
+    assert.match(profileSource, /onClick=\{confirmCredentialDelete\}/);
   });
 
   test("adds the same guarded action to Operations member training certificates only", () => {

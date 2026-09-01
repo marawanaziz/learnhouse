@@ -14,3 +14,17 @@ export async function deleteUserCertificate(
   )
   return errorHandling(response)
 }
+
+/** Revoke one BBU professional credential issuance in the selected org. */
+export async function deleteUserCredentialIssuance(
+  orgSlug: string,
+  userId: number,
+  issuanceId: number,
+  accessToken?: string,
+) {
+  const response = await fetch(
+    `${getAPIUrl()}admin/${encodeURIComponent(orgSlug)}/credential-issuances/${userId}/${issuanceId}`,
+    RequestBodyWithAuthHeader('DELETE', null, null, accessToken),
+  )
+  return errorHandling(response)
+}

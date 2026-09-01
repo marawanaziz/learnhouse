@@ -222,7 +222,38 @@ async def test_admin_can_issue_one_year_then_three_year_from_member_record(
         levels = [
             row["credential_level"] for row in member.json()["issuances"]
         ]
-        assert levels == ["three_year_full", "one_year_provisional"]
+    assert levels == ["three_year_full", "one_year_provisional"]
+
+
+@pytest.mark.asyncio
+async def test_operations_member_record_can_revoke_one_professional_issuance(
+    db, regular_user, admin_user, monkeypatch
+):
+    issuance = await app_svc.create_issuance(
+        db,
+        org_id=1,
+        user_id=regular_user.id,
+        credential_type="birth",
+        credential_level="three_year_full",
+        effective_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        source="manual",
+        source_ref="operations-delete",
+    )
+    monkeypatch.setattr(console, "authorize_admin", AsyncMock())
+    monkeypatch.setattr(
+        console, "get_current_user", AsyncMock(return_value=admin_user)
+    )
+    client = await _client_for(db)
+    async with client:
+        response = await client.delete(
+            f"/api/v1/bbu/admin/credentials/member/{regular_user.id}/{issuance.id}"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["issuance_id"] == issuance.id
+    assert response.json()["status"] == "revoked"
+    await db.refresh(issuance)
+    assert issuance.status == "revoked"
 
 
 @pytest.mark.asyncio

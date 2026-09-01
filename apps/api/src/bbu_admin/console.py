@@ -1098,6 +1098,25 @@ async def credential_manual_issue(
     }
 
 
+@router.delete("/credentials/member/{user_id}/{issuance_id}")
+async def credential_revoke_issuance(
+    user_id: int,
+    issuance_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Revoke one professional credential from the Operations member drawer."""
+    await _auth(request, db_session)
+    actor_id = await _admin_actor_id(request, db_session)
+    return await credential_app_svc.revoke_credential_issuance(
+        db_session,
+        org_id=ORG,
+        user_id=user_id,
+        issuance_id=issuance_id,
+        actor_user_id=actor_id,
+    )
+
+
 @router.get("/credentials")
 async def credentials_user(request: Request, email: str, db_session: AsyncSession = Depends(get_db_session)):
     await _auth(request, db_session)
@@ -1778,6 +1797,17 @@ button.danger:hover{{background:#7f1d1d}}
     </div>
   </section>
 </div>
+<div id=professional-credential-delete-dialog class=cert-delete-dialog role=dialog aria-modal=true aria-labelledby=professional-credential-delete-title aria-describedby=professional-credential-delete-description aria-hidden=true>
+  <section class=cert-delete-dialog-panel>
+    <h2 id=professional-credential-delete-title>Delete professional credential?</h2>
+    <p id=professional-credential-delete-description>This revokes the issued certificate for <strong id=professional-credential-delete-recipient></strong>. The credential is <strong id=professional-credential-delete-name></strong> and its ID is <code id=professional-credential-delete-id style="word-break:break-all"></code>.</p>
+    <p id=professional-credential-delete-error class=cert-delete-dialog-error role=alert hidden></p>
+    <div class=cert-delete-dialog-actions>
+      <button id=professional-credential-delete-cancel class=ghost type=button>Cancel</button>
+      <button id=professional-credential-delete-confirm class=danger type=button>Delete</button>
+    </div>
+  </section>
+</div>
 <script>
 const API='/api/v1/bbu/admin';
 const CREDAPI='/api/v1/bbu/credentials';
@@ -2139,6 +2169,7 @@ function closeCohort(){{
 // Credentials
 let CAPAGE=1, CURRENT_CREDENTIAL_MEMBER=0, CURRENT_APPLICATION=0;
 let PENDING_CERTIFICATE_DELETE=null, CERTIFICATE_DELETE_BUSY=false, CERTIFICATE_DELETE_OPENER=null;
+let PENDING_CREDENTIAL_DELETE=null, CREDENTIAL_DELETE_BUSY=false, CREDENTIAL_DELETE_OPENER=null;
 const CERTIFICATE_ORG_SLUG='bbu';
 const credLabel=t=>t==='birth'?'Birth Doula':'Postpartum';
 const levelLabel=l=>l==='one_year_provisional'?'One-year provisional':'Three-year full';
@@ -2233,6 +2264,7 @@ function searchCredentialMembers(){{
 let CREDENTIAL_MEMBER_OPENER=null;
 function closeCredentialMember(){{
   if(document.getElementById('certificate-delete-dialog').classList.contains('open'))closeCertificateDelete();
+  if(document.getElementById('professional-credential-delete-dialog').classList.contains('open'))closeCredentialDelete();
   const drawer=document.getElementById('credential-member-drawer');
   drawer.classList.remove('open');
   drawer.setAttribute('aria-hidden','true');
@@ -2272,7 +2304,10 @@ function openCredentialMember(userId){{
       return `<tr><td>${{esc(c.course)}}</td><td>${{esc(c.credential_type||'—')}}</td><td>${{c.is_cross_cert?'Cross-certification':'Full training'}}</td><td>${{esc((c.issued_at||'').slice(0,10))}}</td><td style="white-space:nowrap"><a class=ghost target=_blank href="${{esc(c.verify_url)}}">Open</a>${{deleteAction}}</td></tr>`;
     }}).join('')
       ||'<tr><td colspan=5 class=muted>No mapped training certificates.</td></tr>';
-    const issues=(d.issuances||[]).map(i=>`<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a> <a class=ghost href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/certificate.pdf">Download PDF</a></td></tr>`).join('')
+    const issues=(d.issuances||[]).map(i=>{{
+      const deleteAction=i.id&&i.status!=='revoked'?` <button class="danger credential-delete-trigger" type="button" data-credential-id="${{esc(i.id)}}" data-credential-name="${{esc(credLabel(i.credential_type)+' · '+levelLabel(i.credential_level))}}" data-credential-public-id="${{esc(i.public_credential_id)}}" onclick="requestCredentialDelete(this)">Delete</button>`:'';
+      return `<tr><td><b>${{credLabel(i.credential_type)}}</b><br><span class=muted>${{esc(i.public_credential_id)}}</span></td><td>${{levelLabel(i.credential_level)}}</td><td>${{statusBadge(i.status)}}</td><td>${{esc((i.effective_at||'').slice(0,10))}}</td><td>${{esc((i.expires_at||'').slice(0,10))}}</td><td style="white-space:nowrap"><a class=ghost target=_blank href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/page">Verify</a> <a class=ghost href="${{CREDAPI}}/verify/${{encodeURIComponent(i.verification_token)}}/certificate.pdf">Download PDF</a>${{deleteAction}}</td></tr>`;
+    }}).join('')
       ||'<tr><td colspan=6 class=muted>No professional credential issuances.</td></tr>';
     const apps=(d.applications||[]).map(a=>`<tr><td>${{credLabel(a.credential_type)}}</td><td>${{statusBadge(a.status)}}</td><td>${{a.claimed_ceu_total||0}}</td><td>${{esc((a.submitted_at||a.created_at||'').slice(0,10))}}</td><td><button class=ghost onclick="closeCredentialMember();openCredentialApplication(${{a.id}})">Open</button></td></tr>`).join('')
       ||'<tr><td colspan=5 class=muted>No CEU applications.</td></tr>';
@@ -2292,6 +2327,7 @@ function openCredentialMember(userId){{
 }}
 document.addEventListener('keydown',event=>{{
   if(event.key==='Escape'&&document.getElementById('certificate-delete-dialog').classList.contains('open')){{closeCertificateDelete();return;}}
+  if(event.key==='Escape'&&document.getElementById('professional-credential-delete-dialog').classList.contains('open')){{closeCredentialDelete();return;}}
   if(event.key==='Escape'&&document.getElementById('credential-member-drawer').classList.contains('open'))closeCredentialMember();
 }});
 function requestCertificateDelete(button){{
@@ -2344,6 +2380,56 @@ async function confirmCertificateDelete(){{
 }}
 document.getElementById('certificate-delete-cancel').onclick=closeCertificateDelete;
 document.getElementById('certificate-delete-confirm').onclick=confirmCertificateDelete;
+function requestCredentialDelete(button){{
+  const issuanceId=button&&Number(button.dataset.credentialId);
+  if(!issuanceId||!CURRENT_CREDENTIAL_MEMBER)return;
+  PENDING_CREDENTIAL_DELETE={{
+    userId:CURRENT_CREDENTIAL_MEMBER,
+    issuanceId:issuanceId,
+    credential:button.dataset.credentialName||'Professional credential',
+    recipient:document.getElementById('credential-member-title').textContent||'this member',
+    publicId:button.dataset.credentialPublicId||''
+  }};
+  document.getElementById('professional-credential-delete-recipient').textContent=PENDING_CREDENTIAL_DELETE.recipient;
+  document.getElementById('professional-credential-delete-name').textContent=PENDING_CREDENTIAL_DELETE.credential;
+  document.getElementById('professional-credential-delete-id').textContent=PENDING_CREDENTIAL_DELETE.publicId||('issuance #'+PENDING_CREDENTIAL_DELETE.issuanceId);
+  document.getElementById('professional-credential-delete-error').hidden=true;
+  const dialog=document.getElementById('professional-credential-delete-dialog');
+  dialog.classList.add('open');dialog.setAttribute('aria-hidden','false');
+  CREDENTIAL_DELETE_OPENER=button;
+  document.getElementById('professional-credential-delete-cancel').focus();
+}}
+function closeCredentialDelete(force=false){{
+  if(CREDENTIAL_DELETE_BUSY&&!force)return;
+  const dialog=document.getElementById('professional-credential-delete-dialog');
+  dialog.classList.remove('open');dialog.setAttribute('aria-hidden','true');
+  PENDING_CREDENTIAL_DELETE=null;
+  if(CREDENTIAL_DELETE_OPENER&&CREDENTIAL_DELETE_OPENER.isConnected)CREDENTIAL_DELETE_OPENER.focus();
+  CREDENTIAL_DELETE_OPENER=null;
+}}
+async function confirmCredentialDelete(){{
+  const pending=PENDING_CREDENTIAL_DELETE;
+  if(!pending||CREDENTIAL_DELETE_BUSY)return;
+  CREDENTIAL_DELETE_BUSY=true;
+  const confirmButton=document.getElementById('professional-credential-delete-confirm');
+  const cancelButton=document.getElementById('professional-credential-delete-cancel');
+  const error=document.getElementById('professional-credential-delete-error');
+  confirmButton.disabled=true;cancelButton.disabled=true;confirmButton.textContent='Deleting…';error.hidden=true;
+  try{{
+    const response=await fetch(API+'/credentials/member/'+pending.userId+'/'+pending.issuanceId,{{method:'DELETE',credentials:'include',headers:{{'Content-Type':'application/json'}}}});
+    let result={{}};try{{result=await response.json();}}catch{{}}
+    if(!response.ok)throw new Error(result.detail||'Could not revoke the professional credential. No changes were made.');
+    closeCredentialDelete(true);
+    openCredentialMember(pending.userId);
+  }}catch(errorValue){{
+    error.textContent=errorValue&&errorValue.message?errorValue.message:'Could not revoke the professional credential. No changes were made.';
+    error.hidden=false;
+  }}finally{{
+    CREDENTIAL_DELETE_BUSY=false;confirmButton.disabled=false;cancelButton.disabled=false;confirmButton.textContent='Delete';
+  }}
+}}
+document.getElementById('professional-credential-delete-cancel').onclick=closeCredentialDelete;
+document.getElementById('professional-credential-delete-confirm').onclick=confirmCredentialDelete;
 function addCredentialYears(value,years){{
   const p=(value||'').split('-').map(Number);if(p.length!==3||!p[0])return '—';
   let y=p[0]+years,m=p[1],d=p[2];
