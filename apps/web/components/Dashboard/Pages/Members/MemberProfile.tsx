@@ -121,7 +121,7 @@ export default function MemberProfile({ userId, orgSlug, onClose }: { userId: nu
 
   return (
     <div className="fixed inset-0 z-modal bg-slate-900/40 backdrop-blur-sm flex justify-end" onClick={onClose}>
-      <div className="w-full max-w-3xl h-full bg-slate-50 shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-3xl min-w-0 h-full bg-slate-50 shadow-2xl overflow-x-hidden overflow-y-auto" onClick={e => e.stopPropagation()}>
         {/* header */}
         <div className="sticky top-0 z-10 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
           <div>
@@ -142,7 +142,7 @@ export default function MemberProfile({ userId, orgSlug, onClose }: { userId: nu
         ) : !d || d.detail ? (
           <div className="p-10 text-center text-slate-400">Couldn't load this profile.</div>
         ) : (
-          <div className="p-6 space-y-5">
+          <div className="min-w-0 p-6 space-y-5">
             {certificateError && (
               <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                 {certificateError}
@@ -196,7 +196,7 @@ export default function MemberProfile({ userId, orgSlug, onClose }: { userId: nu
               ) : <p className="text-sm text-slate-400">No quiz submissions recorded yet.</p>}
             </Card>
 
-            <div className="grid sm:grid-cols-2 gap-5">
+            <div className="grid sm:grid-cols-2 gap-5 min-w-0">
               {/* Credentials */}
               <Card icon={<Award size={18} />} title="Credentials" count={credentialIssuances.length || d.credentials?.length}>
                 {credentialIssuances.length ? credentialIssuances.map((c: any) => (

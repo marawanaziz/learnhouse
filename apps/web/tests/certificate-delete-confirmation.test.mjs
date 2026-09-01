@@ -7,6 +7,10 @@ const profileSource = readFileSync(
   fileURLToPath(new URL("../components/Dashboard/Pages/Members/MemberProfile.tsx", import.meta.url)),
   "utf8"
 );
+const membersSource = readFileSync(
+  fileURLToPath(new URL("../components/Dashboard/Pages/Members/MembersManager.tsx", import.meta.url)),
+  "utf8"
+);
 const serviceSource = readFileSync(
   fileURLToPath(new URL("../services/admin/certificates.ts", import.meta.url)),
   "utf8"
@@ -84,5 +88,14 @@ describe("admin certificate deletion", () => {
     assert.match(operationsSource, /function closeCertificateDelete\(force=false\)/);
     assert.match(operationsSource, /if\(!pending\|\|CERTIFICATE_DELETE_BUSY\)return/);
     assert.match(operationsSource, /error\.textContent=errorValue&&errorValue\.message/);
+  });
+
+  test("keeps the Members document bounded at narrow widths while preserving action access", () => {
+    assert.match(membersSource, /min-w-0 max-w-full overflow-x-hidden/);
+    assert.match(membersSource, /flex flex-wrap items-center gap-3/);
+    assert.match(membersSource, /min-w-0 max-w-full overflow-x-auto/);
+    assert.match(profileSource, /min-w-0 h-full .*overflow-x-hidden overflow-y-auto/);
+    assert.match(profileSource, /flex flex-wrap items-start justify-between gap-2/);
+    assert.match(profileSource, /Delete professional credential\?/);
   });
 });

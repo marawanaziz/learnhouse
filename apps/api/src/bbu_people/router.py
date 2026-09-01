@@ -22,7 +22,7 @@ from src.db.courses.courses import Course
 from src.db.courses.activities import Activity
 from src.db.courses.certifications import CertificateUser, Certifications
 from src.bbu_payments.models import BBUOrder
-from src.bbu_credentials.models import BBUCredential, BBUCeuLedger
+from src.bbu_credentials.models import BBUCredential, BBUCredentialIssuance, BBUCeuLedger
 from src.bbu_credentials import applications as credential_app_svc
 from src.bbu_cohorts.models import BBUCohort, BBUCohortMember
 from src.bbu_people.models import BBUQuizSubmission
@@ -148,12 +148,31 @@ async def people_list(request: Request, q: str = "", limit: int = 25, offset: in
                       db_session: AsyncSession = Depends(get_db_session),
                       user=Depends(get_current_user)):
     await _guard(request, db_session, user)
-    base = select(User).join(UserOrganization, UserOrganization.user_id == User.id).where(
-        UserOrganization.org_id == ORG)
+    # The dashboard's historical roster is based on UserOrganization, but BBU
+    # credential holders can legitimately exist before that association is
+    # created.  Use correlated EXISTS predicates instead of joins so credential
+    # records remain strictly org-scoped and each user can appear only once.
+    org_membership = select(UserOrganization.id).where(
+        UserOrganization.user_id == User.id,
+        UserOrganization.org_id == ORG,
+    ).exists()
+    org_credential = select(BBUCredential.id).where(
+        BBUCredential.user_id == User.id,
+        BBUCredential.org_id == ORG,
+    ).exists()
+    org_issuance = select(BBUCredentialIssuance.id).where(
+        BBUCredentialIssuance.user_id == User.id,
+        BBUCredentialIssuance.org_id == ORG,
+    ).exists()
+    base = select(User).where(or_(org_membership, org_credential, org_issuance))
     if q.strip():
         like = f"%{q.strip()}%"
+        full_name = func.trim(
+            func.coalesce(User.first_name, "") + " " + func.coalesce(User.last_name, "")
+        )
         base = base.where(or_(User.email.ilike(like), User.first_name.ilike(like),
-                              User.last_name.ilike(like), User.username.ilike(like)))
+                              User.last_name.ilike(like), User.username.ilike(like),
+                              full_name.ilike(like)))
     total = (await db_session.execute(
         select(func.count()).select_from(base.subquery()))).scalar() or 0
     users = (await db_session.execute(
@@ -187,6 +206,7 @@ async def people_list(request: Request, q: str = "", limit: int = 25, offset: in
         spend = (await db_session.execute(select(func.coalesce(func.sum(BBUOrder.amount_cents), 0)).where(
             BBUOrder.status == "paid", or_(BBUOrder.user_id == u.id, BBUOrder.email == u.email)))).scalar() or 0
         cred = (await db_session.execute(select(BBUCredential).where(
+            BBUCredential.org_id == ORG,
             BBUCredential.user_id == u.id).order_by(BBUCredential.id.desc()))).scalars().first()
         people.append({
             "user_id": u.id, "name": _fullname(u), "email": u.email,

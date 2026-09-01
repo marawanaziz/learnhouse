@@ -1,5 +1,5 @@
 'use client'
-import React, { useMemo, useState } from 'react'
+import React, { useState } from 'react'
 import { useOrg } from '@components/Contexts/OrgContext'
 import { useLHSession } from '@components/Contexts/LHSessionContext'
 import { getAPIUrl } from '@services/config/config'
@@ -154,7 +154,7 @@ function MembersManager() {
   }
 
   return (
-    <div className="mx-4 sm:mx-10 my-6">
+    <div className="mx-4 sm:mx-10 my-6 min-w-0 max-w-full overflow-x-hidden">
       <div className="mb-5">
         <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
           <UsersThree size={24} weight="fill" className="text-gray-700" /> Members
@@ -164,9 +164,9 @@ function MembersManager() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 min-w-0">
         {/* Groups panel */}
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 min-w-0">
           <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-3 sticky top-4">
             <div className="flex items-center justify-between px-1 pb-2">
               <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Groups &amp; Cohorts</span>
@@ -219,7 +219,7 @@ function MembersManager() {
         </div>
 
         {/* Roster + group detail */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="lg:col-span-3 min-w-0 space-y-4">
           {/* selected-group course access */}
           {selectedGroup && (
             <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-4">
@@ -245,14 +245,14 @@ function MembersManager() {
           )}
 
           {/* toolbar */}
-          <div className="bg-white rounded-xl shadow-xs border border-gray-100">
-            <div className="flex items-center gap-3 p-3 border-b border-gray-100">
+          <div className="bg-white rounded-xl shadow-xs border border-gray-100 min-w-0">
+            <div className="flex flex-wrap items-center gap-3 p-3 border-b border-gray-100 min-w-0">
               <div className="relative flex-1 max-w-sm">
                 <MagnifyingGlass size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }}
                   placeholder="Search members by name or email…"
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg"
+                  className="w-full max-w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg"
                 />
               </div>
               <span className="text-xs text-gray-400">{total} {selectedGroup ? 'in group' : 'members'}</span>
@@ -282,6 +282,7 @@ function MembersManager() {
 
             {/* table */}
             {usingPeople ? (
+            <div className="min-w-0 max-w-full overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100">
@@ -309,7 +310,9 @@ function MembersManager() {
                 )}
               </tbody>
             </table>
+            </div>
             ) : (
+            <div className="min-w-0 max-w-full overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100">
@@ -357,6 +360,7 @@ function MembersManager() {
                 )}
               </tbody>
             </table>
+            </div>
             )}
 
             {/* pagination */}
