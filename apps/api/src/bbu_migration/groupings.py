@@ -310,9 +310,11 @@ async def repair_bold_media(
 ):
     """Repair the three existing Project BOLD clones created before the clone fix."""
     from src.db.courses.activities import Activity, ActivityTypeEnum
+    from src.db.courses.assignments import Assignment
     from src.db.courses.blocks import Block
     from src.db.courses.chapter_activities import ChapterActivity
     from src.db.courses.course_chapters import CourseChapter
+    from src.services.courses.courses import clone_activity_assignment
 
     body = await request.json() if await request.body() else {}
     _check(request, body)
@@ -334,6 +336,7 @@ async def repair_bold_media(
 
     results = []
     changed = 0
+    assignments_changed = 0
     for source_name in body.get("courses") or BOLD_SOURCES:
         source = (
             await db_session.execute(
@@ -367,10 +370,57 @@ async def repair_bold_media(
             continue
 
         course_changed = 0
+        course_assignments_changed = 0
         errors = []
         for source_activity, target_activity in zip(
             source_activities, target_activities
         ):
+            if source_activity.activity_type == ActivityTypeEnum.TYPE_ASSIGNMENT:
+                source_assignment = (
+                    await db_session.execute(
+                        select(Assignment).where(
+                            Assignment.activity_id == source_activity.id
+                        )
+                    )
+                ).scalars().first()
+                target_assignment = (
+                    await db_session.execute(
+                        select(Assignment).where(
+                            Assignment.activity_id == target_activity.id
+                        )
+                    )
+                ).scalars().first()
+                if source_assignment and not target_assignment:
+                    course_assignments_changed += 1
+                    assignments_changed += 1
+                    if not dry:
+                        target_chapter_id = (
+                            await db_session.execute(
+                                select(ChapterActivity.chapter_id).where(
+                                    ChapterActivity.activity_id == target_activity.id
+                                )
+                            )
+                        ).scalars().first()
+                        if not target_chapter_id:
+                            errors.append(
+                                f"{target_activity.name}: target chapter link is missing"
+                            )
+                            course_assignments_changed -= 1
+                            assignments_changed -= 1
+                            continue
+                        await clone_activity_assignment(
+                            db_session,
+                            source_activity_id=source_activity.id,
+                            target_activity_id=target_activity.id,
+                            target_course_id=target.id,
+                            target_chapter_id=target_chapter_id,
+                            target_org_id=target.org_id,
+                        )
+                elif not source_assignment:
+                    errors.append(
+                        f"{source_activity.name}: source assignment is missing"
+                    )
+                continue
             if source_activity.activity_type != ActivityTypeEnum.TYPE_DYNAMIC:
                 continue
             source_blocks = (
@@ -403,14 +453,20 @@ async def repair_bold_media(
         results.append({
             "source": source_name,
             "target": target_name,
-            "status": "would repair" if dry and course_changed else "repaired" if course_changed else "already healthy",
+            "status": "would repair" if dry and (course_changed or course_assignments_changed) else "repaired" if (course_changed or course_assignments_changed) else "already healthy",
             "activities_changed": course_changed,
+            "assignments_changed": course_assignments_changed,
             "errors": errors,
         })
 
     if not dry:
         await db_session.commit()
-    return {"dry_run": dry, "activities_changed": changed, "results": results}
+    return {
+        "dry_run": dry,
+        "activities_changed": changed,
+        "assignments_changed": assignments_changed,
+        "results": results,
+    }
 
 
 @router.post("/groupings/communities")

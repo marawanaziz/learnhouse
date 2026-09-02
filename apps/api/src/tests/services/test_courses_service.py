@@ -22,6 +22,12 @@ from src.db.courses.courses import (
 )
 from src.db.courses.activities import Activity, ActivityTypeEnum, ActivitySubTypeEnum
 from src.db.courses.blocks import Block, BlockTypeEnum
+from src.db.courses.assignments import (
+    Assignment,
+    AssignmentTask,
+    AssignmentTaskTypeEnum,
+    GradingTypeEnum,
+)
 from src.db.courses.chapters import Chapter
 from src.db.courses.chapter_activities import ChapterActivity
 from src.db.courses.course_chapters import CourseChapter
@@ -1120,6 +1126,70 @@ class TestCourseMutationsAndRights:
                 update_date=str(datetime.now()),
             )
         )
+        quiz_activity = Activity(
+            name="Clone Quiz",
+            activity_type=ActivityTypeEnum.TYPE_ASSIGNMENT,
+            activity_sub_type=ActivitySubTypeEnum.SUBTYPE_DYNAMIC_PAGE,
+            content={"type": "doc", "content": []},
+            details={},
+            published=True,
+            org_id=org.id,
+            course_id=course.id,
+            activity_uuid="activity_clone_quiz",
+            creation_date=str(datetime.now()),
+            update_date=str(datetime.now()),
+        )
+        db.add(quiz_activity)
+        await db.flush()
+        db.add(
+            ChapterActivity(
+                order=2,
+                chapter_id=chapter.id,
+                activity_id=quiz_activity.id,
+                course_id=course.id,
+                org_id=org.id,
+                creation_date=str(datetime.now()),
+                update_date=str(datetime.now()),
+            )
+        )
+        assignment = Assignment(
+            title="Safety quiz",
+            description="Check learner knowledge",
+            due_date="",
+            published=True,
+            grading_type=GradingTypeEnum.PERCENTAGE,
+            auto_grading=True,
+            show_correct_answers=True,
+            allow_retries=True,
+            max_retries=3,
+            org_id=org.id,
+            course_id=course.id,
+            chapter_id=chapter.id,
+            activity_id=quiz_activity.id,
+            assignment_uuid="assignment_source",
+            creation_date=str(datetime.now()),
+            update_date=str(datetime.now()),
+        )
+        db.add(assignment)
+        await db.flush()
+        db.add(
+            AssignmentTask(
+                title="Question set",
+                description="",
+                hint="Review the lesson",
+                assignment_type=AssignmentTaskTypeEnum.QUIZ,
+                contents={"questions": [{"question": "Safe?", "answers": ["Yes"]}]},
+                max_grade_value=100,
+                assignment_task_uuid="assignmenttask_source",
+                assignment_id=assignment.id,
+                org_id=org.id,
+                course_id=course.id,
+                chapter_id=chapter.id,
+                activity_id=quiz_activity.id,
+                creation_date=str(datetime.now()),
+                update_date=str(datetime.now()),
+            )
+        )
         await db.commit()
 
         token_user = APITokenUser(
@@ -1167,6 +1237,14 @@ class TestCourseMutationsAndRights:
                 ResourceAuthor.resource_uuid == cloned.course_uuid
             )
         )).scalars().first()
+        cloned_assignment = (await db.execute(
+            select(Assignment).where(Assignment.course_id == cloned_course.id)
+        )).scalars().one()
+        cloned_task = (await db.execute(
+            select(AssignmentTask).where(
+                AssignmentTask.assignment_id == cloned_assignment.id
+            )
+        )).scalars().one()
 
         assert cloned.name == "Test Course (Copy)"
         assert cloned.public is False
@@ -1177,9 +1255,19 @@ class TestCourseMutationsAndRights:
         assert cloned_author.user_id == regular_user.id
         assert cloned_course is not None
         assert cloned_course.course_uuid == cloned.course_uuid
+        assert cloned_assignment.assignment_uuid != assignment.assignment_uuid
+        assert cloned_assignment.title == assignment.title
+        assert cloned_assignment.auto_grading is True
+        assert cloned_assignment.activity_id != assignment.activity_id
+        assert cloned_task.assignment_task_uuid != "assignmenttask_source"
+        assert cloned_task.assignment_type == AssignmentTaskTypeEnum.QUIZ
+        assert cloned_task.contents == {
+            "questions": [{"question": "Safe?", "answers": ["Yes"]}]
+        }
+        assert cloned_task.course_id == cloned_course.id
         assert mock_copy_file.call_count >= 3
         mock_delete_file.assert_called_once()
-        mock_copy_dir.assert_called_once()
+        assert mock_copy_dir.call_count == 2
 
     @pytest.mark.asyncio
     async def test_clone_course_missing_course_and_org_failures(

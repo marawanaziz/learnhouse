@@ -74,9 +74,11 @@ RUN bun run build
 # ───────────────────────────────────────────────
 FROM python:3.14.3-slim-bookworm AS runner
 
-# Single apt layer: nginx, curl, netcat, node, pm2
+# Single apt layer: nginx, curl, netcat, ffmpeg, node, pm2.  The backend's
+# upload pipeline uses ffmpeg to make MP4s streamable before they reach R2;
+# keep it in the combined production image as well as the API-only image.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nginx curl netcat-openbsd ca-certificates gnupg unzip build-essential \
+    && apt-get install -y --no-install-recommends nginx curl netcat-openbsd ca-certificates gnupg unzip build-essential ffmpeg \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g pm2 \

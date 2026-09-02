@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import List
 from uuid import uuid4
 import logging
@@ -44,6 +45,98 @@ from fastapi import HTTPException, Request, UploadFile, status
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+async def clone_activity_assignment(
+    db_session: AsyncSession,
+    *,
+    source_activity_id: int,
+    target_activity_id: int,
+    target_course_id: int,
+    target_chapter_id: int,
+    target_org_id: int,
+) -> bool:
+    """Clone the assignment payload behind an assignment activity.
+
+    Activities are only the catalogue shells for quizzes/assignments; the
+    questions and settings live in ``Assignment`` / ``AssignmentTask`` rows.
+    Keeping this operation in the native course-clone service prevents copies
+    that look like quizzes in the outline but render blank for learners.
+
+    The target lookup makes the helper safe for repair jobs to call repeatedly.
+    The caller owns the transaction so a whole course copy or repair can still
+    commit atomically.
+    """
+    from src.db.courses.assignments import Assignment, AssignmentTask
+
+    existing = (
+        await db_session.execute(
+            select(Assignment).where(Assignment.activity_id == target_activity_id)
+        )
+    ).scalars().first()
+    if existing:
+        return False
+
+    source = (
+        await db_session.execute(
+            select(Assignment).where(Assignment.activity_id == source_activity_id)
+        )
+    ).scalars().first()
+    if not source:
+        return False
+
+    now = str(datetime.now())
+    cloned = Assignment(
+        title=source.title,
+        description=source.description,
+        due_date=source.due_date,
+        published=source.published,
+        grading_type=source.grading_type,
+        auto_grading=source.auto_grading,
+        anti_copy_paste=source.anti_copy_paste,
+        show_correct_answers=source.show_correct_answers,
+        allow_retries=source.allow_retries,
+        max_retries=source.max_retries,
+        org_id=target_org_id,
+        course_id=target_course_id,
+        chapter_id=target_chapter_id,
+        activity_id=target_activity_id,
+        assignment_uuid=f"assignment_{uuid4()}",
+        creation_date=now,
+        update_date=now,
+    )
+    db_session.add(cloned)
+    await db_session.flush()
+
+    source_tasks = (
+        await db_session.execute(
+            select(AssignmentTask)
+            .where(AssignmentTask.assignment_id == source.id)
+            .order_by(AssignmentTask.id)
+        )
+    ).scalars().all()
+    for task in source_tasks:
+        db_session.add(
+            AssignmentTask(
+                title=task.title,
+                description=task.description,
+                hint=task.hint,
+                reference_file=task.reference_file,
+                assignment_type=task.assignment_type,
+                contents=deepcopy(task.contents or {}),
+                max_grade_value=task.max_grade_value,
+                assignment_task_uuid=f"assignmenttask_{uuid4()}",
+                assignment_id=cloned.id,
+                org_id=target_org_id,
+                course_id=target_course_id,
+                chapter_id=target_chapter_id,
+                activity_id=target_activity_id,
+                creation_date=now,
+                update_date=now,
+            )
+        )
+    await db_session.flush()
+    return True
 
 
 async def get_course(
@@ -1403,6 +1496,16 @@ async def clone_course(
             # Copy entire activity directory structure if it exists
             # This handles all activity types: videos, documents, SCORM, assignments, etc.
             _copy_storage_directory(original_activity_path, new_activity_path)
+
+            if original_activity.activity_type.value == "TYPE_ASSIGNMENT":
+                await clone_activity_assignment(
+                    db_session,
+                    source_activity_id=original_activity.id,
+                    target_activity_id=new_activity.id,
+                    target_course_id=new_course.id,
+                    target_chapter_id=new_chapter.id,
+                    target_org_id=original_course.org_id,
+                )
 
             # Clone blocks for dynamic activities (use pre-fetched data)
             if original_activity.activity_type.value == "TYPE_DYNAMIC":
