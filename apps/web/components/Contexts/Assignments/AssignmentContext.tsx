@@ -47,9 +47,21 @@ export function AssignmentProvider({ children, assignment_uuid }: { children: Re
         }
     }, [assignment, assignment_tasks])
 
-    if (assignmentError || assignmentTasksError) return <div></div>
+    if (assignmentError || assignmentTasksError) {
+        return (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-900">
+                This quiz could not be loaded. Please try again or contact support if the problem continues.
+            </div>
+        )
+    }
 
-    if (!assignmentsFull) return <div></div>
+    if (!assignmentsFull) {
+        return (
+            <div className="flex h-40 items-center justify-center" aria-label="Loading quiz">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" />
+            </div>
+        )
+    }
 
     return <AssignmentContext.Provider value={assignmentsFull}>{children}</AssignmentContext.Provider>
 }

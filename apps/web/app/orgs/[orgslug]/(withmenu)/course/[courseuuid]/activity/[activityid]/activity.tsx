@@ -265,6 +265,7 @@ function ActivityClient(props: ActivityClientProps) {
   const access_token = session?.data?.tokens?.access_token;
   const [bgColor, setBgColor] = React.useState('bg-white nice-shadow')
   const [assignment, setAssignment] = React.useState(null) as any;
+  const [assignmentLoadError, setAssignmentLoadError] = React.useState<string | null>(null);
   const [_markStatusButtonActive, setMarkStatusButtonActive] = React.useState(false);
   const [isFocusMode, setIsFocusMode] = React.useState(false);
   const isInitialRender = useRef(true);
@@ -272,6 +273,25 @@ function ActivityClient(props: ActivityClientProps) {
   const [recoveringSession, setRecoveringSession] = React.useState(false)
   const { contributorStatus } = useContributorStatus(courseuuid);
   const router = useRouter();
+
+  const getAssignmentUI = React.useCallback(async () => {
+    if (!activity?.activity_uuid || !access_token) return
+    setAssignmentLoadError(null)
+    try {
+      const result = await getAssignmentFromActivityUUID(activity.activity_uuid, access_token)
+      if (!result.success || !result.data?.assignment_uuid) {
+        throw new Error('The quiz content is missing. An administrator has been notified.')
+      }
+      setAssignment(result.data)
+    } catch (error) {
+      setAssignment(null)
+      setAssignmentLoadError(
+        error instanceof Error
+          ? error.message
+          : 'The quiz content is temporarily unavailable. Please try again.'
+      )
+    }
+  }, [access_token, activity?.activity_uuid])
 
   // BBU course activities are private. If a refresh token is genuinely no
   // longer valid, return the learner to sign-in with the exact lesson saved,
@@ -499,6 +519,25 @@ function ActivityClient(props: ActivityClientProps) {
           </Suspense>
         );
       case 'TYPE_ASSIGNMENT':
+        if (assignmentLoadError) {
+          return (
+            <div role="alert" className="mx-auto max-w-xl rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+              <h2 className="font-semibold text-amber-950">
+                {t('assignments.load_error_title', 'This quiz could not be loaded')}
+              </h2>
+              <p className="mt-2 text-sm text-amber-800">
+                {assignmentLoadError}
+              </p>
+              <button
+                type="button"
+                onClick={() => void getAssignmentUI()}
+                className="mt-4 rounded-md bg-amber-900 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800"
+              >
+                {t('common.try_again', 'Try again')}
+              </button>
+            </div>
+          );
+        }
         return assignment ? (
           <Suspense fallback={<LoadingFallback />}>
             {/* AssignmentSubmissionProvider wraps AssignmentProvider (instead
@@ -515,7 +554,7 @@ function ActivityClient(props: ActivityClientProps) {
               </AssignmentProvider>
             </AssignmentSubmissionProvider>
           </Suspense>
-        ) : null;
+        ) : <LoadingFallback />;
       case 'TYPE_SCORM':
         return (
           <Suspense fallback={<LoadingFallback />}>
@@ -525,7 +564,7 @@ function ActivityClient(props: ActivityClientProps) {
       default:
         return null;
     }
-  }, [activity, course, assignment]);
+  }, [activity, course, assignment, assignmentLoadError, getAssignmentUI, org?.org_uuid, t]);
 
   // Navigate to an activity
   const navigateToActivity = (activity: any) => {
@@ -568,11 +607,6 @@ function ActivityClient(props: ActivityClientProps) {
     return null // return null if no matching activity is found
   }
 
-  async function getAssignmentUI() {
-    const assignment = await getAssignmentFromActivityUUID(activity.activity_uuid, access_token)
-    setAssignment(assignment.data)
-  }
-
   useEffect(() => {
     if (!activity) return;
     if (activity.activity_type == 'TYPE_DYNAMIC' || activity.activity_type == 'TYPE_SCORM') {
@@ -581,13 +615,15 @@ function ActivityClient(props: ActivityClientProps) {
     else if (activity.activity_type == 'TYPE_ASSIGNMENT') {
       setMarkStatusButtonActive(false);
       setBgColor(isFocusMode ? 'bg-white' : 'bg-white nice-shadow');
-      getAssignmentUI();
+      setAssignment(null);
+      setAssignmentLoadError(null);
+      void getAssignmentUI();
     }
     else {
       setBgColor(isFocusMode ? 'bg-zinc-950' : 'bg-zinc-950 nice-shadow');
     }
   }
-    , [activity, pathname, isFocusMode])
+    , [activity, pathname, isFocusMode, getAssignmentUI])
 
   const protectedQueryError = courseError || activityError
   const protectedQueryStatus = Number((protectedQueryError as any)?.status || 0)
