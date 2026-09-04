@@ -11,6 +11,7 @@ Env:
 """
 import os
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -97,8 +98,12 @@ class GHLClient:
 
     # ----------------------------------------------------------- sending
     async def find_contact(self, email: str) -> Optional[dict]:
+        path = (
+            "/contacts/search/duplicate"
+            f"?locationId={quote(LOCATION_ID, safe='')}&email={quote(email, safe='')}"
+        )
         st, d = await self._req(
-            "GET", f"/contacts/search/duplicate?locationId={LOCATION_ID}&email={email}")
+            "GET", path)
         if st != 200:
             return None
         return (d or {}).get("contact")
