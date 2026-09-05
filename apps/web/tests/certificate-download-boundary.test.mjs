@@ -9,6 +9,12 @@ const courseEndSource = readFileSync(
   ),
   "utf8"
 );
+const certificatePreviewSource = readFileSync(
+  fileURLToPath(
+    new URL("../components/Dashboard/Pages/Course/EditCourseCertification/CertificatePreview.tsx", import.meta.url)
+  ),
+  "utf8"
+);
 
 describe("BBU course-end certificate export", () => {
   test("captures only the branded certificate surface", () => {
@@ -32,5 +38,14 @@ describe("BBU course-end certificate export", () => {
     assert.match(courseEndSource, /issueDate=\{formatCertificateDate\(/);
     assert.match(courseEndSource, /expirationDate=\{bbuExpirationDate\(/);
     assert.match(courseEndSource, /surfaceId=\{BBU_COURSE_END_SURFACE_ID\}/);
+  });
+
+  test("reuses the approved Anna Rodney signature on completion certificates", () => {
+    assert.match(
+      certificatePreviewSource,
+      /BBU_INSTRUCTOR_SIGNATURE_TEMPLATE = '\/api\/v1\/bbu\/cert-template\/bbu_cert-01\.png'/
+    );
+    assert.match(certificatePreviewSource, /data-bbu-instructor-signature="anna-rodney"/);
+    assert.match(certificatePreviewSource, /clipPath: 'inset\(77% 31% 17\.7% 51%\)'/);
   });
 });

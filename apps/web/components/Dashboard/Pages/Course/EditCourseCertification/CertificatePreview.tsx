@@ -21,6 +21,8 @@ interface CertificatePreviewProps {
   surfaceId?: string;         // DOM id so the PDF export can canvas this exact node
 }
 
+const BBU_INSTRUCTOR_SIGNATURE_TEMPLATE = '/api/v1/bbu/cert-template/bbu_cert-01.png';
+
 const CertificatePreview: React.FC<CertificatePreviewProps> = ({
   certificationName,
   certificationDescription,
@@ -101,6 +103,21 @@ const CertificatePreview: React.FC<CertificatePreviewProps> = ({
             {/* INSTRUCTOR NAME — rule centred at 50.1% */}
             <div style={{ position: 'absolute', bottom: sit(RULE.compRow), left: '41.3%', width: '17.6%',
               textAlign: 'center', fontSize: '2cqw', color: '#113d5d' }}>{certificateInstructor || 'Anna Rodney'}</div>
+            {/* Anna Rodney's approved signature is already part of the signed doula
+                certificate artwork. Reuse that exact source and crop only the ink,
+                placing its baseline on the completion-template signature rule. */}
+            <img
+              src={BBU_INSTRUCTOR_SIGNATURE_TEMPLATE}
+              alt=""
+              aria-hidden="true"
+              data-bbu-instructor-signature="anna-rodney"
+              style={{
+                position: 'absolute', inset: 0, width: '100%', height: '100%',
+                objectFit: 'cover', pointerEvents: 'none',
+                clipPath: 'inset(77% 31% 17.7% 51%)',
+                transform: 'translate(10.8%, -3.3%)',
+              }}
+            />
           </>
         )}
 
