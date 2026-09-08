@@ -801,6 +801,9 @@ class TestUserPasswordAvatarSession:
             "src.services.users.users.add_users_to_usergroup",
             new_callable=AsyncMock,
         ) as mock_add_users_to_usergroup, patch(
+            "src.bbu_migration.registration.enroll_usergroup_courses",
+            new_callable=AsyncMock,
+        ) as mock_enroll_usergroup_courses, patch(
             "src.services.users.users.get_learnhouse_config",
             return_value=Mock(redis_config=Mock(redis_connection_string="redis://test")),
         ), patch(
@@ -822,6 +825,9 @@ class TestUserPasswordAvatarSession:
         assert isinstance(args[2], InternalUser)
         assert args[3] == 12
         assert args[4] == "77"
+        mock_enroll_usergroup_courses.assert_awaited_once_with(
+            db, 77, org.id, 12
+        )
         fake_redis.set.assert_called_once()
         assert fake_redis.set.call_args.kwargs["ex"] == 90
         assert json.loads(fake_redis.set.call_args.args[1])["pending"] is False

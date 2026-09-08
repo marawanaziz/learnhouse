@@ -241,19 +241,26 @@ class TestOrgJoinService:
             "src.services.orgs.join.add_users_to_usergroup",
             new=AsyncMock(),
         ) as mock_add_users:
-            result = await join_org(
-                mock_request,
-                JoinOrg(
-                    org_id=org.id,
-                    user_id=user.id,
-                    invite_code="CFD12345",
-                ),
-                user,
-                db,
-            )
+            with patch(
+                "src.bbu_migration.registration.enroll_usergroup_courses",
+                new=AsyncMock(),
+            ) as mock_enroll_courses:
+                result = await join_org(
+                    mock_request,
+                    JoinOrg(
+                        org_id=org.id,
+                        user_id=user.id,
+                        invite_code="CFD12345",
+                    ),
+                    user,
+                    db,
+                )
 
         assert result == "Access added to your account"
         mock_add_users.assert_awaited_once()
+        mock_enroll_courses.assert_awaited_once_with(
+            db, user.id, org.id, usergroup.id
+        )
 
     @pytest.mark.asyncio
     async def test_join_org_failure_branches(

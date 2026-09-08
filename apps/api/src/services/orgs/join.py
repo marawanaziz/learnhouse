@@ -102,12 +102,18 @@ async def join_org(
         # In that case there is no organization row to create; just apply the
         # usergroup carried by the validated invite.
         if invite_code_data and invite_code_data.get("usergroup_id"):
+            usergroup_id = int(invite_code_data["usergroup_id"])
             await add_users_to_usergroup(
                 request,
                 db_session,
                 InternalUser(id=0),
-                int(invite_code_data["usergroup_id"]),
+                usergroup_id,
                 str(user.id),
+            )
+            from src.bbu_migration.registration import enroll_usergroup_courses
+
+            await enroll_usergroup_courses(
+                db_session, user.id or 0, org.id, usergroup_id
             )
             return "Access added to your account"
         raise HTTPException(
@@ -135,12 +141,18 @@ async def join_org(
 
             # Add user to UserGroup if invite code is linked to one
             if invite_code_data.get("usergroup_id"):
+                usergroup_id = int(invite_code_data["usergroup_id"])
                 await add_users_to_usergroup(
                     request,
                     db_session,
                     InternalUser(id=0),
-                    int(invite_code_data.get("usergroup_id")),
+                    usergroup_id,
                     str(user.id),
+                )
+                from src.bbu_migration.registration import enroll_usergroup_courses
+
+                await enroll_usergroup_courses(
+                    db_session, user.id or 0, org.id, usergroup_id
                 )
 
             return "Great, You're part of the Organization"

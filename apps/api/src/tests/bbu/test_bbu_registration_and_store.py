@@ -4,7 +4,10 @@ from datetime import datetime
 import pytest
 from sqlmodel import select
 
-from src.bbu_migration.registration import assign_registration_audience
+from src.bbu_migration.registration import (
+    assign_registration_audience,
+    enroll_usergroup_courses,
+)
 from src.bbu_payments.audiences import exclude_owned_products
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.models import BBUCoupon, BBUProduct
@@ -12,6 +15,8 @@ from src.bbu_payments.offers_router import (
     _automatic_discount_percent,
     _bold_opportunity_products,
 )
+from src.db.courses.courses import Course
+from src.db.trail_runs import TrailRun
 from src.db.usergroup_resources import UserGroupResource
 from src.db.usergroup_user import UserGroupUser
 from src.db.usergroups import UserGroup
@@ -78,6 +83,51 @@ async def test_registration_defaults_unknown_answer_to_family(
     ).scalars().first()
     assert assigned == "family"
     assert membership is not None
+
+
+@pytest.mark.asyncio
+async def test_invite_group_courses_are_enrolled_once(db, org, regular_user):
+    group = await _group(db, org.id, "Bold Perinatal Professionals", "bold")
+    course = Course(
+        name="Project BOLD — Certified Birth Doula Training",
+        description="Professional course",
+        public=False,
+        published=True,
+        open_to_contributors=False,
+        org_id=org.id,
+        course_uuid="course_bold_birth",
+        creation_date=str(datetime.now()),
+        update_date=str(datetime.now()),
+    )
+    db.add(course)
+    await db.commit()
+    await db.refresh(course)
+    db.add(
+        UserGroupResource(
+            usergroup_id=group.id,
+            resource_uuid=course.course_uuid,
+            org_id=org.id,
+            creation_date=str(datetime.now()),
+            update_date=str(datetime.now()),
+        )
+    )
+    await db.commit()
+
+    assert await enroll_usergroup_courses(
+        db, regular_user.id, org.id, group.id
+    ) == 1
+    assert await enroll_usergroup_courses(
+        db, regular_user.id, org.id, group.id
+    ) == 0
+    runs = (
+        await db.execute(
+            select(TrailRun).where(
+                TrailRun.user_id == regular_user.id,
+                TrailRun.course_id == course.id,
+            )
+        )
+    ).scalars().all()
+    assert len(runs) == 1
 
 
 @pytest.mark.asyncio

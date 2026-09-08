@@ -245,13 +245,19 @@ async def create_user_with_invite(
 
     # Check if invite code contains UserGroup
     if inviteCode.get("usergroup_id"): # type: ignore
+        usergroup_id = int(inviteCode.get("usergroup_id"))
         # Add user to UserGroup
         await add_users_to_usergroup(
             request,
             db_session,
             InternalUser(id=0),
-            int(inviteCode.get("usergroup_id")), # type: ignore / Convert to int since usergroup_id is expected to be int
+            usergroup_id,
             str(user.id),
+        )
+        from src.bbu_migration.registration import enroll_usergroup_courses
+
+        await enroll_usergroup_courses(
+            db_session, user.id or 0, org_id, usergroup_id
         )
 
     # NOTE: members usage is already incremented inside create_user(); do not

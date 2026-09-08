@@ -9,6 +9,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from src.db.courses.courses import Course
+from src.db.trail_runs import TrailRun
+from src.db.usergroup_resources import UserGroupResource
 from src.db.usergroup_user import UserGroupUser
 from src.db.usergroups import UserGroup
 
@@ -17,6 +20,56 @@ AUDIENCE_GROUPS = {
     "family": "Family",
     "professional": "BBU Professionals",
 }
+
+
+async def enroll_usergroup_courses(
+    db_session: AsyncSession,
+    user_id: int,
+    org_id: int,
+    usergroup_id: int,
+) -> int:
+    """Put BBU invite-group courses on the learner's My Learning page."""
+    if org_id != ORG_ID or not user_id:
+        return 0
+
+    courses = (
+        await db_session.execute(
+            select(Course)
+            .join(
+                UserGroupResource,
+                UserGroupResource.resource_uuid == Course.course_uuid,
+            )
+            .where(
+                Course.org_id == org_id,
+                Course.published == True,  # noqa: E712
+                UserGroupResource.usergroup_id == usergroup_id,
+            )
+        )
+    ).scalars().all()
+    if not courses:
+        return 0
+
+    course_ids = {course.id for course in courses if course.id}
+    existing = set(
+        (
+            await db_session.execute(
+                select(TrailRun.course_id).where(
+                    TrailRun.user_id == user_id,
+                    TrailRun.course_id.in_(course_ids),
+                )
+            )
+        ).scalars().all()
+    )
+    missing = [course for course in courses if course.id not in existing]
+    if not missing:
+        return 0
+
+    from src.bbu_migration.router import _ensure_run, _ensure_trail
+
+    trail = await _ensure_trail(db_session, org_id, user_id)
+    for course in missing:
+        await _ensure_run(db_session, trail, course, user_id)
+    return len(missing)
 
 
 async def assign_registration_audience(
