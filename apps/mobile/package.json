@@ -1,0 +1,35 @@
+{
+  "name": "@bbu/mobile",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "dependencies": {
+    "expo": "~57.0.21",
+    "expo-network": "~57.0.1",
+    "expo-splash-screen": "~57.0.8",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.3",
+    "expo-web-browser": "~57.0.2",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-webview": "13.16.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test && expo install --check",
+    "export": "expo export --platform all",
+    "prebuild": "expo prebuild --no-install",
+    "build:preview:android": "npx eas-cli@latest build --platform android --profile preview",
+    "build:preview:ios": "npx eas-cli@latest build --platform ios --profile preview",
+    "build:production": "npx eas-cli@latest build --platform all --profile production"
+  },
+  "private": true
+}
