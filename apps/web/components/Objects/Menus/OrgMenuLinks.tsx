@@ -83,6 +83,7 @@ function MenuLinks(props: { orgslug: string; primaryColor?: string; mobile?: boo
             : it.key === 'library' ? '/folder/' : null
           const active = !it.external && (
             currentPath === linkPath ||
+            (it.key === 'courses' && currentPath === '/') ||
             (linkPath !== '/' && currentPath.startsWith(`${linkPath}/`)) ||
             (detailPath !== null && currentPath.startsWith(detailPath))
           )
