@@ -193,7 +193,7 @@ export default function PodcastPlayer() {
 
       {/* Player UI */}
       <div
-        className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg transition-all duration-300 z-50 ${
+        className={`bbu-podcast-player fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg transition-all duration-300 z-50 ${
           isMinimized ? 'h-16' : 'h-24'
         }`}
       >

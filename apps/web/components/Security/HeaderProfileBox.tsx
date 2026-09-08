@@ -42,7 +42,7 @@ interface CustomRoleInfo {
   description?: string;
 }
 
-export const HeaderProfileBox = ({ primaryColor = '' }: { primaryColor?: string }) => {
+export const HeaderProfileBox = ({ primaryColor = '', compactOnMobile = false }: { primaryColor?: string; compactOnMobile?: boolean }) => {
   const session = useLHSession() as any
   const { userRoles, rights } = useAdminStatus()
   const org = useOrg() as any
@@ -170,9 +170,9 @@ export const HeaderProfileBox = ({ primaryColor = '' }: { primaryColor?: string 
           <div className="flex items-center space-x-3">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className={`cursor-pointer flex items-center space-x-3 rounded-lg p-2 transition-colors ${colors.profileHover}`}>
-                  <UserAvatar border="border-2" rounded="rounded-lg" width={30} shadow={primaryColor ? '' : undefined} />
-                  <div className="flex flex-col items-start space-y-0">
+                <button aria-label={t('user.user_settings')} className={`cursor-pointer flex min-h-11 min-w-11 items-center justify-center ${compactOnMobile ? 'gap-0 md:gap-3' : 'space-x-3'} rounded-lg p-2 transition-colors ${colors.profileHover}`}>
+                  <UserAvatar border="border-2" rounded={compactOnMobile ? "rounded-full" : "rounded-lg"} width={30} shadow={primaryColor ? '' : undefined} />
+                  <div className={`${compactOnMobile ? 'hidden md:flex' : 'flex'} flex-col items-start space-y-0`}>
                     <div className="flex items-center space-x-2">
                       <p className={`text-sm font-semibold capitalize ${colors.profileName}`}>{session.data.user.username}</p>
                       {userRoleInfo && userRoleInfo.name !== 'USER' && (
@@ -204,7 +204,7 @@ export const HeaderProfileBox = ({ primaryColor = '' }: { primaryColor?: string 
                     </div>
                     <p className={`text-xs ${colors.profileMuted}`}>{session.data.user.email}</p>
                   </div>
-                  <CaretDown aria-hidden="true" size={16} weight="fill" className={colors.profileMuted} />
+                  <CaretDown aria-hidden="true" size={16} weight="fill" className={`${compactOnMobile ? 'hidden md:block' : ''} ${colors.profileMuted}`} />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-56" align="end">

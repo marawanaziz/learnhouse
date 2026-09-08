@@ -4,6 +4,7 @@ import { Books, FolderSimple, ChatsCircle, Headphones, Cube, ShoppingBag } from 
 import { menuIcon } from '@components/Objects/Menus/menuIcons'
 import Link from 'next/link'
 import React from 'react'
+import { usePathname } from 'next/navigation'
 import { useTranslation } from 'react-i18next'
 import { getMenuColorClasses } from '@services/utils/ts/colorUtils'
 
@@ -21,8 +22,10 @@ const BUILTIN: Record<string, Builtin> = {
 // Default order when an org has no custom menu config.
 const DEFAULT_ORDER = ['courses', 'library', 'podcasts', 'communities', 'playgrounds', 'store']
 
-function MenuLinks(props: { orgslug: string; primaryColor?: string }) {
+function MenuLinks(props: { orgslug: string; primaryColor?: string; mobile?: boolean }) {
   const { t } = useTranslation()
+  const pathname = usePathname()
+  const mobile = props.mobile === true
   const org = useOrg() as any
   const colors = getMenuColorClasses(props.primaryColor || '')
 
@@ -65,19 +68,41 @@ function MenuLinks(props: { orgslug: string; primaryColor?: string }) {
     })
     .filter(Boolean) as any[]
 
+  if (!rendered.length) return null
+
   return (
-    <div className="pl-1">
-      <ul className="flex space-x-5">
+    <div className={mobile ? 'bbu-mobile-menu-links' : 'pl-1'}>
+      <ul className={mobile ? 'bbu-mobile-menu-list' : 'flex space-x-5'}>
         {rendered.map((it) => {
-          const content = (
-            <li className={`flex space-x-2 items-center ${colors.text} font-semibold`}>
-              <it.Icon size={20} weight="fill" /> <span>{it.label}</span>
-            </li>
+          // Use the same resolved links for both layouts. Include detail pages
+          // in their parent tab, while leaving external links unselected.
+          const linkPath = new URL(it.href, 'https://navigation.local').pathname.replace(/\/$/, '') || '/'
+          const currentPath = pathname?.replace(/^\/orgs\/[^/]+(?=\/|$)/, '') || '/'
+          const detailPath = it.key === 'courses' ? '/course/'
+            : it.key === 'communities' ? '/community/'
+            : it.key === 'library' ? '/folder/' : null
+          const active = !it.external && (
+            currentPath === linkPath ||
+            (linkPath !== '/' && currentPath.startsWith(`${linkPath}/`)) ||
+            (detailPath !== null && currentPath.startsWith(detailPath))
           )
-          return it.external ? (
-            <a key={it.key} href={it.href} target="_blank" rel="noopener noreferrer">{content}</a>
-          ) : (
-            <Link key={it.key} href={it.href}>{content}</Link>
+          const className = mobile
+            ? 'bbu-mobile-menu-link'
+            : `flex space-x-2 items-center ${colors.text} font-semibold`
+          const content = <>
+            <span className={mobile ? 'bbu-mobile-menu-icon' : undefined}>
+              <it.Icon size={mobile ? 23 : 20} weight={mobile && !active ? 'regular' : 'fill'} aria-hidden="true" />
+            </span>
+            <span>{it.label}</span>
+          </>
+          return (
+            <li key={it.key} className={mobile ? 'min-w-0 flex-1' : undefined}>
+              {it.external ? (
+                <a href={it.href} target="_blank" rel="noopener noreferrer" className={className}>{content}</a>
+              ) : (
+                <Link href={it.href} className={className} aria-current={mobile && active ? 'page' : undefined}>{content}</Link>
+              )}
+            </li>
           )
         })}
       </ul>

@@ -52,6 +52,7 @@ export const OrgMenu = (props: any) => {
   const _access_token = session?.data?.tokens?.access_token;
   const org = useOrg() as any;
   const brand = useBrand()
+  const hasMobileNavigation = brand.key === 'bbu'
   const [isMenuOpen, setIsMenuOpen] = React.useState(false)
   const [isFocusMode, setIsFocusMode] = useState(false)
   const pathname = usePathname()
@@ -142,7 +143,7 @@ export const OrgMenu = (props: any) => {
 
   return (
     <>
-      <div className="backdrop-blur-lg h-[60px] blur-3xl" style={{ zIndex: 'var(--z-behind)', marginTop: topOffset }}></div>
+      <div className="bbu-header-spacer backdrop-blur-lg h-[60px] blur-3xl" style={{ zIndex: 'var(--z-behind)', marginTop: topOffset }}></div>
       <nav
         aria-label="Top navigation"
         className={`lh-brand-nav backdrop-blur-lg fixed left-0 right-0 h-[60px] ${!primaryColor ? 'bg-white/90 nice-shadow' : ''}`}
@@ -153,14 +154,14 @@ export const OrgMenu = (props: any) => {
         }}
       >
         <div className="flex items-center justify-between w-full max-w-(--breakpoint-2xl) mx-auto px-4 sm:px-6 lg:px-8 h-full">
-          <div className="flex items-center space-x-5 md:w-auto w-full">
-            <div className="logo flex md:w-auto w-full justify-center">
-              <Link href={getUriWithOrg(orgslug, '/')}>
+          <div className="flex min-w-0 items-center space-x-5 md:w-auto w-full">
+            <div className={`logo flex min-w-0 md:w-auto w-full ${hasMobileNavigation ? 'justify-start' : 'justify-center'}`}>
+              <Link href={getUriWithOrg(orgslug, '/')} className="min-w-0">
                 <div className="flex items-center m-auto justify-center">
                   {brand.key === 'bold' ? (
                     <BrandLogo inverse={Boolean(primaryColor)} />
                   ) : org?.name ? (
-                    <span className={`font-semibold text-xl whitespace-nowrap tracking-tight ${colors.text}`}>
+                    <span className={`font-semibold text-[15px] min-[375px]:text-base md:text-xl whitespace-nowrap tracking-tight ${colors.text}`}>
                       {org.name}
                     </span>
                   ) : (
@@ -181,7 +182,7 @@ export const OrgMenu = (props: any) => {
             <SearchBar orgslug={orgslug} className="w-full" primaryColor={primaryColor} />
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex shrink-0 items-center space-x-2">
             {/* Progress / Trail */}
             <AuthenticatedClientElement checkMethod="authentication">
               <div className="hidden md:flex">
@@ -291,11 +292,11 @@ export const OrgMenu = (props: any) => {
             {/* BBU: LearnHouse Help dropdown removed — its links pointed at
                 docs.learnhouse.app / learnhouse.app / LearnHouse Discord. */}
 
-            <div className="hidden md:flex">
-              <HeaderProfileBox primaryColor={primaryColor} />
+            <div className={hasMobileNavigation ? 'flex' : 'hidden md:flex'}>
+              <HeaderProfileBox primaryColor={primaryColor} compactOnMobile={hasMobileNavigation} />
             </div>
             <button
-              className={`md:hidden focus:outline-hidden ${colors.text}`}
+              className={`${hasMobileNavigation ? 'hidden' : 'md:hidden'} focus:outline-hidden ${colors.text}`}
               onClick={toggleMenu}
             >
               {isMenuOpen ? (
@@ -311,7 +312,7 @@ export const OrgMenu = (props: any) => {
           </div>
         </div>
       </nav>
-      <div
+      {!hasMobileNavigation && <div
         className={`lh-brand-mobile-menu fixed inset-x-0 bg-white/80 backdrop-blur-lg md:hidden shadow-lg transition-all duration-300 ease-in-out ${
           isMenuOpen ? 'opacity-100' : '-top-full opacity-0'
         }`}
@@ -332,7 +333,18 @@ export const OrgMenu = (props: any) => {
             <HeaderProfileBox />
           </div>
         </div>
-      </div>
+      </div>}
+
+      {hasMobileNavigation && (
+        <>
+          <div className="bbu-mobile-search md:hidden border-b border-gray-100 bg-white px-4 py-2">
+            <SearchBar orgslug={orgslug} isMobile={true} />
+          </div>
+          <nav aria-label="Mobile navigation" className="bbu-mobile-bottom-nav md:hidden">
+            <MenuLinks orgslug={orgslug} mobile />
+          </nav>
+        </>
+      )}
 
       {/* Feedback Modal */}
       <FeedbackModal

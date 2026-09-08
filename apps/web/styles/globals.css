@@ -2574,3 +2574,90 @@ html[data-lh-brand='bold'] .lh-account-sidebar .lh-account-sidebar-icon--active 
   min-height: 200px;
   display: block;
 }
+
+/* Mobile learner navigation shares the desktop menu's configured links. */
+@media (max-width: 767px) {
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) {
+    --bbu-mobile-nav-height: calc(76px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: var(--bbu-mobile-nav-height);
+  }
+
+  html:has(.bbu-mobile-bottom-nav) {
+    scroll-padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .bbu-mobile-bottom-nav {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: var(--z-nav);
+    padding: 0 max(8px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(8px, env(safe-area-inset-left, 0px));
+    border-top: 1px solid #e5e7eb;
+    background: #fff;
+    box-shadow: 0 -4px 20px rgb(17 61 93 / 5%);
+  }
+
+  .bbu-mobile-menu-list {
+    display: flex;
+    align-items: stretch;
+    min-height: 75px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .bbu-mobile-menu-link {
+    display: flex;
+    height: 100%;
+    min-height: 75px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 3px;
+    padding: 7px 2px 6px;
+    border-radius: 10px;
+    color: #5b6573;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 14px;
+    text-align: center;
+    overflow-wrap: anywhere;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bbu-mobile-menu-icon {
+    display: flex;
+    width: 48px;
+    height: 30px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16px;
+  }
+
+  .bbu-mobile-menu-link[aria-current='page'] { color: #113d5d; }
+  .bbu-mobile-menu-link[aria-current='page'] .bbu-mobile-menu-icon { background: #eaf1f5; }
+  .bbu-mobile-menu-link:active { background: #f3f6f8; }
+  .bbu-mobile-menu-link:focus-visible { outline: 2px solid #113d5d; outline-offset: -3px; }
+
+  /* Keep the existing contextual controls above the global navigation. */
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) nav[aria-label='Account mobile actions'],
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) nav[aria-label='Community mobile actions'] {
+    bottom: var(--bbu-mobile-nav-height);
+  }
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) .bbu-floating-lesson-navigation {
+    bottom: calc(var(--bbu-mobile-nav-height) + 12px);
+  }
+  body:has(.bbu-mobile-bottom-nav) .bbu-podcast-player {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 767px) {
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) .bbu-header-spacer,
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) .lh-brand-nav {
+    height: calc(60px + env(safe-area-inset-top, 0px));
+  }
+  .bbu-learner-shell:has(.bbu-mobile-bottom-nav) .lh-brand-nav {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}

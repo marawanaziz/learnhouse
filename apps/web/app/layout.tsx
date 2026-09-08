@@ -4,7 +4,9 @@ import Providers from '@components/Providers'
 import { Wix_Madefor_Text } from 'next/font/google'
 import { getRequestBrandProfile } from '@services/branding/brandProfile.server'
 import { type BrandKey, BOLD_ASSET_SOURCES } from '@services/branding/brandProfile'
-import { Metadata } from 'next'
+import { Metadata, Viewport } from 'next'
+
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover' }
 
 const wixMadeforText = Wix_Madefor_Text({
   subsets: ['latin'],

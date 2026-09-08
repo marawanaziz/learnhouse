@@ -88,7 +88,7 @@ function LayoutContent({ children, orgslug }: { children: React.ReactNode; orgsl
 
   return (
     <div
-      className="flex flex-col min-h-screen"
+      className="bbu-learner-shell flex flex-col min-h-screen"
       style={{
         backgroundColor: brand.key === 'bold'
           ? brand.colors.paper
