@@ -13,9 +13,23 @@
     },
     "production": {
       "distribution": "store",
+      "credentialsSource": "local",
       "environment": "production",
-      "env": { "APP_VARIANT": "production" },
+      "env": { "APP_VARIANT": "production", "EXPO_NO_CAPABILITY_SYNC": "1" },
       "android": { "buildType": "app-bundle" }
+    }
+  },
+  "submit": {
+    "upload-only": {
+      "ios": {
+        "ascAppId": "6739436162",
+        "appleTeamId": "2V6MAB58ZP"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft",
+        "changesNotSentForReview": true
+      }
     }
   }
 }

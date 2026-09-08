@@ -23,13 +23,16 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs && python3 -m unittest discover -s tests -p \"test_*.py\"",
     "check": "npm run typecheck && npm test && expo install --check",
     "export": "expo export --platform all",
     "prebuild": "expo prebuild --no-install",
     "build:preview:android": "npx eas-cli@latest build --platform android --profile preview",
     "build:preview:ios": "npx eas-cli@latest build --platform ios --profile preview",
-    "build:production": "npx eas-cli@latest build --platform all --profile production"
+    "build:production": "npm run check && npm run signing:check && EXPO_NO_CAPABILITY_SYNC=1 npx eas-cli@latest build --platform all --profile production",
+    "signing:check": "python3 scripts/check-signing.py",
+    "build:production:ios": "npm run check && python3 scripts/check-signing.py ios && EXPO_NO_CAPABILITY_SYNC=1 npx eas-cli@latest build --platform ios --profile production",
+    "build:production:android": "npm run check && python3 scripts/check-signing.py android && EXPO_NO_CAPABILITY_SYNC=1 npx eas-cli@latest build --platform android --profile production"
   },
   "private": true
 }

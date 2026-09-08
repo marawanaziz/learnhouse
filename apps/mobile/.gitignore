@@ -34,6 +34,8 @@ yarn-error.*
 .env*.local
 .env
 credentials.json
+/signing/
+/artifacts/
 *.keystore
 *.ipa
 *.apk
@@ -41,6 +43,7 @@ credentials.json
 
 # typescript
 *.tsbuildinfo
+__pycache__/
 
 # generated native folders
 /ios

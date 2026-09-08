@@ -13,6 +13,7 @@ module.exports = () => {
     userInterfaceStyle: 'light',
     ios: {
       bundleIdentifier: identity.bundleIdentifier,
+      ...(identity.appleTeamId ? { appleTeamId: identity.appleTeamId } : {}),
       buildNumber: identity.buildNumber,
       supportsTablet: true,
       infoPlist: {

@@ -1,0 +1,32 @@
+{
+  "verifiedOn": "2026-09-08",
+  "appName": "Birth & Baby University",
+  "website": "https://learn.birthandbabyuniversity.com/",
+  "ios": {
+    "bundleIdentifier": "com.birthandbabyuniversity.learn",
+    "appStoreId": "6739436162",
+    "appleTeamId": "2V6MAB58ZP",
+    "observedVersion": "2.4.1",
+    "observedBuildNumber": "20",
+    "informationUrl": "https://appstoreconnect.apple.com/apps/6739436162/distribution/info",
+    "buildHistoryUrl": "https://appstoreconnect.apple.com/teams/49a35f4c-9dcf-4175-ac59-c0a3990d8796/apps/6739436162/testflight/ios"
+  },
+  "android": {
+    "packageName": "com.birthandbabyuniversity.learn",
+    "developerAccountId": "8280830351137408432",
+    "playConsoleAppId": "4972007289590886738",
+    "observedVersion": "2.4.1",
+    "observedVersionCode": 19,
+    "playAppSigning": true,
+    "uploadCertificateSha256": "BC:85:76:47:FD:46:48:04:67:D9:83:D8:D2:AC:FE:37:AB:82:72:97:B1:51:3E:CF:27:23:97:72:07:34:D8:DF",
+    "appSigningCertificateSha256": "0B:A3:87:8A:3E:67:AF:0E:3F:B8:A0:74:E4:75:A8:88:CA:AA:B0:B6:B0:B2:59:D4:DF:28:8F:05:65:27:58:A0",
+    "listingUrl": "https://play.google.com/store/apps/details?id=com.birthandbabyuniversity.learn",
+    "buildHistoryUrl": "https://play.google.com/console/u/6/developers/8280830351137408432/app/4972007289590886738/releases/overview",
+    "signingUrl": "https://play.google.com/console/u/6/developers/8280830351137408432/app/4972007289590886738/keymanagement"
+  },
+  "nextRelease": {
+    "version": "2.5.0",
+    "iosBuildNumber": "21",
+    "androidVersionCode": 20
+  }
+}

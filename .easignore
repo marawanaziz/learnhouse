@@ -10,6 +10,8 @@
 **/web-build/
 /apps/mobile/ios/
 /apps/mobile/android/
+/apps/mobile/signing/
+/apps/mobile/artifacts/
 **/.DS_Store
 **/.env*
 !apps/mobile/.env.example
@@ -26,3 +28,4 @@
 **/*.aab
 **/*debug.log*
 **/*.tsbuildinfo
+**/__pycache__/
