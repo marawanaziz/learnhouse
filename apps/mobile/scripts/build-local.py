@@ -97,8 +97,11 @@ def main():
             options.write_bytes(plistlib.dumps({'method': 'app-store-connect', 'destination': 'export',
                 'signingStyle': 'manual', 'teamID': profile['TeamIdentifier'][0],
                 'provisioningProfiles': {bundle: profile['UUID']}, 'manageAppVersionAndBuildNumber': False}))
+            # Apple's rsync launches its local peer through PATH. Keep both peers
+            # on the macOS version; GNU rsync rejects Apple's extended-attributes flag.
+            export_env = {**os.environ, 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin:' + os.environ.get('PATH', '')}
             run(['xcodebuild', '-exportArchive', '-archivePath', str(archive),
-                 '-exportOptionsPlist', str(options), '-exportPath', str(output / 'ios-production')])
+                 '-exportOptionsPlist', str(options), '-exportPath', str(output / 'ios-production')], env=export_env)
         finally:
             run(['security', 'list-keychains', '-d', 'user', '-s', *old_search], capture=True)
             subprocess.run(['security', 'delete-keychain', keychain], capture_output=True)

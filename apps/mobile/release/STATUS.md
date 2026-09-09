@@ -1,32 +1,44 @@
 # Existing-listing update preparation — September 9, 2026
 
-The owner permits build uploads, but no review submission or release. Only the two existing listings may be used.
+Local SDK 55 setup is complete on the owner's macOS 15.7.3. The owner permits build uploads, but no review submission or release. Only the two existing listings may be used.
 
 | Requirement | Current evidence |
 | --- | --- |
-| Existing iOS listing | App Store Connect app `6739436162`, Bundle ID `com.birthandbabyuniversity.learn`, team and App ID prefix `2V6MAB58ZP` inspected in Firefox |
+| Existing iOS listing | App Store Connect app `6739436162`, Bundle ID `com.birthandbabyuniversity.learn`, Apple team `2V6MAB58ZP` |
 | Existing Android listing | Play Console app `4972007289590886738`, package `com.birthandbabyuniversity.learn`; Play App Signing enabled |
-| Next update | `2.5.0`, iOS build `21` after observed `20`, Android version code `20` after observed `19` |
-| Native configuration | Production iOS and Android projects generated and inspected; identifiers, team, version and build numbers match |
-| Code validation | SDK 55.0.31 / React Native 0.83.10; TypeScript, 19 tests, dependency compatibility and 20/20 Expo Doctor checks pass. Both production Hermes bundles exported; native projects regenerated and inspected |
-| Upload configuration | Uploads will use Xcode Organizer/Transporter and the existing Play Console draft; EAS is not used. Review and release remain unauthorized |
-| Android signing | New upload keystore and public PEM generated; private key and passwords validated. Google upload-key reset requested September 9 and confirmed pending. Old active fingerprint remains pinned until activation is verified |
-| iOS signing | New Apple Distribution certificate `5QG57AVD4Z` and App Store profile `GTF9824HGC` issued; local encrypted `.p12` and profile validated for the existing app/team, expiring September 9, 2027. Original credentials not revoked |
-| Build tools | Owner selected local builds with SDK 55; Java 17, CocoaPods and Android SDK/NDK/CMake installed. Xcode 26.3 installed with first launch complete and iOS 26.2 SDK verified; no EAS login needed |
-| Signed native binaries | Not built yet; iOS signing preflight passes. Android preflight intentionally stops until Google activates the new upload certificate and its fingerprint is repinned |
-| Device acceptance | Pending native builds; website/browser checks and JavaScript exports do not prove native login, video, PDFs, gestures, or update installation |
-| Store uploads/review/release | None performed; no new listings or versions created, no review submitted, no releases published |
+| Prepared production update | Version `2.5.0`, iOS build `21` after observed `20`, Android version code `20` after observed `19` |
+| Code validation | Expo 55.0.31 / React Native 0.83.10 / React 19.2.0; TypeScript, 19 tests, dependency compatibility and 20/20 Expo Doctor checks passed. Both production Hermes bundles exported |
+| Local tools | Xcode 26.3 (17C529), matching iOS 26.2 platform support with iOS 26.3.1 Simulator, CocoaPods, Java 17, Android SDK 36, build-tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1 installed. No macOS upgrade or cloud-build login used |
+| iOS production artifact | `artifacts/ios-production/BirthBabyUniversity.ipa` (7.9 MB). Archive and export succeeded; deep/strict signature, exact distribution certificate, App Store profile, existing bundle/team, version 2.5.0/build 21, iOS 15.1 minimum and embedded JavaScript verified |
+| Android preview artifact | `artifacts/android-preview.apk` (60 MB). Gradle build succeeded (330 tasks); APK v2 signature, `com.birthandbabyuniversity.wrapper.preview`, BBU Preview, minimum SDK 24, target SDK 36 and embedded JavaScript verified. Signed with the preview debug key, not the production upload key |
+| Android production artifact | Not built yet; production signing preflight intentionally remains gated until Google's upload-key activation is confirmed |
+| Device acceptance | Pending. No authorized Android device was connected; the APK and IPA have not undergone native login, video, PDF, gesture or update-installation acceptance |
+| Store actions | No build uploads, new listings, review submissions or releases performed |
 
-The owner confirmed the original developers' credentials are unavailable and explicitly authorized creating Apple credentials and requesting Google's upload-key reset. Those steps are complete; Google activation remains pending. The owner declined cloud builds and chose SDK 55 for local builds on macOS 15.7.3. Local credentials are in ignored `credentials.json` and `signing/`, with a protected same-computer backup at `~/.local/share/bbu-signing/2026-09-09/`. The new Android upload SHA-256 is `8F:76:72:C1:08:55:44:3A:51:42:28:1D:49:DA:62:95:D3:0D:1C:5A:E6:70:8F:CE:47:AB:DD:FF:7B:64:67:B4`; do not replace the active pin until Play confirms activation. Google showed no activation date/time when the request was filed.
+## Signing and Google activation
 
-Before uploading, verify the actual signed artifacts against the pinned app identity and signing records, recheck that build numbers remain unused, and finish native device acceptance. Keep uploads separate from review submission. See `README.md` for the exact commands and remaining checks.
+Apple Distribution certificate `5QG57AVD4Z` and App Store profile `GTF9824HGC` were created with the owner's authorization. The profile UUID is `1794097b-c642-4ba7-96e3-7e3d88058b61`; the certificate expires September 9, 2027. The private key, profile and app/team checks passed, as did native Keychain import and local macOS code-signing trust verification. The final IPA uses this exact certificate and profile. Original developer credentials were not revoked.
 
-Apple also displays a pending developer agreement and the listing contains old Circle support/reviewer instructions. These were observed only; neither the Developer Program agreement nor metadata nor app capabilities have been changed. The local Xcode software license was accepted for the authorized installation.
+Google's notification confirms the new Android upload key becomes valid **September 11, 2026 at 07:01 UTC / 03:01 America/New_York**. Until then, Google prohibits new APK/AAB uploads. The console already displays the new SHA-256 fingerprint, but the request is still pending:
 
-SDK 55 migration: TypeScript, 19 tests, compatible dependencies, production Hermes exports for both platforms and native prebuild passed. Expo Doctor passes 20/20 checks using the local tool environment. Local build helpers replace EAS build scripts. Xcode installation is complete. Native app compilation remains pending; no native binary is claimed ready.
+`8F:76:72:C1:08:55:44:3A:51:42:28:1D:49:DA:62:95:D3:0D:1C:5A:E6:70:8F:CE:47:AB:DD:FF:7B:64:67:B4`
 
-Gradle native project configuration (`:app:tasks --all`) passed. Native macOS Keychain import of the distribution certificate passed after re-exporting the same key/certificate in compatible PKCS12 format. Xcode 26.3 code signature and first-launch completion passed; iOS SDK 26.2 is available. The iOS 26.2 ARM64 platform/runtime package is downloading because the first archive attempt reported its device destination unavailable; SDK presence alone did not establish build readiness.
+The previous upload fingerprint remains pinned in `store-targets.json`. Recheck activation in Play Console before updating that pin and building/uploading production Android. Google's actual app-signing key was not changed.
 
-The ARM64 Homebrew bootstrap was version 4.4.13 and skipped newer formula `post_install_steps`, leaving Ruby/OpenSSL without the CA bundle. Updated Homebrew itself to 6.0.22 and reran the native ca-certificates/openssl postinstall steps. The bundle and default OpenSSL link now exist, and a fresh Ruby HTTPS request to the CocoaPods CDN passed with certificate verification enabled. No app-specific CA override or disabled TLS verification was introduced.
+Credentials remain in ignored `credentials.json` and `signing/`, with a protected same-computer backup at `~/.local/share/bbu-signing/2026-09-09/`. They were not committed or sent to a cloud build service. The iOS build uses a temporary signing keychain, then restores the user's original search list and deletes the temporary keychain.
 
-CocoaPods completed successfully after the Homebrew correction. The first Android preview APK build is running; its Gradle workers were verified downloading native dependencies. The first iOS archive stopped at destination selection before compilation, pending iOS platform installation.
+## Toolchain corrections verified
+
+- Updated ARM64 Homebrew from 4.4.13 to 6.0.22 because the old version skipped newer formula post-install steps, leaving Ruby/OpenSSL without its CA bundle. Native ca-certificates/OpenSSL post-install steps now complete; a fresh verified HTTPS request and CocoaPods install passed.
+- Installed the matching platform package through Xcode Settings > Components. A simulator pinned to the SDK's version did not provide the matching build support. The unused runtime and Xcode installer archive were removed. Fresh destination validation confirms Any iOS Device and simulator destinations are available. [Apple explains the platform-support requirement](https://developer.apple.com/forums/thread/817687).
+- Scoped the iOS export subprocess to prefer macOS tools in PATH. Apple's rsync had launched Homebrew's incompatible GNU rsync peer. An isolated copy test reproduced the failure and passed with the corrected environment; a fresh full archive and IPA export then succeeded. Other tools' global settings were not changed.
+
+Artifact checksums and verification details are in ignored `artifacts/android-preview-verification.json` and `artifacts/ios-production/verification.json`. Build/setup logs are in `~/Library/Caches/bbu-toolchain/`.
+
+## Remaining release checks
+
+Complete native device acceptance, recheck unused version/build numbers, and confirm Google activation before the production Android build. Uploads should use Xcode Organizer/Transporter and the existing Play Console draft. Do not submit for review, add external TestFlight groups, start rollout, publish or enable automatic release.
+
+Xcode export completed with three symbol-processing warnings in its distribution log; native framework crash-symbol coverage has not been validated. This did not prevent IPA export or signature verification. Store-side validation remains pending.
+
+Apple displays a pending Developer Program agreement and old Circle-specific support/reviewer instructions. Those were observed only; the agreement, metadata and app capabilities were not changed. The local Xcode software license was accepted for the authorized installation.
