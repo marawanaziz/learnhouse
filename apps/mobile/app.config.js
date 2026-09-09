@@ -30,6 +30,7 @@ module.exports = () => {
       blockedPermissions: ['android.permission.RECORD_AUDIO', 'android.permission.SYSTEM_ALERT_WINDOW'],
     },
     plugins: [
+      './plugins/with-local-signing',
       ['expo-splash-screen', { backgroundColor: '#ffffff', image: './assets/bbu-icon.png', imageWidth: 180 }],
       'expo-web-browser',
     ],

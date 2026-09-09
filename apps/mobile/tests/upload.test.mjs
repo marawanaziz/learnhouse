@@ -21,6 +21,6 @@ test('production requires supplied signing credentials and never auto-uploads', 
   assert.equal(eas.build.production.env.EXPO_NO_CAPABILITY_SYNC, '1');
   for (const script of Object.values(pkg.scripts)) assert.doesNotMatch(script, /--auto-submit/);
   for (const [name, script] of Object.entries(pkg.scripts)) {
-    if (name.startsWith('build:production')) assert.match(script, /EXPO_NO_CAPABILITY_SYNC=1 npx/);
+    if (name.startsWith('build:')) assert.doesNotMatch(script, /eas-cli|eas build|submit/);
   }
 });

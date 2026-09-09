@@ -3,36 +3,38 @@
   "version": "0.1.0",
   "main": "index.ts",
   "dependencies": {
-    "expo": "~57.0.21",
-    "expo-network": "~57.0.1",
-    "expo-splash-screen": "~57.0.8",
-    "expo-status-bar": "~57.0.1",
-    "expo-system-ui": "~57.0.3",
-    "expo-web-browser": "~57.0.2",
-    "react": "19.2.3",
-    "react-native": "0.86.3",
-    "react-native-safe-area-context": "~5.7.0",
-    "react-native-webview": "13.16.1"
+    "expo": "~55.0.31",
+    "expo-network": "~55.0.18",
+    "expo-splash-screen": "~55.0.25",
+    "expo-status-bar": "~55.0.6",
+    "expo-system-ui": "~55.0.22",
+    "expo-web-browser": "~55.0.20",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-webview": "13.16.0",
+    "react-dom": "19.2.0",
+    "@expo/metro-runtime": "~55.0.12"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "typescript": "~6.0.3"
+    "typescript": "~5.9.2"
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
+    "android": "bash -c 'source scripts/local-tools.sh && expo run:android'",
+    "ios": "bash -c 'source scripts/local-tools.sh && expo run:ios'",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs && python3 -m unittest discover -s tests -p \"test_*.py\"",
     "check": "npm run typecheck && npm test && expo install --check",
     "export": "expo export --platform all",
     "prebuild": "expo prebuild --no-install",
-    "build:preview:android": "npx eas-cli@latest build --platform android --profile preview",
-    "build:preview:ios": "npx eas-cli@latest build --platform ios --profile preview",
-    "build:production": "npm run check && npm run signing:check && EXPO_NO_CAPABILITY_SYNC=1 npx eas-cli@latest build --platform all --profile production",
-    "signing:check": "python3 scripts/check-signing.py",
-    "build:production:ios": "npm run check && python3 scripts/check-signing.py ios && EXPO_NO_CAPABILITY_SYNC=1 npx eas-cli@latest build --platform ios --profile production",
-    "build:production:android": "npm run check && python3 scripts/check-signing.py android && EXPO_NO_CAPABILITY_SYNC=1 npx eas-cli@latest build --platform android --profile production"
+    "build:preview:android": "bash -c 'source scripts/local-tools.sh && python3 scripts/build-local.py android preview'",
+    "build:preview:ios": "bash -c 'source scripts/local-tools.sh && python3 scripts/build-local.py ios preview'",
+    "build:production": "npm run check && npm run build:production:android && npm run build:production:ios",
+    "signing:check": "bash -c 'source scripts/local-tools.sh && python3 scripts/check-signing.py'",
+    "build:production:ios": "bash -c 'source scripts/local-tools.sh && python3 scripts/build-local.py ios production'",
+    "build:production:android": "bash -c 'source scripts/local-tools.sh && python3 scripts/build-local.py android production'"
   },
   "private": true
 }

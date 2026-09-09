@@ -10,7 +10,7 @@ A thin Expo / React Native WebView for https://learn.birthandbabyuniversity.com/
 - Android hardware back, iOS swipe navigation, inline/fullscreen video configuration, safe areas, and keyboard avoidance.
 - External HTTPS links in the system browser; phone and email links in their device apps. Exact-origin checks keep university pages inside the wrapper.
 - Offline notice, loading timeout, and explicit recovery after a failed load or terminated WebView. Recovery never automatically resubmits a form.
-- Preview APK / iOS internal distribution, iOS simulator, and production AAB / iOS store build profiles.
+- Local preview APK / iOS simulator builds and production AAB / iOS archive exports.
 
 ## Run locally
 
@@ -22,7 +22,7 @@ npm run check
 npm start
 ```
 
-Scan the development QR with an Expo Go version supporting SDK 57. Expo Go is only a development smoke test; it does not verify the final splash screen, permissions, signing, or a production WebView session.
+Scan the development QR with an Expo Go version supporting SDK 55. Expo Go is only a development smoke test; it does not verify the final splash screen, permissions, signing, or a production WebView session.
 
 With native tooling installed:
 
@@ -31,31 +31,27 @@ npm run ios
 npm run android
 ```
 
-This uses Expo SDK 57 / React Native 0.86. Supported OS baselines are iOS 16.4+ and Android 7+. Native iOS builds require Xcode 26.4+; Android uses SDK 36. Confirm these baselines against the previous app before release.
+This uses Expo SDK 55 / React Native 0.83. Supported OS baselines are iOS 15.1+ and Android 7+. Native iOS builds require Xcode 26.2+; Android uses SDK 36. Confirm these baselines against the previous app before release.
 
 `npm run prebuild` generates preview iOS and Android projects. Use `APP_VARIANT=production npx expo prebuild --clean --no-install` to generate the projects for the existing store apps. These folders are intentionally ignored: app config and dependencies are the source of truth. Do not hand-edit generated projects.
 
-## Make installable preview builds
+## Build on the owner's Mac
 
-Sign into the client-owned Expo account and link its EAS project:
+Cloud builds are not used. No Expo/EAS login or AWS account is needed. Expo is the local app framework and prebuild CLI; Gradle and Xcode compile the native binaries.
 
-```sh
-npx eas-cli@latest login
-npx eas-cli@latest init
-```
-
-Because the app uses dynamic config, record the returned project UUID as `EAS_PROJECT_ID` and account/organization as `EXPO_OWNER` in `.env.local` (copy `.env.example`). Also configure those variables in the EAS preview and production environments. Do not store signing keys or account passwords in source control.
+Java 17, CocoaPods, Android SDK 36, build-tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1 are installed. Xcode 26.3 for Apple silicon is installed at `/Applications/Xcode.app` on macOS 15.7.3; its code signature, first-launch completion and included iOS 26.2 SDK are verified. Device platform support is checked separately from SDK presence with Xcode’s destination validation. The iOS 26.2 ARM64 platform/runtime package is being installed after Xcode reported the device archive destination unavailable. watchOS, tvOS, visionOS and predictive code completion are not needed for this wrapper. The helper selects Xcode through `DEVELOPER_DIR` without changing the Mac's global developer directory.
 
 ```sh
+source scripts/local-tools.sh
 npm run build:preview:android
 npm run build:preview:ios
 ```
 
-The Android preview is an installable APK. iOS internal distribution requires an Apple Developer membership and registering the test device with `npx eas-cli@latest device:create`; EAS prepares an ad hoc provisioning profile. An iOS simulator build can instead use `npx eas-cli@latest build --platform ios --profile simulator`.
+The Android preview is an APK signed with the generated debug key. The iOS preview is a simulator Release build. Both use the separate `com.birthandbabyuniversity.wrapper.preview` identifier and **BBU Preview** name. Physical iPhone preview installation additionally requires an appropriate development/ad hoc profile; the App Store profile is not a direct-install profile.
 
-The preview is named **BBU Preview** and uses `com.birthandbabyuniversity.wrapper.preview` on both platforms. It installs separately from the client's existing app.
+The local build helper regenerates the selected native platform for the selected variant. `plugins/with-local-signing.js` gives production Android its upload-key signing configuration and selects the iOS App Store profile for the app target only. Signing passwords stay in the build process environment or protected local credential files, never generated Gradle source. iOS uses a temporary signing keychain and restores the previous keychain search list afterward.
 
-Run EAS commands from `apps/mobile`. The repository-root `.easignore` uploads only this self-contained app, excluding the website, API, local environment files, generated native projects, and dependency/build folders. EAS regenerates the native projects for the selected build profile.
+Production outputs are saved in `artifacts/`. iOS creates an archive and exports an IPA locally; Android creates an AAB. Building does not upload or submit anything.
 
 ## Update the existing store listings
 
@@ -73,12 +69,12 @@ Production is pinned to the live console records in `release/store-targets.json`
 
 Environment variables cannot redirect production to another app or Apple team. Optional `BBU_APP_VERSION`, `BBU_IOS_BUILD_NUMBER`, and `BBU_ANDROID_VERSION_CODE` overrides must exceed the recorded store versions. Recheck console history immediately before the next build if another developer has uploaded anything since this verification.
 
-Production uses **local signing credentials** so a new EAS project cannot accidentally generate an unrelated Android upload key. Copy `credentials.example.json` to ignored `credentials.json`, place signing files in ignored `signing/`, and replace the local placeholders. Keep both out of Git. EAS receives the credentials through its dedicated signing process; `.easignore` excludes them from the source archive.
+Production uses **local signing credentials** pinned to the existing store apps. On September 9, 2026, the owner authorized replacement credentials; ignored `credentials.json` and `signing/` are now populated on this Mac. Keep both out of Git. A protected local backup is at `~/.local/share/bbu-signing/2026-09-09/`; it is not an off-device backup. The local build helper reads these files on this Mac; they are not uploaded to a build service.
 
-Production build commands also set `EXPO_NO_CAPABILITY_SYNC=1`. The old App ID already has capabilities enabled (including Associated Domains); the wrapper must not disable those services on Apple's portal while the old app remains live. This uses Expo's documented capability-sync switch rather than modifying the existing registration.
+The local build helper also sets `EXPO_NO_CAPABILITY_SYNC=1` and never requests portal capability synchronization. The old App ID already has capabilities enabled (including Associated Domains); the wrapper must not disable those services on Apple's portal while the old app remains live. This uses Expo's documented capability-sync switch rather than modifying the existing registration.
 
-- Android: obtain the existing upload keystore, alias, keystore password, and key password. The upload certificate must have SHA-256 `BC:85:76:47:FD:46:48:04:67:D9:83:D8:D2:AC:FE:37:AB:82:72:97:B1:51:3E:CF:27:23:97:72:07:34:D8:DF`. This differs from Google's app-signing certificate. No key reset has been requested.
-- iOS: supply a `.p12` containing a distribution certificate and its private key, plus an App Store provisioning profile for the exact Bundle ID and Apple team. The portal currently has a Circle-created iOS Distribution certificate expiring December 21, 2026; its private key is not on this Mac. A new distribution certificate within the same team can also sign an update; the original private key is not mandatory on iOS.
+- Android: a new RSA-2048 upload keystore was generated and its public PEM submitted through the existing app's **Request upload key reset** flow on September 9, 2026. Google currently shows the request as **pending**, with no activation time displayed. New upload SHA-256: `8F:76:72:C1:08:55:44:3A:51:42:28:1D:49:DA:62:95:D3:0D:1C:5A:E6:70:8F:CE:47:AB:DD:FF:7B:64:67:B4`. Both passwords and private-key access were validated. The old active fingerprint remains pinned in `release/store-targets.json`, so the Android production preflight intentionally stops until Google's activation is verified. After activation, confirm the new fingerprint in Play Console, record that evidence, and update the pin. Google's actual app-signing key was not changed.
+- iOS: new Apple Distribution certificate `5QG57AVD4Z` expires September 9, 2027. App Store profile `GTF9824HGC`, named `BBU App Store 2026-09-09`, targets the existing Bundle ID and team. The encrypted `.p12`, private-key match, profile certificate, profile type, expiry, and app/team identifiers all passed `python3 scripts/check-signing.py ios`. The original Circle certificate/profile were left intact.
 - `npm run signing:check` verifies Android's certificate fingerprint and the iOS private-key/certificate/profile match, team, app ID, profile type, and expiry. It reads credentials locally and does not upload or change them. It needs `keytool` for Android and macOS `security` plus `openssl` for iOS.
 
 ```sh
@@ -95,16 +91,7 @@ Platforms can also be built separately with `npm run build:production:ios` and `
 
 The owner permits build uploads, but **does not authorize review submission or release**. Do not create a new listing.
 
-`eas.json` contains an explicit `upload-only` profile. Apple is pinned to app `6739436162` and team `2V6MAB58ZP`. Android targets the internal track with `releaseStatus: draft` and `changesNotSentForReview: true`. Building never automatically uploads.
-
-After validating the exact signed production artifacts, use a specific EAS build ID (never select an unverified latest/preview build):
-
-```sh
-APP_VARIANT=production npx eas-cli@latest submit --platform ios --profile upload-only --id IOS_BUILD_ID
-APP_VARIANT=production npx eas-cli@latest submit --platform android --profile upload-only --id ANDROID_BUILD_ID
-```
-
-Keep `APP_VARIANT=production` on these commands so the uploader reads the existing app's package instead of the preview package. Despite the CLI command name, the Apple operation uploads a binary for TestFlight processing; App Review is a separate action. On Google, the configured operation leaves a draft without sending changes for review. API upload credentials are separate from signing credentials. Existing App Store Connect API access and a Play service account can be used if supplied; Google uploads can also be performed manually through the existing app's draft release UI.
+After validating the signed artifacts, upload the iOS archive using Xcode Organizer/Transporter and the Android AAB using the existing app's Play Console draft release. Keep App Review and rollout as separate, unauthorized actions. The historical `eas.json` upload-only policy remains as a reference; do not run EAS commands for this task.
 
 Stop after verifying the uploaded iOS build appears in TestFlight and the Android artifact appears in the existing app without an in-review or published release. Do not add external TestFlight groups, click Submit for Review / Send for Review / Start rollout / Publish, or enable automatic release. The owner handles those actions.
 
@@ -130,16 +117,28 @@ Social OAuth return flows, push notifications, offline course downloads, native 
 - Release JavaScript/Hermes bundles exported for iOS and Android.
 - Native iOS and Android projects generated and configuration inspected.
 - Production Expo config now resolves to the verified existing app IDs, Apple team, and incremented build numbers. EAS archive filtering verified to include the mobile source and exclude server code, secrets, dependencies, and generated builds.
-- Native compilation, signing, install, and device acceptance are pending: this Mac has Command Line Tools but no full Xcode or Android SDK, and EAS is not signed in.
+- At the initial September 8 check, native tooling was absent. The September 9 local setup installs it; see the migration status below.
 - npm audit reports a moderate transitive `uuid` advisory through Expo's Xcode configuration tooling. Its suggested automatic changes downgrade Expo packages across SDK versions, so no incompatible downgrade was applied. Recheck with the next SDK-compatible tooling updates.
 
-Console observations for the owner's later release: Apple shows a pending updated developer agreement; existing app metadata still contains Circle-specific support and review instructions. No agreements, metadata, account permissions, signing keys, or store releases have been changed by this preparation.
+Console observations for the owner's later release: Apple shows a pending updated developer agreement; existing app metadata still contains Circle-specific support and review instructions. No Developer Program agreements, metadata, app capabilities, review submissions, or store releases were changed. The local Xcode software license was accepted as part of the authorized installation. The explicitly authorized signing credential setup on September 9 is documented above.
 
 ## References
 
-- [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
-- [SDK-compatible WebView](https://docs.expo.dev/versions/v57.0.0/sdk/webview/)
+- [Expo SDK 55](https://docs.expo.dev/versions/v55.0.0/)
+- [SDK-compatible WebView](https://docs.expo.dev/versions/v55.0.0/sdk/webview/)
 - [WebView API](https://github.com/react-native-webview/react-native-webview/blob/master/docs/Reference.md)
-- [EAS monorepos](https://docs.expo.dev/build-reference/build-with-monorepos/)
-- [EAS build variants](https://docs.expo.dev/build-reference/variants/)
-- [EAS ignore files](https://docs.expo.dev/build-reference/easignore/)
+- [Expo local production builds](https://docs.expo.dev/guides/local-app-production/)
+- [Android command-line builds](https://developer.android.com/build/building-cmdline)
+- [Xcode system requirements](https://developer.apple.com/xcode/system-requirements)
+
+## SDK 55 migration — September 9, 2026
+
+- Expo 55.0.31 / React Native 0.83.10 / React 19.2.0, TypeScript 5.9, and SDK-compatible native modules are pinned in the lockfile.
+- Metro runtime and React DOM are explicitly aligned with SDK 55 to prevent optional peer resolution from retaining SDK 57 or choosing a mismatched React DOM release.
+- TypeScript, all 19 existing tests, dependency compatibility, both production Hermes exports, and native prebuild passed after the migration.
+- Generated production identifiers, version/build numbers, iOS profile selection and Android upload-key signing configuration are inspected separately from device acceptance.
+- The ten moderate npm audit entries all trace to the existing transitive `uuid` issue in Expo's Xcode tooling. No unsupported forced dependency upgrade was applied.
+- Expo Doctor passed all 20 checks using `source scripts/local-tools.sh`. Java 17, Gradle 9.0.0 and adb execute successfully on this ARM64 Mac.
+- Gradle `:app:tasks --all` completed successfully, including compilation of the SDK 55 native build plugins and project configuration.
+- The Apple `.p12` was re-exported with macOS-compatible encryption and its actual Keychain import was verified; it contains the same certificate/private key.
+- App compilation and device acceptance remain pending; successful JavaScript export and Gradle configuration are not a compiled native app.
