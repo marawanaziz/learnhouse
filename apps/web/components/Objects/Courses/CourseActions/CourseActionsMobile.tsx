@@ -282,7 +282,7 @@ const CourseActionsMobile = ({ courseuuid, orgslug, course, trailData }: CourseA
           const formattedPrice = offer?.amount != null
             ? new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency ?? 'USD' }).format(offer.amount)
             : null;
-          const storeHref = org?.slug ? getUriWithOrg(org.slug, `/store/offers/${offer.offer_id}`) : '#';
+          const storeHref = org?.slug ? getUriWithOrg(org.slug, `/store/offers/${offer.offer_uuid}`) : '#';
 
           return (
             <div className="space-y-3">
