@@ -211,7 +211,7 @@ def waitlist_page(p, base, program):
         f"<div class='checkout'>"
         f"<span class='eyebrow'>Join the waitlist</span>"
         f"<h1 style='font-size:2rem;margin:12px 0 6px'>{p.name}</h1>"
-        f"<p style='color:#4a5b68;margin-bottom:6px'>Our upcoming cohorts are currently full. "
+        f"<p style='color:#4a5b68;margin-bottom:6px'>There's no open cohort for this program yet. "
         f"Add your details and we'll message you the moment a spot opens up — no charge to join.</p>"
         f"<div style='height:10px'></div>"
         f"<label for='wname'>Your name</label>"
