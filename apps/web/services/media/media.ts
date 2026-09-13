@@ -1,4 +1,4 @@
-import { getBackendUrl, getConfig } from '@services/config/config'
+import { getAPIUrl, getConfig } from '@services/config/config'
 
 function getMediaUrl() {
   // Content is served by this application at /content. Keep it relative so a
@@ -13,9 +13,9 @@ function getMediaUrl() {
 }
 
 function getApiUrl() {
-  // Normalize so URL building is correct whether or not the configured backend
-  // URL carries a trailing slash (otherwise we'd get "...ioapi/v1/...").
-  const base = getBackendUrl();
+  // Use the same-origin API route on custom domains so learner cookies and
+  // streaming requests stay on the host where the learner signed in.
+  const base = getAPIUrl().replace(/api\/v1\/?$/, '');
   return base.endsWith('/') ? base : `${base}/`;
 }
 
