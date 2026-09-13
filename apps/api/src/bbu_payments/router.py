@@ -379,13 +379,15 @@ async def referral_redirect(ref_code: str, request: Request,
     or not.
 
     `?next=` allows deep links (a specific class) while keeping attribution.
+
+    The default destination is the public shop, not the site root. The root is a
+    signed-in dashboard that answers a signed-out visitor with a redirect to
+    /login, so a plain referral link used to hand buyers a login wall instead of
+    the classes they were sent to see.
     """
     from fastapi.responses import RedirectResponse
 
-    nxt = (request.query_params.get("next") or "/").strip()
-    # only ever redirect within this site
-    if not nxt.startswith("/") or nxt.startswith("//"):
-        nxt = "/"
+    nxt = aff._safe_next_path(request.query_params.get("next") or "")
     resp = RedirectResponse(url=f"{_base_url(request)}{nxt}", status_code=302)
 
     affiliate = await aff.get_affiliate_by_ref(db_session, (ref_code or "").strip())

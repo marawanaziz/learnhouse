@@ -6,6 +6,7 @@ overrides) — no hard-coded rates or windows.
 """
 import secrets
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote, urlencode, urlsplit
 
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -45,6 +46,41 @@ def gen_ref_code(name: str) -> str:
 
 def gen_token() -> str:
     return secrets.token_urlsafe(24)
+
+
+# The public shop on the LearnHouse frontend. A bare referral link that lands on
+# "/" is bounced straight to /login, so a visitor who was sent to buy a class
+# never sees one. Every referral link must name a real public destination.
+DEFAULT_REFERRAL_LANDING = "/store"
+
+
+def referral_url(base: str, ref_code: str, next_path: str = "") -> str:
+    """Build a public referral link that lands on a shop page, not the login wall.
+
+    `next_path` is site-relative (e.g. ``/api/v1/bbu/buy/6``). Only site-relative
+    destinations are honoured; anything else falls back to the store so an
+    affiliate link can never become an open redirect.
+    """
+    base = (base or "").rstrip("/")
+    link = f"{base}/api/v1/bbu/r/{quote(str(ref_code or ''), safe='')}"
+    target = _safe_next_path(next_path)
+    if target != DEFAULT_REFERRAL_LANDING:
+        link += "?" + urlencode({"next": target})
+    return link
+
+
+def _safe_next_path(next_path: str) -> str:
+    """Keep a referral destination on this site, defaulting to the shop."""
+    value = (next_path or "").strip()
+    if not value.startswith("/") or value.startswith("//"):
+        return DEFAULT_REFERRAL_LANDING
+    # A leading backslash is normalised to "/" by some browsers, which would turn
+    # "/\evil.com" into a protocol-relative escape. Reject it explicitly.
+    if value.startswith("/\\") or "\\" in value:
+        return DEFAULT_REFERRAL_LANDING
+    if urlsplit(value).netloc:
+        return DEFAULT_REFERRAL_LANDING
+    return value or DEFAULT_REFERRAL_LANDING
 
 
 async def get_affiliate_by_ref(db: AsyncSession, ref_code: str, org_id: int = 1):
