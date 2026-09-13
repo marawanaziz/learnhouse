@@ -101,6 +101,12 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
   const token = session?.data?.tokens?.access_token ?? access_token
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  // A failed checkout navigation used to be silent: the spinner cleared and the
+  // buyer was left on the same offer screen with no explanation, which is also
+  // what a browser that blocks the redirect to Stripe looks like from here. Keep
+  // the failure on screen, with a retry and the payment link itself as a way out.
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [retryUrl, setRetryUrl] = useState<string | null>(null)
   const [selectedBumps, setSelectedBumps] = useState<Set<string>>(new Set())
   const { track } = useLHAnalytics('learner')
 
@@ -152,19 +158,26 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
       currency: offer.currency,
     })
     setLoading(true)
+    setCheckoutError(null)
+    setRetryUrl(null)
     try {
       const redirectUri = window.location.href
       const result = await getOfferCheckoutSession(orgId, offerUuid, redirectUri, token, [...selectedBumps])
       const url = result?.data?.checkout_url
       if (url) {
         track(AnalyticsEvent.CheckoutSessionCreated, { offer_type: offer.offer_type, amount: offer.amount })
+        // If the browser refuses or blocks this navigation the assignment above
+        // simply does not take effect, so leave a working link behind as well.
+        setRetryUrl(url)
         window.location.href = url
       } else {
         track(AnalyticsEvent.CheckoutSessionFailed, { failure_reason: 'no_checkout_url' })
+        setCheckoutError(`Could not start checkout (HTTP ${result?.status ?? 'unknown'}). Please try again.`)
         toast.error('Could not start checkout. Please try again.')
       }
     } catch {
       track(AnalyticsEvent.CheckoutSessionFailed, { failure_reason: 'exception' })
+      setCheckoutError('An error occurred while starting checkout. Please try again.')
       toast.error('An error occurred. Please try again.')
     } finally {
       setLoading(false)
@@ -318,6 +331,22 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
                 <p className="text-xs text-center text-gray-400 mt-3">
                   You&apos;ll be asked to sign in before checkout.
                 </p>
+              )}
+
+              {/* A blocked or refused redirect to Stripe must not look like a
+                  dead button. Show the reason and a link that still works. */}
+              {!loading && checkoutError && (
+                <p className="text-xs text-center text-rose-600 mt-3" role="alert">
+                  {checkoutError}
+                </p>
+              )}
+              {!loading && retryUrl && (
+                <a
+                  href={retryUrl}
+                  className="block text-xs text-center text-indigo-600 hover:underline mt-3"
+                >
+                  Continue to secure checkout
+                </a>
               )}
 
               {/* Resource summary */}
