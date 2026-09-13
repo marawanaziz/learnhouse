@@ -84,7 +84,12 @@ def _safe_hls_relpath(hls_path: str) -> str | None:
 _PRESIGNED_REDIRECT_HEADERS = {"Cache-Control": "private, max-age=21600"}
 
 
-def _redirect_to_storage(file_path: str) -> RedirectResponse | None:
+def _storage_redirect_allowed(request: Request) -> bool:
+    # The content bucket allows the BBU origin, but not the BOLD learner host.
+    return request.url.hostname != "learn.boldmovement.org"
+
+
+def _redirect_to_storage(file_path: str, request: Request) -> RedirectResponse | None:
     """
     When S3/R2 is enabled, build a 302 redirect to a presigned URL so the
     browser streams media directly from object storage (native Range support,
@@ -96,7 +101,7 @@ def _redirect_to_storage(file_path: str) -> RedirectResponse | None:
     SECURITY: callers MUST run their RBAC check before calling this — the
     presigned URL grants temporary unauthenticated read access to the object.
     """
-    if not is_s3_enabled():
+    if not is_s3_enabled() or not _storage_redirect_allowed(request):
         return None
     presigned = generate_presigned_get_url(file_path)
     if not presigned:
@@ -241,7 +246,7 @@ async def stream_activity_video(
 
     # S3/R2: redirect to object storage so the browser streams directly. RBAC
     # was already enforced above, so the short-lived presigned URL is safe.
-    redirect = _redirect_to_storage(file_path)
+    redirect = _redirect_to_storage(file_path, request)
     if redirect:
         return redirect
 
@@ -342,7 +347,7 @@ async def stream_activity_hls(
         body = rewrite_playlist(
             raw.decode("utf-8", errors="replace"),
             playlist_dir_key,
-            generate_presigned_get_url,
+            generate_presigned_get_url if _storage_redirect_allowed(request) else lambda _: None,
         )
         return Response(
             content=body,
@@ -369,7 +374,7 @@ async def stream_activity_hls(
 
     # Segment request. In S3 mode the player uses presigned URLs directly, so
     # this is only hit in local mode — but redirect defensively if S3 is on.
-    redirect = _redirect_to_storage(asset_key)
+    redirect = _redirect_to_storage(asset_key, request)
     if redirect:
         return redirect
     raw = await asyncio.to_thread(read_file_content, asset_key)
@@ -435,7 +440,7 @@ async def stream_block_hls(
         body = rewrite_playlist(
             raw.decode("utf-8", errors="replace"),
             playlist_dir_key,
-            generate_presigned_get_url,
+            generate_presigned_get_url if _storage_redirect_allowed(request) else lambda _: None,
         )
         return Response(
             content=body,
@@ -453,7 +458,7 @@ async def stream_block_hls(
             headers={"Cache-Control": "private, no-store"},
         )
 
-    redirect = _redirect_to_storage(asset_key)
+    redirect = _redirect_to_storage(asset_key, request)
     if redirect:
         return redirect
     raw = await asyncio.to_thread(read_file_content, asset_key)
@@ -573,7 +578,7 @@ async def stream_block_audio(
 
     # S3/R2: redirect to object storage so the browser streams directly. RBAC
     # was already enforced above, so the short-lived presigned URL is safe.
-    redirect = _redirect_to_storage(file_path)
+    redirect = _redirect_to_storage(file_path, request)
     if redirect:
         return redirect
 
@@ -744,7 +749,7 @@ async def stream_block_video(
 
     # S3/R2: redirect to object storage so the browser streams directly. RBAC
     # was already enforced above, so the short-lived presigned URL is safe.
-    redirect = _redirect_to_storage(file_path)
+    redirect = _redirect_to_storage(file_path, request)
     if redirect:
         return redirect
 
@@ -978,7 +983,7 @@ async def stream_podcast_audio(
 
     # S3/R2: redirect to object storage so the browser streams directly. RBAC
     # was already enforced above, so the short-lived presigned URL is safe.
-    redirect = _redirect_to_storage(file_path)
+    redirect = _redirect_to_storage(file_path, request)
     if redirect:
         return redirect
 

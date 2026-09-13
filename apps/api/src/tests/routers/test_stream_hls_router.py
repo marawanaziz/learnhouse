@@ -3,6 +3,7 @@
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
 
 from src.core.events.database import get_db_session
 from src.routers import stream as stream_mod
@@ -72,6 +73,21 @@ async def test_rendition_playlist_segments_presigned(
     # The rewritten line is an absolute URL to the storage host.
     seg_line = next(ln for ln in r.text.splitlines() if ln.strip().endswith("sig=abc"))
     assert seg_line.startswith("https://")
+
+
+async def test_bold_rendition_segments_remain_same_host(
+    client_factory, monkeypatch, org, course, chapter, activity, anonymous_user
+):
+    monkeypatch.setattr(stream_mod, "read_file_content", lambda key: b"#EXTM3U\n#EXTINF:6.0,\nseg_0000.ts\n")
+    monkeypatch.setattr(stream_mod, "generate_presigned_get_url", lambda key: "https://r2.example/seg.ts")
+    client = await client_factory(anonymous_user)
+    r = await client.get(
+        _url(org, course, activity, "v360p/index.m3u8"),
+        headers={"host": "learn.boldmovement.org"},
+    )
+    assert r.status_code == 200
+    assert "\nseg_0000.ts\n" in r.text
+    assert "r2.example" not in r.text
 
 
 async def test_segment_request_redirects_to_presigned_in_s3_mode(
@@ -165,19 +181,28 @@ async def test_bad_extension_returns_404_without_reading(
 
 def test_redirect_to_storage_none_when_s3_disabled(monkeypatch):
     monkeypatch.setattr(stream_mod, "is_s3_enabled", lambda: False)
-    assert stream_mod._redirect_to_storage("content/x.mp4") is None
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"host", b"learn.boldmovement.org")]})
+    assert stream_mod._redirect_to_storage("content/x.mp4", request) is None
 
 
 def test_redirect_to_storage_sets_cacheable_header(monkeypatch):
     monkeypatch.setattr(stream_mod, "is_s3_enabled", lambda: True)
     monkeypatch.setattr(stream_mod, "generate_presigned_get_url", lambda key: "https://r2/x")
-    resp = stream_mod._redirect_to_storage("content/x.mp4")
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"host", b"learn.birthandbabyuniversity.com")]})
+    resp = stream_mod._redirect_to_storage("content/x.mp4", request)
     assert resp is not None
     assert resp.status_code == 302
     cc = resp.headers["cache-control"]
     # Must be cacheable (not no-store) so the browser stops re-resolving per range.
     assert "no-store" not in cc
     assert "max-age=21600" in cc and "private" in cc
+
+
+def test_bold_media_stays_on_authenticated_host(monkeypatch):
+    monkeypatch.setattr(stream_mod, "is_s3_enabled", lambda: True)
+    monkeypatch.setattr(stream_mod, "generate_presigned_get_url", lambda key: "https://r2/x")
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"host", b"learn.boldmovement.org")]})
+    assert stream_mod._redirect_to_storage("content/x.mp4", request) is None
 
 
 async def test_activity_video_redirects_to_presigned_with_cache(
@@ -198,6 +223,25 @@ async def test_activity_video_redirects_to_presigned_with_cache(
     assert r.status_code == 302
     assert r.headers["location"].startswith("https://r2.example/")
     assert "max-age=21600" in r.headers["cache-control"]
+
+
+async def test_bold_activity_video_ranges_stream_on_same_host(
+    client_factory, monkeypatch, org, course, chapter, activity, anonymous_user
+):
+    monkeypatch.setattr(stream_mod, "is_s3_enabled", lambda: True)
+    monkeypatch.setattr(stream_mod, "get_file_info", lambda path: (8, "video/mp4", True))
+    monkeypatch.setattr(stream_mod, "stream_video_file", lambda path, start, end, chunk: iter([b"ftyp"]))
+    monkeypatch.setattr(stream_mod, "generate_presigned_get_url", lambda key: "https://r2.example/media")
+    client = await client_factory(anonymous_user)
+    r = await client.get(
+        f"/video/{org.org_uuid}/{course.course_uuid}/{activity.activity_uuid}/clip.mp4",
+        headers={"host": "learn.boldmovement.org", "range": "bytes=0-3"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 206
+    assert r.content == b"ftyp"
+    assert r.headers["content-range"] == "bytes 0-3/8"
+    assert "location" not in r.headers
 
 
 async def test_activity_video_missing_object_returns_404_in_s3_mode(
