@@ -238,7 +238,7 @@ def waitlist_page(p, base, program):
         f"\"<div style='text-align:center'><div style='font-size:3rem'>✅</div>"
         f"<h1 style='font-size:1.8rem;margin:12px 0'>You're on the list!</h1>"
         f"<p style='color:#4a5b68'>We'll reach out the moment a spot opens up.\"+"
-        f"(d.position?(' You're #'+d.position+' in line.'):'')+\"</p></div>\";}}"
+        f"(d.position?(\" You're #\"+d.position+' in line.'):'')+\"</p></div>\";}}"
         f"else{{jb.textContent='Try again';jb.disabled=false;document.getElementById('wmsg').textContent=(d.error||'Something went wrong.');}}"
         f"}};"
         f"</script>"
