@@ -70,7 +70,12 @@ def referral_url(base: str, ref_code: str, next_path: str = "") -> str:
 
 
 def _safe_next_path(next_path: str) -> str:
-    """Keep a referral destination on this site, defaulting to the shop."""
+    """Keep a referral destination on this site, defaulting to the shop.
+
+    This value is attacker-supplied (it rides the public referral link) and ends
+    up in a Location header, so it is validated as untrusted input:
+    site-relative only, no control characters, no backslashes, no authority.
+    """
     value = (next_path or "").strip()
     if not value.startswith("/") or value.startswith("//"):
         return DEFAULT_REFERRAL_LANDING
@@ -78,9 +83,19 @@ def _safe_next_path(next_path: str) -> str:
     # "/\evil.com" into a protocol-relative escape. Reject it explicitly.
     if value.startswith("/\\") or "\\" in value:
         return DEFAULT_REFERRAL_LANDING
+    # Control characters. A literal TAB survives query decoding, and clients that
+    # strip tabs turn "/\tevil.com" into a protocol-relative escape; CR/LF can
+    # split a Location header. Reject every C0 control and DEL outright.
+    if _has_control_chars(value):
+        return DEFAULT_REFERRAL_LANDING
     if urlsplit(value).netloc:
         return DEFAULT_REFERRAL_LANDING
     return value or DEFAULT_REFERRAL_LANDING
+
+
+def _has_control_chars(value: str) -> bool:
+    """True if `value` contains any ASCII C0 control (0x00-0x1F) or DEL (0x7F)."""
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
 
 
 async def get_affiliate_by_ref(db: AsyncSession, ref_code: str, org_id: int = 1):

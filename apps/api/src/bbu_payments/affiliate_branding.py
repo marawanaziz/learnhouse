@@ -205,13 +205,22 @@ def portal_page(
     # Per-course links. A bare shop link makes the affiliate describe the class
     # in their own words and hope the buyer finds it; these land on the exact
     # product checkout with the referral cookie already set.
+    #
+    # The link is built here rather than read from the course dict: the two
+    # portal callers pass the catalogue rows (`_referral_courses`), which carry
+    # `next_path` but no link. Reading `c['referral_link']` there rendered every
+    # row with an empty copy field.
     def _course_row(c):
+        course_link = (
+            c.get("referral_link")
+            or aff.referral_url(base, affiliate.ref_code, c.get("next_path") or "")
+        )
         return (
             f"<tr><td style='padding:8px 4px'>{_h(c.get('name') or '')}</td>"
             f"<td style='padding:8px 4px;color:#4a5b68'>{_money(c.get('price_cents'))}</td>"
             f"<td style='padding:8px 4px;width:52%'>"
             f"<div style='display:flex;gap:8px;align-items:center'>"
-            f"<input readonly value='{_h(c.get('referral_link') or '')}' "
+            f"<input readonly value='{_h(course_link)}' "
             f"style='flex:1;padding:6px 8px;border:1px solid rgba(17,61,93,.2);border-radius:8px;font-size:.78rem'>"
             f"<button class='btn' style='padding:7px 12px;font-size:.78rem' "
             f"onclick=\"navigator.clipboard.writeText(this.previousElementSibling.value);"
