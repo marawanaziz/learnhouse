@@ -269,7 +269,7 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
       {/* Login Link */}
       <p className="text-center text-gray-600 mt-6">
         {t('auth.already_have_account')}{' '}
-        <Link href="/login" className="font-semibold text-gray-900 hover:underline">
+        <Link href={`/login?returnTo=${encodeURIComponent(`/signup?inviteCode=${props.inviteCode}`)}`} className="font-semibold text-gray-900 hover:underline">
           {t('auth.login')}
         </Link>
       </p>
