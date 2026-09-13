@@ -576,6 +576,7 @@ async def portal(token: str, request: Request, db_session: AsyncSession = Depend
             payouts,
             base,
             connect_state=state,
+            courses=await _referral_courses(db_session, affiliate.org_id),
             onboarding_url=(
                 f"{base}/api/v1/bbu/affiliate/portal/{token}/onboarding"
             ),
@@ -672,6 +673,7 @@ async def my_affiliate_portal(
             payouts,
             base,
             connect_state=state,
+            courses=await _referral_courses(db_session, affiliate.org_id),
             onboarding_url=(
                 f"{base}/api/v1/bbu/affiliate/me/onboarding?{query}"
             ),
@@ -779,6 +781,32 @@ async def admin(request: Request, db_session: AsyncSession = Depends(get_db_sess
                                    admin_key=request.query_params.get("key", "")))
 
 
+async def _referral_courses(db_session: AsyncSession, org_id: int = 1) -> list[dict]:
+    """Public products an affiliate can deep-link to, each with its own referral link.
+
+    A referral link that only reaches the shop makes the affiliate name the class
+    they are recommending in their own words and hope the buyer finds it. Every
+    published product gets an exact destination so the shared link lands on that
+    product's checkout with attribution intact.
+    """
+    rows = (await db_session.execute(
+        select(BBUProduct).where(
+            BBUProduct.org_id == org_id,
+            BBUProduct.public == True,  # noqa: E712
+        ).order_by(BBUProduct.price_cents.desc(), BBUProduct.name)
+    )).scalars().all()
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "kind": p.kind,
+            "price_cents": p.price_cents or 0,
+            "next_path": f"/api/v1/bbu/buy/{p.id}",
+        }
+        for p in rows
+    ]
+
+
 @router.get("/admin/detail/{aff_id}")
 async def admin_detail(aff_id: int, request: Request, db_session: AsyncSession = Depends(get_db_session)):
     """Full per-affiliate profile: their share links, who enrolled through them,
@@ -820,10 +848,15 @@ async def admin_detail(aff_id: int, request: Request, db_session: AsyncSession =
         BBUPayout.affiliate_id == aff_id).order_by(BBUPayout.id.desc()))).scalars().all()
     payout_rows = [{"amount": round((p.amount_cents or 0) / 100, 2), "status": p.status,
                     "period": p.period, "date": (p.created_at or "")[:10]} for p in payouts]
+    course_links = [
+        dict(c, referral_link=aff.referral_url(base, a.ref_code, c["next_path"]))
+        for c in await _referral_courses(db_session, a.org_id)
+    ]
     return {
         "id": a.id, "name": a.name, "email": a.email, "ref_code": a.ref_code,
         "status": a.status, "rate": round(rate * 100), "payouts_enabled": bool(a.payouts_enabled),
-        "referral_link": f"{base}/api/v1/bbu/r/{a.ref_code}",
+        "referral_link": aff.referral_url(base, a.ref_code),
+        "course_links": course_links,
         "portal_link": (f"{base}/api/v1/bbu/affiliate/portal/{a.portal_token}" if a.portal_token else ""),
         "join_link": f"{base}/api/v1/bbu/affiliate/join",
         "clicks": int(clicks), "leads": int(a.legacy_leads_count or 0),

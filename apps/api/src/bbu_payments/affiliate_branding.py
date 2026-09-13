@@ -7,6 +7,7 @@ the Next.js frontend build.
 from html import escape
 from urllib.parse import quote
 
+from src.bbu_payments import affiliates as aff
 from src.bbu_payments.branding import _shell, _price, NAVY, STEEL, ICE
 
 
@@ -88,8 +89,9 @@ def portal_page(
     connect_state=None,
     onboarding_url="",
     dashboard_url="",
+    courses=None,
 ):
-    link = f"{base}/api/v1/bbu/r/{affiliate.ref_code}"
+    link = aff.referral_url(base, affiliate.ref_code)
     state = connect_state or {
         "status": "connected" if affiliate.payouts_enabled else "not_started",
         "currently_due_count": 0,
@@ -200,6 +202,35 @@ def portal_page(
         for row in earnings.get("details", [])
     ) or "<tr><td colspan='6' style='padding:12px 4px;color:#6b6f79'>No referred sales yet.</td></tr>"
 
+    # Per-course links. A bare shop link makes the affiliate describe the class
+    # in their own words and hope the buyer finds it; these land on the exact
+    # product checkout with the referral cookie already set.
+    def _course_row(c):
+        return (
+            f"<tr><td style='padding:8px 4px'>{_h(c.get('name') or '')}</td>"
+            f"<td style='padding:8px 4px;color:#4a5b68'>{_money(c.get('price_cents'))}</td>"
+            f"<td style='padding:8px 4px;width:52%'>"
+            f"<div style='display:flex;gap:8px;align-items:center'>"
+            f"<input readonly value='{_h(c.get('referral_link') or '')}' "
+            f"style='flex:1;padding:6px 8px;border:1px solid rgba(17,61,93,.2);border-radius:8px;font-size:.78rem'>"
+            f"<button class='btn' style='padding:7px 12px;font-size:.78rem' "
+            f"onclick=\"navigator.clipboard.writeText(this.previousElementSibling.value);"
+            f"this.textContent='Copied!'\">Copy</button></div></td></tr>"
+        )
+
+    course_links = "".join(_course_row(c) for c in (courses or []))
+    course_card = (
+        f"<div class='card' style='padding:22px;margin-bottom:22px;overflow-x:auto'>"
+        f"<h3 style='font-size:1.1rem;margin:0 0 4px'>Links for each class</h3>"
+        f"<p style='color:#6b6f79;font-size:.88rem;margin:0 0 12px'>Share the exact class "
+        f"someone asked about. Every link tracks back to your account.</p>"
+        f"<table style='width:100%;border-collapse:collapse;font-size:.92rem;min-width:560px'>"
+        f"<thead><tr style='text-align:left;color:#6b6f79;font-family:League Spartan;"
+        f"font-size:.72rem;letter-spacing:.1em;text-transform:uppercase'>"
+        f"<th style='padding:6px 4px'>Class</th><th>Price</th><th>Your link</th></tr></thead>"
+        f"<tbody>{course_links}</tbody></table></div>"
+    ) if course_links else ""
+
     inner = (
         f"<div class='wrap' style='max-width:900px;margin:44px auto'>"
         f"<span class='eyebrow'>Affiliate Dashboard</span>"
@@ -210,12 +241,15 @@ def portal_page(
         f"<div style='height:22px'></div>{status_banner}"
         f"<div class='card' style='padding:22px'>"
         f"<div style='font-family:League Spartan;font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:#6b6f79;margin-bottom:8px'>Your referral link</div>"
+        f"<p style='color:#6b6f79;font-size:.88rem;margin:0 0 10px'>Opens the class shop. "
+        f"Use a class link below when you are recommending one specific class.</p>"
         f"<div style='display:flex;gap:10px;align-items:center'>"
         f"<input id='reflink' readonly value='{_h(link)}' style='flex:1'>"
         f"<button class='btn' style='padding:12px 20px' "
         f"onclick=\"navigator.clipboard.writeText(document.getElementById('reflink').value);"
         f"this.textContent='Copied!'\">Copy</button>"
         f"</div></div>"
+        f"{course_card}"
         f"{stats}"
         f"<div class='card' style='padding:22px;margin-bottom:22px;overflow-x:auto'>"
         f"<h3 style='font-size:1.1rem;margin-bottom:10px'>Referral history</h3>"
@@ -285,7 +319,7 @@ def admin_page(settings, affs, totals, earned, base, admin_key=""):
     rows = ""
     for a in affs:
         rate_pct = int((a.commission_rate if a.commission_rate is not None else settings.default_commission_rate) * 100)
-        reflink = f"{base}/api/v1/bbu/r/{a.ref_code}"
+        reflink = aff.referral_url(base, a.ref_code)
         rows += (
             f"<tr>"
             f"<td style='padding:8px 4px'><a href='#' onclick='openDetail({a.id});return false' style='color:#113d5d;font-weight:700;text-decoration:none'>{a.name or a.email}</a>"
