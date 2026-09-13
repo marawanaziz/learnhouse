@@ -1,6 +1,10 @@
 'use server';
+import { cookies } from 'next/headers';
 import { getAPIUrl } from '@services/config/config';
 import { RequestBodyWithAuthHeader, getResponseMetadata, secureFetch } from '@services/utils/ts/requests';
+
+// Referral cookie set by the affiliate entry point (`/api/v1/bbu/r/{code}`).
+const REFERRAL_COOKIE = 'bbu_ref';
 
 export async function getOffers(orgId: number, access_token: string) {
   const result = await secureFetch(
@@ -93,9 +97,22 @@ export async function getOfferCheckoutSession(
   access_token: string,
   bumps: string[] = []
 ) {
+  // This runs as a server action, so the browser's cookie jar is not attached
+  // to the outbound fetch: `credentials: 'include'` is inert here and the call
+  // goes straight to the API rather than through the Next /api/v1 proxy. Read
+  // the incoming referral cookie explicitly and forward it with the explicit
+  // ref, so the backend can stamp attribution onto the Stripe session and the
+  // order exactly as the native buy path does.
+  const cookieStore = await cookies();
+  const ref = cookieStore.get(REFERRAL_COOKIE)?.value?.trim() || '';
+  const base = RequestBodyWithAuthHeader('POST', { bumps, ref }, null, access_token);
+  const init: RequestInit = ref
+    ? { ...base, headers: { ...Object.fromEntries(new Headers(base.headers as HeadersInit)), Cookie: `${REFERRAL_COOKIE}=${ref}` } }
+    : base;
+
   const result = await secureFetch(
     `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/${encodeURIComponent(offerUuid)}/checkout?redirect_uri=${encodeURIComponent(redirect_uri)}`,
-    RequestBodyWithAuthHeader('POST', { bumps }, null, access_token)
+    init
   );
   return getResponseMetadata(result);
 }

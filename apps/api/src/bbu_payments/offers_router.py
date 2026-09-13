@@ -36,7 +36,7 @@ from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.helpers import merge_course_uuids
 from src.bbu_payments.models import BBUCoupon, BBUOrder, BBUProduct
 from src.bbu_payments.public_url import get_bbu_public_base_url
-from src.bbu_payments.router import _as_dict, _fulfill
+from src.bbu_payments.router import REF_COOKIE, _as_dict, _fulfill
 from src.core.events.database import get_db_session
 from src.db.courses.courses import Course
 from src.db.organizations import Organization
@@ -48,6 +48,23 @@ router = APIRouter()
 
 stripe.api_key = os.environ.get("BBU_STRIPE_SECRET_KEY", "")
 ADMIN_KEY = os.environ.get("BBU_AFFILIATE_ADMIN_KEY", "")
+
+
+def _resolve_affiliate_ref(request: Request, body: dict | None = None) -> str:
+    """Resolve affiliate attribution for the offer-checkout path.
+
+    Mirrors the native buy path (router.py: explicit ref, else the bbu_ref
+    cookie, else none). The offer handler used to hardcode "" into the Stripe
+    metadata and leave BBUOrder.affiliate_ref unset, so a purchase made from an
+    offer page could never be attributed or earn a commission.
+    """
+    body = body or {}
+    return (
+        request.query_params.get("ref")
+        or body.get("ref")
+        or request.cookies.get(REF_COOKIE)
+        or ""
+    ).strip()
 
 
 def _bold_opportunity_products(products: list) -> list:
@@ -332,6 +349,9 @@ async def checkout(
     bump_uuids = body.get("bumps") or []
     if isinstance(bump_uuids, str):
         bump_uuids = [b for b in bump_uuids.split(",") if b]
+
+    # Affiliate attribution, resolved exactly as the native buy path does.
+    ref = _resolve_affiliate_ref(request, body)
     allowed_bumps = {x.strip() for x in (p.bump_offer_ids or "").split(",") if x.strip()}
     bump_products = []
     for bu in bump_uuids:
@@ -445,7 +465,7 @@ async def checkout(
         ),
         metadata={"bbu_product_id": str(p.id), "course_uuids": merged_courses,
                   "bump_ids": ",".join(str(bp.id) for bp in bump_products),
-                  "affiliate_ref": "", "buyer_user_id": str(uid),
+                  "affiliate_ref": ref, "buyer_user_id": str(uid),
                   "automatic_coupon": automatic_coupon.code if automatic_coupon else ""},
     )
 
@@ -454,7 +474,7 @@ async def checkout(
         email=email, user_id=uid,
         amount_cents=max(0, total_cents - automatic_discount_cents),
         currency=p.currency,
-        status="pending", course_uuids=merged_courses,
+        status="pending", course_uuids=merged_courses, affiliate_ref=ref,
         created_at=datetime.now(timezone.utc).isoformat(),
         extra=(
             {
