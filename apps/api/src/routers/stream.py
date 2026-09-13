@@ -86,7 +86,8 @@ _PRESIGNED_REDIRECT_HEADERS = {"Cache-Control": "private, max-age=21600"}
 
 def _storage_redirect_allowed(request: Request) -> bool:
     # The content bucket allows the BBU origin, but not the BOLD learner host.
-    return request.url.hostname != "learn.boldmovement.org"
+    public_host = request.headers.get("x-learnhouse-public-host") or request.url.hostname
+    return public_host != "learn.boldmovement.org"
 
 
 def _redirect_to_storage(file_path: str, request: Request) -> RedirectResponse | None:

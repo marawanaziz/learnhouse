@@ -203,6 +203,11 @@ def test_bold_media_stays_on_authenticated_host(monkeypatch):
     monkeypatch.setattr(stream_mod, "generate_presigned_get_url", lambda key: "https://r2/x")
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"host", b"learn.boldmovement.org")]})
     assert stream_mod._redirect_to_storage("content/x.mp4", request) is None
+    proxied = Request({"type": "http", "method": "GET", "path": "/", "headers": [
+        (b"host", b"learn.birthandbabyuniversity.com"),
+        (b"x-learnhouse-public-host", b"learn.boldmovement.org"),
+    ]})
+    assert stream_mod._redirect_to_storage("content/x.mp4", proxied) is None
 
 
 async def test_activity_video_redirects_to_presigned_with_cache(

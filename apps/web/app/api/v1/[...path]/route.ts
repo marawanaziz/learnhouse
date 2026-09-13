@@ -24,6 +24,8 @@ async function proxyToBackend(request: NextRequest): Promise<Response> {
       headers.set(key, value)
     }
   })
+  // Preserve the learner-facing host when this proxy calls the shared backend.
+  headers.set('x-learnhouse-public-host', request.nextUrl.hostname)
 
   // Forward request body as-is (no parsing/re-serializing)
   const body = request.method !== 'GET' && request.method !== 'HEAD'
