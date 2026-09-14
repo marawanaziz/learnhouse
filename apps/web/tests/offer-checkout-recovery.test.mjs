@@ -13,7 +13,12 @@ const src = readFileSync(
 describe("offer checkout failure is visible and recoverable", () => {
   it("keeps the Stripe url so a blocked redirect still leaves a working link", () => {
     // The url is surfaced BEFORE navigation is attempted.
-    assert.match(src, /setRetryUrl\(url\)\s*\n\s*window\.location\.href = url/);
+    assert.match(src, /setRetryUrl\(url\)/);
+    assert.match(src, /window\.location\.href = url/);
+    assert.ok(
+      src.indexOf("setRetryUrl(url)") < src.indexOf("window.location.href = url"),
+      "the url must be retained before navigation is attempted",
+    );
     assert.match(
       src,
       /href=\{retryUrl\}/,
@@ -35,5 +40,21 @@ describe("offer checkout failure is visible and recoverable", () => {
 
   it("clears stale failure state before a retry", () => {
     assert.match(src, /setCheckoutError\(null\)\s*\n\s*setRetryUrl\(null\)/);
+  });
+
+  it("survives the unmount so the link is there on the way back", () => {
+    // The success path navigates away; the component unmounts and in-memory
+    // state is lost, so the retained url has to be persisted.
+    assert.match(src, /sessionStorage\.setItem\(retryKey, url\)/);
+    assert.match(src, /sessionStorage\.getItem\(retryKey\)/);
+    assert.match(src, /setRetryUrl\(saved\)/);
+    // A fresh attempt must not surface a stale checkout url.
+    assert.match(src, /sessionStorage\.removeItem\(retryKey\)/);
+    // Storage can throw in private mode; it must never break the flow.
+    assert.match(src, /catch \{\s*\/\* storage unavailable/);
+  });
+
+  it("imports useEffect for the one-time restore", () => {
+    assert.match(src, /import React, \{ useEffect, useState \} from 'react'/);
   });
 });

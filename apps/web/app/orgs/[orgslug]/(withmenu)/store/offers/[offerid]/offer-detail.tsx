@@ -1,5 +1,5 @@
 'use client'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import GeneralWrapperStyled from '@components/Objects/StyledElements/Wrappers/GeneralWrapper'
@@ -110,6 +110,21 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
   const [selectedBumps, setSelectedBumps] = useState<Set<string>>(new Set())
   const { track } = useLHAnalytics('learner')
 
+  // A successful checkout navigates away, so the component unmounts and any
+  // retained link never renders. If the browser then blocks, refuses or drops
+  // that navigation the buyer comes back to a button that looks used and cannot
+  // tell them why. Persist the Stripe url for this offer so it survives the
+  // round trip and is there to show if they land back here without paying.
+  const retryKey = `bbu:checkout:${offerUuid}`
+  useEffect(() => {
+    try {
+      const saved = window.sessionStorage.getItem(retryKey)
+      if (saved) setRetryUrl(saved)
+    } catch {
+      /* private mode or storage disabled - the inline error still covers us */
+    }
+  }, [retryKey])
+
   useTrackView(
     AnalyticsEvent.OfferViewed,
     {
@@ -161,14 +176,24 @@ export default function OfferDetailClient({ orgslug, orgId, offerUuid, offer, ac
     setCheckoutError(null)
     setRetryUrl(null)
     try {
+      window.sessionStorage.removeItem(retryKey)
+    } catch {
+      /* storage unavailable */
+    }
+    try {
       const redirectUri = window.location.href
       const result = await getOfferCheckoutSession(orgId, offerUuid, redirectUri, token, [...selectedBumps])
       const url = result?.data?.checkout_url
       if (url) {
         track(AnalyticsEvent.CheckoutSessionCreated, { offer_type: offer.offer_type, amount: offer.amount })
-        // If the browser refuses or blocks this navigation the assignment above
-        // simply does not take effect, so leave a working link behind as well.
+        // Keep the link in both places: state for a redirect that fails in place,
+        // storage for one that fails after the unmount above.
         setRetryUrl(url)
+        try {
+          window.sessionStorage.setItem(retryKey, url)
+        } catch {
+          /* storage unavailable - navigation is still attempted */
+        }
         window.location.href = url
       } else {
         track(AnalyticsEvent.CheckoutSessionFailed, { failure_reason: 'no_checkout_url' })
