@@ -8,7 +8,7 @@ import os
 from fastapi import HTTPException, UploadFile
 from config.config import get_learnhouse_config
 from src.security.file_validation import validate_upload
-from src.services.utils.video_processing import ensure_faststart
+from src.services.utils.video_processing import ensure_faststart, validate_video_decode
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,21 @@ def _safe_content_path(*parts: str) -> str:
 def ensure_directory_exists(directory: str):
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+
+async def _prepare_media(path: str) -> None:
+    """Validate before publication; never retain a rejected upload."""
+    try:
+        await asyncio.to_thread(validate_video_decode, path)
+        await asyncio.to_thread(ensure_faststart, path)
+    except Exception as error:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        if isinstance(error, ValueError):
+            raise HTTPException(422, "This video contains damaged audio or video. Please upload the original video file.") from error
+        raise HTTPException(503, "Video validation is temporarily unavailable. Please try again later.") from error
 
 
 async def upload_file(
@@ -124,7 +139,7 @@ async def upload_content(
         # Move the MP4 index atom to the front so long videos stream/seek
         # smoothly over HTTP (no-op for non-MP4 and when ffmpeg is absent).
         # Runs in a thread — the ffmpeg subprocess must not block the event loop.
-        await asyncio.to_thread(ensure_faststart, safe_path)
+        await _prepare_media(safe_path)
 
     elif content_delivery == "s3api":
         s3 = boto3.client(
@@ -146,7 +161,7 @@ async def upload_content(
         # stream/seek smoothly from R2 (no-op for non-MP4 and when ffmpeg is
         # absent). Done on the temp file so the uploaded object is faststart.
         # Threaded — the ffmpeg subprocess must not block the event loop.
-        await asyncio.to_thread(ensure_faststart, local_path)
+        await _prepare_media(local_path)
 
         try:
             await asyncio.to_thread(s3.upload_file, local_path, bucket_name, s3_key)

@@ -35,6 +35,7 @@ async def test_filesystem_upload_invokes_faststart(monkeypatch, tmp_path):
     monkeypatch.setattr(upload_content_mod, "get_learnhouse_config", lambda: cfg)
 
     seen = {}
+    monkeypatch.setattr(upload_content_mod, "validate_video_decode", lambda path: None)
     monkeypatch.setattr(
         upload_content_mod, "ensure_faststart",
         lambda path: seen.setdefault("path", path),

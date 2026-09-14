@@ -8,8 +8,8 @@ in a multi-hundred-MB/GB file before it can start or seek, producing long
 startup delays and stutter. `ffmpeg -c copy -movflags +faststart` rewrites the
 container losslessly (no re-encode) to fix this.
 
-Everything degrades gracefully: if ffmpeg is missing or the remux fails, the
-original file is left untouched so uploads never break because of it.
+Faststart is best effort. Full decode validation is mandatory for video
+uploads: damaged input must not be published, even when a remux succeeds.
 """
 
 import logging
@@ -26,6 +26,31 @@ _FASTSTART_EXTENSIONS = {".mp4", ".mov", ".m4v", ".m4a"}
 
 # Read window used to detect whether `moov` already precedes `mdat`.
 _ATOM_SCAN_BYTES = 2 * 1024 * 1024  # 2MB
+
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".ogv"}
+
+
+def validate_video_decode(path: str) -> None:
+    """Reject damaged media before publishing it to learners.
+
+    A successful probe/remux does not imply decodable packets: ffmpeg normally
+    logs damaged H.264/AAC frames and still exits zero. Decode the complete
+    audio/video streams, and fail on either a decoder error or error output.
+    """
+    if Path(path).suffix.lower() not in _VIDEO_EXTENSIONS:
+        return
+    if not _ffmpeg_available():
+        raise RuntimeError("Video validation is unavailable: ffmpeg is missing")
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-err_detect",
+         "explode", "-threads", "2", "-i", path, "-map", "0:v:0",
+         "-map", "0:a?", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=1800,
+    )
+    if result.returncode or result.stderr.strip():
+        logger.warning("Video decode validation failed for %s: %s", path,
+                       result.stderr[-1500:])
+        raise ValueError("The video contains damaged or unsupported audio/video data")
 
 
 def _ffmpeg_available() -> bool:
