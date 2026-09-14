@@ -71,6 +71,7 @@ async def send_reset_password_code(
     current_user: PublicUser | AnonymousUser,
     org_id: int,
     email: EmailStr,
+    return_to: str | None = None,
 ):
     """
     Send a password reset code to the user's email.
@@ -176,6 +177,7 @@ async def send_reset_password_code(
         email=str(email),
         base_url=base_url,
         lang=get_org_default_language(org_config),
+        return_to=return_to,
     )
 
     if not isEmailSent:

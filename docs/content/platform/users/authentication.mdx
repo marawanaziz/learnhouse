@@ -31,3 +31,7 @@ Choose invite-only signup for private or internal deployments where you want to 
 ## Session Management
 
 Once authenticated, users maintain a session via JWT tokens. The backend issues an access token (8-hour expiry) and a refresh token (30-day expiry) that keep users signed in across page loads.
+
+## Returning to an invitation
+
+Existing learners who open a signup invitation can follow **Login** and then **Join Organization** to claim the linked course group. The invitation is retained through the login and forgot-password links, including the reset email. Auth screens use a local `returnTo` destination; external destinations are ignored. Existing checkout links using `redirect` remain supported.

@@ -9,7 +9,8 @@ import { useFormik } from 'formik'
 import React, { useState, useEffect } from 'react'
 import { AlertTriangle, Lock, Mail, Shield, X, Clock } from 'lucide-react'
 import { checkSSOEnabled, redirectToSSOLogin } from '@services/auth/sso'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { authPath, readReturnTo } from '@/lib/auth/returnTo'
 import Link from 'next/link'
 import { useAuth } from '@components/Contexts/AuthContext'
 import { getDeploymentMode } from '@services/config/config'
@@ -25,6 +26,8 @@ interface LoginClientProps {
 
 const LoginClient = (props: LoginClientProps) => {
   const { t } = useTranslation()
+  const searchParams = useSearchParams()
+  const returnTo = readReturnTo(searchParams)
   const { signIn } = useAuth()
   const { track } = useLHAnalytics('public')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -143,12 +146,7 @@ const LoginClient = (props: LoginClientProps) => {
 
       // Preserve the exact protected lesson after an automatic session
       // recovery, while rejecting external/open-redirect destinations.
-      const requestedReturnTo = new URLSearchParams(window.location.search).get('returnTo')
-      const safeReturnTo = requestedReturnTo
-        && requestedReturnTo.startsWith('/')
-        && !requestedReturnTo.startsWith('//')
-          ? requestedReturnTo
-          : '/redirect_from_auth'
+      const safeReturnTo = readReturnTo(new URLSearchParams(window.location.search)) || '/redirect_from_auth'
       const callbackUrl = `${window.location.origin}${safeReturnTo}`;
 
       const res = await signIn('credentials', {
@@ -317,7 +315,7 @@ const LoginClient = (props: LoginClientProps) => {
 
               <div className="flex justify-end">
                 <Link
-                  href="/forgot"
+                  href={authPath('/forgot', returnTo)}
                   className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
                 >
                   {t('auth.forgot_password')}

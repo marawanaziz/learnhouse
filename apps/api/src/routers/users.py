@@ -457,6 +457,7 @@ class ResetPasswordRequest(BaseModel):
 class SendResetCodeRequest(BaseModel):
     email: EmailStr
     org_id: int
+    return_to: Optional[str] = None
 
 
 @router.post(
@@ -560,7 +561,7 @@ async def api_send_password_reset_email_v2(
             detail=f"Too many password reset attempts. Please try again in {retry_after // 60} minutes.",
         )
     return await send_reset_password_code(
-        request, db_session, current_user, body.org_id, body.email
+        request, db_session, current_user, body.org_id, body.email, return_to=body.return_to
     )
 
 

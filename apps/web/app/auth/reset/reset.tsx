@@ -1,5 +1,6 @@
 'use client'
 import React from 'react'
+import { authPath, readReturnTo } from '@/lib/auth/returnTo'
 import FormLayout, {
     FormField,
     FormLabelAndMessage,
@@ -57,6 +58,7 @@ function ResetPasswordClient({ org }: ResetPasswordClientProps) {
     const { track } = useLHAnalytics('public')
     const [isSubmitting, setIsSubmitting] = React.useState(false)
     const searchParams = useSearchParams()
+    const loginPath = authPath('/login', readReturnTo(searchParams))
     const reset_code = searchParams.get('resetCode') || ''
     const email = searchParams.get('email') || ''
     const [error, setError] = React.useState('')
@@ -105,7 +107,7 @@ function ResetPasswordClient({ org }: ResetPasswordClientProps) {
                                 <span className="text-sm font-medium">{error || message}</span>
                                 {message && (
                                     <span className="text-sm ml-2">
-                                        · <Link href="/login" className="underline hover:no-underline">{t('auth.proceed_to_login')}</Link>
+                                        · <Link href={loginPath} className="underline hover:no-underline">{t('auth.proceed_to_login')}</Link>
                                     </span>
                                 )}
                             </div>
@@ -202,7 +204,7 @@ function ResetPasswordClient({ org }: ResetPasswordClientProps) {
                         {/* Back to Login */}
                         <p className="text-center text-gray-600 mt-6">
                             {t('auth.remember_password')}{' '}
-                            <Link href="/login" className="font-semibold text-gray-900 hover:underline">
+                            <Link href={loginPath} className="font-semibold text-gray-900 hover:underline">
                                 {t('auth.login')}
                             </Link>
                         </p>

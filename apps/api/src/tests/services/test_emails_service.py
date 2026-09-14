@@ -81,6 +81,24 @@ class TestEmailsService:
             assert "#6da0db" in body
             assert "<svg" not in body
 
+    def test_password_reset_preserves_local_invitation_and_rejects_external_returns(self):
+        from html import unescape
+        from urllib.parse import parse_qs, urlsplit
+        import re
+
+        target = "/signup?inviteCode=qgLDnuoX"
+        for destination in [target, "https://evil.test", "//evil.test", "/\\evil.test", "/\nevil.test"]:
+            with patch("src.services.users.emails.send_email", return_value=True) as sender:
+                send_password_reset_email("reset123", _user(), _org(), "user@test.com",
+                                          "https://app.test", return_to=destination)
+            body = unescape(sender.call_args.kwargs["body"])
+            links = re.findall(r'href="([^"]+)"', body)
+            reset = next(url for url in links if "/reset?" in url)
+            query = parse_qs(urlsplit(reset).query)
+            assert urlsplit(reset).netloc == "app.test"
+            assert query["resetCode"] == ["reset123"]
+            assert query.get("returnTo") == ([target] if destination == target else None)
+
     def test_send_invitation_role_change_and_verification_email(self):
         with patch("src.services.users.emails.send_email", return_value=True) as send_email:
             send_invitation_email(
