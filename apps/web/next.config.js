@@ -86,10 +86,9 @@ const nextConfig = {
       'react-katex',
     ],
   },
-  // Ensure consistent build IDs across multiple pods in Kubernetes
-  generateBuildId: async () => {
-    return process.env.BUILD_ID || 'learnhouse-production'
-  },
+  // Each image has one deployment identity shared by all its replicas. Next.js
+  // uses it to reload stale clients safely during navigation after a release.
+  deploymentId: process.env.NEXT_DEPLOYMENT_ID,
 }
 
 // Generate runtime config for development
