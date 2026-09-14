@@ -120,6 +120,7 @@ class TestPasswordResetService:
                 AnonymousUser(),
                 org.id,
                 user.email,
+                return_to="/signup?inviteCode=qgLDnuoX",
             )
 
         assert result.startswith("If an account")
@@ -132,6 +133,7 @@ class TestPasswordResetService:
         assert payload["org_uuid"] == org.org_uuid
         assert payload["reset_code_type"] == "password_reset"
         assert mock_send.call_count == 1
+        assert mock_send.call_args.kwargs["return_to"] == "/signup?inviteCode=qgLDnuoX"
 
         missing_platform = await send_reset_password_code_platform(
             mock_request,

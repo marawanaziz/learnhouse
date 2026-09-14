@@ -1,4 +1,5 @@
 'use client'
+import { authPath } from '@/lib/auth/returnTo'
 import { useFormik } from 'formik'
 import { useRouter } from 'next/navigation'
 import React, { useEffect } from 'react'
@@ -53,6 +54,7 @@ interface InviteOnlySignUpProps {
 
 function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
   const { t } = useTranslation()
+  const loginPath = authPath('/login', `/signup?inviteCode=${encodeURIComponent(props.inviteCode)}`)
   const { track } = useLHAnalytics('public')
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const org = useOrg() as any
@@ -135,7 +137,7 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
             {t('auth.verification_email_sent_message')}
           </p>
           <hr className="border-green-200" />
-          <Link className="flex items-center gap-2 text-sm font-medium hover:underline" href="/login">
+          <Link className="flex items-center gap-2 text-sm font-medium hover:underline" href={loginPath}>
             <User size={14} />
             <span>{t('auth.login')}</span>
           </Link>
@@ -149,7 +151,7 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
             <div className="font-bold text-sm">{t('auth.account_created_success')}</div>
           </div>
           <hr className="border-green-200" />
-          <Link className="flex items-center gap-2 text-sm font-medium hover:underline" href="/login">
+          <Link className="flex items-center gap-2 text-sm font-medium hover:underline" href={loginPath}>
             <User size={14} />
             <span>{t('auth.login')}</span>
           </Link>
@@ -269,7 +271,7 @@ function InviteOnlySignUpComponent(props: InviteOnlySignUpProps) {
       {/* Login Link */}
       <p className="text-center text-gray-600 mt-6">
         {t('auth.already_have_account')}{' '}
-        <Link href="/login" className="font-semibold text-gray-900 hover:underline">
+        <Link href={loginPath} className="font-semibold text-gray-900 hover:underline">
           {t('auth.login')}
         </Link>
       </p>

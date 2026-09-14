@@ -121,12 +121,17 @@ def send_password_reset_email(
     email: EmailStr,
     base_url: str,
     lang: str = "en",
+    return_to: str | None = None,
 ):
     safe_username = html.escape(user.username)
     safe_code = html.escape(generated_reset_code)
     safe_email = quote(str(email), safe='')
     safe_code_param = quote(generated_reset_code, safe='')
     reset_url = f"{base_url}/reset?email={safe_email}&amp;resetCode={safe_code_param}"
+    # Preserve only local destinations; never put an external redirect in mail.
+    if (return_to and return_to.startswith('/') and not return_to.startswith('//')
+            and not any(ord(c) <= 32 or ord(c) == 127 or c == chr(92) for c in return_to)):
+        reset_url += f"&amp;returnTo={quote(return_to, safe='')}"
 
     heading = t(lang, "password_reset.heading")
     body_text = t(lang, "password_reset.body", username=safe_username)

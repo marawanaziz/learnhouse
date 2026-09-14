@@ -1,5 +1,7 @@
 'use client'
 import React from 'react'
+import { useSearchParams } from 'next/navigation'
+import { authPath, readReturnTo } from '@/lib/auth/returnTo'
 import FormLayout, {
     FormField,
     FormLabelAndMessage,
@@ -32,6 +34,7 @@ interface ForgotPasswordClientProps {
 
 function ForgotPasswordClient({ org }: ForgotPasswordClientProps) {
     const { t } = useTranslation();
+    const returnTo = readReturnTo(useSearchParams())
     const { track } = useLHAnalytics('public')
     const [isSubmitting, setIsSubmitting] = React.useState(false)
     const [error, setError] = React.useState('')
@@ -49,7 +52,7 @@ function ForgotPasswordClient({ org }: ForgotPasswordClientProps) {
             setError('')
             setMessage('')
             setShowMessage(false)
-            let res = await sendResetLink(values.email, org?.id)
+            let res = await sendResetLink(values.email, org?.id, returnTo)
             if (res.status == 200) {
                 track(AnalyticsEvent.PasswordResetLinkRequested, { success: true })
                 setMessage(res.data + ', ' + t('auth.check_email_message'))
@@ -123,7 +126,7 @@ function ForgotPasswordClient({ org }: ForgotPasswordClientProps) {
 
                         {/* Back to Login */}
                         <p className="text-center text-gray-600 mt-6">
-                            <Link href="/login" className="inline-flex items-center gap-2 font-semibold text-gray-900 hover:underline">
+                            <Link href={authPath('/login', returnTo)} className="inline-flex items-center gap-2 font-semibold text-gray-900 hover:underline">
                                 <ArrowLeft size={16} />
                                 {t('auth.back_to_login')}
                             </Link>
