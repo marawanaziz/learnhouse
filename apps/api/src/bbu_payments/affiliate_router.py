@@ -96,6 +96,10 @@ def _member_account_url(request: Request, orgslug: str, result: str = "") -> str
 
 def _connect_state(account) -> dict:
     """Translate Stripe's account object into the learner-facing payout states."""
+    # stripe-python 15 exposes attributes rather than dict.get(). Its public
+    # serializer also converts nested requirements into ordinary dictionaries.
+    if isinstance(account, stripe.StripeObject):
+        account = account.to_dict()
     if not account:
         return {
             "status": "not_started",
@@ -994,6 +998,8 @@ async def connect_webhook(request: Request, db_session: AsyncSession = Depends(g
     etype = event["type"] if isinstance(event, dict) else event.type
     data = event["data"]["object"] if isinstance(event, dict) else event.data.object
     if etype == "account.updated":
+        if isinstance(data, stripe.StripeObject):
+            data = data.to_dict()
         acct_id = data.get("id")
         affiliate = (await db_session.execute(
             select(BBUAffiliate).where(BBUAffiliate.stripe_connect_account_id == acct_id)
