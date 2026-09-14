@@ -27,7 +27,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Remove .env files to avoid leaking secrets into the build
 RUN rm -f .env*
 
-RUN bun run build
+RUN NEXT_DEPLOYMENT_ID="$(cat /proc/sys/kernel/random/uuid)" bun run build
 
 # ───────────────────────────────────────────────
 # Stage 3: Frontend production image

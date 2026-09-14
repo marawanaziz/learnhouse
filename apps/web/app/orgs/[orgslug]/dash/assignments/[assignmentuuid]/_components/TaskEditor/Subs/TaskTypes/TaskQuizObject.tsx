@@ -157,6 +157,9 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
     const userSubmissionsRef = React.useRef<QuizSubmitSchema>(userSubmissions);
     const questionsRef = React.useRef<QuizSchema[]>(questions);
     const saveQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+    // Server query refreshes are snapshots, not edits. Hydrate once per
+    // mounted attempt so a slow autosave response cannot undo newer clicks.
+    const draftInitializedRef = React.useRef(false);
 
     useEffect(() => {
         userSubmissionsRef.current = userSubmissions;
@@ -177,6 +180,7 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
         const optionUUID = option.optionUUID;
 
         if (!questionUUID || !optionUUID) return;
+        draftInitializedRef.current = true;
 
         const updatedSubmissions = updateQuizSelection(
             currentUserSubmissions.submissions,
@@ -218,7 +222,8 @@ function TaskQuizObject({ view, assignmentTaskUUID, user_id }: TaskQuizObjectPro
     }
 
     function hydrateSubmissionFromBatch() {
-        if (!assignmentTaskUUID) return;
+        if (!assignmentTaskUUID || taskSubmissionsMap === null || draftInitializedRef.current) return;
+        draftInitializedRef.current = true;
         const sub = taskSubmissionsMap?.[assignmentTaskUUID] ?? null;
         if (sub) {
             const hydratedSubmission = {

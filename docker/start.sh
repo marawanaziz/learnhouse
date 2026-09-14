@@ -24,6 +24,11 @@ fi
 # Seed BBU storefront products from migrated courses (idempotent).
 (cd /app/api && uv run python bbu_seed_products.py) || echo "WARNING: BBU product seed failed; continuing startup"
 
+# Keep hashed assets from previous releases available to lessons already open
+# in a browser. The content directory is the persistent production volume.
+mkdir -p /app/api/content/.frontend-static
+cp -R /app/web/.next/static/. /app/api/content/.frontend-static/ || exit 1
+
 # Start the services
 # Use server-wrapper.js for runtime environment variable injection
 pm2 start server-wrapper.js --cwd /app/web --name learnhouse-web > /dev/null 2>&1
