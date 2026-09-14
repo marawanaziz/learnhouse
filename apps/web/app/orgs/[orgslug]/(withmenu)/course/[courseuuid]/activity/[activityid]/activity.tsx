@@ -1818,6 +1818,12 @@ function AssignmentTools(props: {
       );
       if (res.success) {
         toast.success(t('assignments.retry_assignment_success'));
+        // Cancel old snapshots before installing the server-confirmed empty
+        // attempt. Changing the attempt number remounts the task editors.
+        await queryClient.cancelQueries({ queryKey: queryKeys.assignments.taskSubmission(props.assignment.assignment_uuid) });
+        await queryClient.cancelQueries({ queryKey: queryKeys.assignments.submission(props.assignment.assignment_uuid) });
+        queryClient.setQueryData(queryKeys.assignments.taskSubmission(props.assignment.assignment_uuid), {});
+        queryClient.setQueryData(queryKeys.assignments.submission(props.assignment.assignment_uuid), [res.data.submission]);
         // Pull the fresh per-task batch + the user submission so the task
         // editors snap back to an empty state without a hard reload.
         queryClient.invalidateQueries({ queryKey: queryKeys.assignments.submission(props.assignment?.assignment_uuid) });
