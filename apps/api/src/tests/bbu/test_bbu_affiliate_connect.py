@@ -1,8 +1,13 @@
 """Regression coverage for signed-in affiliate payout onboarding."""
 
 from types import SimpleNamespace
+import hashlib
+import hmac
+import json
+import time
 
 import pytest
+import stripe
 from starlette.requests import Request
 
 from src.bbu_payments import affiliate_router
@@ -29,6 +34,65 @@ class _DB:
 
     async def commit(self):
         self.commits += 1
+
+
+def test_connect_state_accepts_real_stripe_account():
+    account = stripe.Account.construct_from({
+        "id": "acct_existing",
+        "object": "account",
+        "payouts_enabled": False,
+        "details_submitted": False,
+        "requirements": {
+            "currently_due": ["external_account"],
+            "disabled_reason": "requirements.past_due",
+        },
+    }, "sk_test")
+
+    assert affiliate_router._connect_state(account) == {
+        "status": "restricted",
+        "payouts_enabled": False,
+        "details_submitted": False,
+        "currently_due_count": 1,
+        "disabled_reason": "requirements.past_due",
+    }
+
+
+@pytest.mark.asyncio
+async def test_signed_connect_webhook_applies_real_stripe_account(monkeypatch):
+    secret = "whsec_regression"
+    monkeypatch.setattr(affiliate_router, "CONNECT_WEBHOOK_SECRET", secret)
+    affiliate = BBUAffiliate(id=7, org_id=1, status="onboarding",
+                             stripe_connect_account_id="acct_existing")
+    db = _DB()
+
+    async def execute(_query):
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: affiliate))
+
+    db.execute = execute
+    payload = json.dumps({
+        "id": "evt_regression", "object": "event", "type": "account.updated",
+        "data": {"object": {
+            "id": "acct_existing", "object": "account",
+            "payouts_enabled": True, "details_submitted": True,
+            "requirements": {"currently_due": [], "disabled_reason": None},
+        }},
+    }).encode()
+    timestamp = str(int(time.time()))
+    signature = hmac.new(secret.encode(), timestamp.encode() + b"." + payload,
+                         hashlib.sha256).hexdigest()
+
+    async def receive():
+        return {"type": "http.request", "body": payload}
+
+    request = Request({"type": "http", "headers": [
+        (b"stripe-signature", f"t={timestamp},v1={signature}".encode()),
+    ]}, receive=receive)
+    result = await affiliate_router.connect_webhook(request, db)
+
+    assert result.status_code == 200
+    assert affiliate.status == "active"
+    assert affiliate.payouts_enabled is True
+    assert db.commits == 1
 
 
 def test_connect_state_covers_every_member_facing_state():
