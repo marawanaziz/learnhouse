@@ -382,10 +382,12 @@ async def referral_redirect(ref_code: str, request: Request,
     """
     from fastapi.responses import RedirectResponse
 
-    nxt = (request.query_params.get("next") or "/").strip()
+    # The organization home requires login; referrals must be browsable before
+    # signup. Existing affiliate links therefore enter the public store.
+    nxt = (request.query_params.get("next") or "/store").strip()
     # only ever redirect within this site
     if not nxt.startswith("/") or nxt.startswith("//"):
-        nxt = "/"
+        nxt = "/store"
     resp = RedirectResponse(url=f"{_base_url(request)}{nxt}", status_code=302)
 
     affiliate = await aff.get_affiliate_by_ref(db_session, (ref_code or "").strip())

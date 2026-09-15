@@ -1,4 +1,5 @@
 'use server';
+import { cookies } from 'next/headers';
 import { getAPIUrl } from '@services/config/config';
 import { RequestBodyWithAuthHeader, getResponseMetadata, secureFetch } from '@services/utils/ts/requests';
 
@@ -93,9 +94,10 @@ export async function getOfferCheckoutSession(
   access_token: string,
   bumps: string[] = []
 ) {
+  const affiliateRef = (await cookies()).get('bbu_ref')?.value ?? '';
   const result = await secureFetch(
     `${getAPIUrl()}payments/${encodeURIComponent(String(orgId))}/offers/${encodeURIComponent(offerUuid)}/checkout?redirect_uri=${encodeURIComponent(redirect_uri)}`,
-    RequestBodyWithAuthHeader('POST', { bumps }, null, access_token)
+    RequestBodyWithAuthHeader('POST', { bumps, affiliate_ref: affiliateRef }, null, access_token)
   );
   return getResponseMetadata(result);
 }

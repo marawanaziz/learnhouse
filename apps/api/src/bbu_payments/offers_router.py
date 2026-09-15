@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.bbu_payments import audiences as audience_svc
+from src.bbu_payments import affiliates as affiliate_svc
 from src.bbu_payments import coupons as coupon_svc
 from src.bbu_payments.helpers import merge_course_uuids
 from src.bbu_payments.models import BBUCoupon, BBUOrder, BBUProduct
@@ -329,6 +330,17 @@ async def checkout(
         body = await request.json()
     except Exception:
         body = {}
+    # The native UI calls this endpoint through a Next server action, which
+    # explicitly forwards the referral cookie as affiliate_ref. Direct API
+    # callers can supply the original cookie. Resolve within this organization.
+    candidate_ref = request.cookies.get("bbu_ref") or body.get("affiliate_ref") or ""
+    affiliate = await affiliate_svc.get_affiliate_by_ref(
+        db_session, str(candidate_ref).strip(), org_id
+    ) if candidate_ref else None
+    affiliate_ref = (
+        affiliate.ref_code
+        if affiliate and affiliate.status != "suspended" else ""
+    )
     bump_uuids = body.get("bumps") or []
     if isinstance(bump_uuids, str):
         bump_uuids = [b for b in bump_uuids.split(",") if b]
@@ -445,7 +457,7 @@ async def checkout(
         ),
         metadata={"bbu_product_id": str(p.id), "course_uuids": merged_courses,
                   "bump_ids": ",".join(str(bp.id) for bp in bump_products),
-                  "affiliate_ref": "", "buyer_user_id": str(uid),
+                  "affiliate_ref": affiliate_ref, "buyer_user_id": str(uid),
                   "automatic_coupon": automatic_coupon.code if automatic_coupon else ""},
     )
 
@@ -454,7 +466,7 @@ async def checkout(
         email=email, user_id=uid,
         amount_cents=max(0, total_cents - automatic_discount_cents),
         currency=p.currency,
-        status="pending", course_uuids=merged_courses,
+        status="pending", course_uuids=merged_courses, affiliate_ref=affiliate_ref,
         created_at=datetime.now(timezone.utc).isoformat(),
         extra=(
             {
